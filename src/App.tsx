@@ -24,6 +24,7 @@ import { MasterExpedisiListForm } from './components/MasterExpedisiListForm';
 import { MasterSalesListForm } from './components/MasterSalesListForm';
 import { MasterSupplierListForm } from './components/MasterSupplierListForm';
 import { MasterCustomerListForm } from './components/MasterCustomerListForm';
+import { InputDaftarGiroForm } from './components/InputDaftarGiroForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -40,8 +41,9 @@ export default function App() {
     | 'sales'
     | 'supplier'
     | 'customer'
+    | 'daftar_giro'
     | null
-  >('lokasi');
+  >('daftar_giro');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -88,6 +90,9 @@ export default function App() {
       setActiveForm(null);
     } else if (actionName === 'Master Customer') {
       setActiveMdiForm('customer');
+      setActiveForm(null);
+    } else if (actionName === 'Input Daftar Giro') {
+      setActiveMdiForm('daftar_giro');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -154,6 +159,9 @@ export default function App() {
     } else if (actionName === 'Master Customer') {
       setActiveMdiForm('customer');
       setActiveForm(null);
+    } else if (actionName === 'Input Daftar Giro') {
+      setActiveMdiForm('daftar_giro');
+      setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
     } else {
@@ -164,7 +172,9 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'customer'
+    activeMdiForm === 'daftar_giro'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
+      : activeMdiForm === 'customer'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Master Customer]'
       : activeMdiForm === 'supplier'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Master Supplier]'
@@ -294,6 +304,12 @@ export default function App() {
         {/* Master Supplier MDI Child Window */}
         <MasterSupplierListForm
           isOpen={activeMdiForm === 'supplier'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Input Daftar Giro MDI Child Window */}
+        <InputDaftarGiroForm
+          isOpen={activeMdiForm === 'daftar_giro'}
           onClose={() => setActiveMdiForm(null)}
         />
 
