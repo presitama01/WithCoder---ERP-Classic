@@ -1,6 +1,6 @@
 {
-  "name": "WithCoder - ERP Classic",
-  "description": "A web-based ERP system replica featuring classic desktop UI, menu bars, toolbars, draggable login dialog, and status bar.",
+  "name": "Indo IT - Main Menu ~ Menu Utama",
+  "description": "Sistem ERP Indo IT dengan modul Master, Pembelian, Penjualan, Stock, Keuangan, toolbar desktop klasik, dan status bar.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

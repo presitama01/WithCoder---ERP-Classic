@@ -69,3 +69,47 @@
   box-shadow: inset 1px 1px 0px #404040;
   font-family: Tahoma, 'Segoe UI', sans-serif;
 }
+
+/* Windows Classic Scrollbar styling for clear scroll-down capability */
+::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: #ECE9D8;
+  background-image: repeating-linear-gradient(
+    45deg,
+    #ECE9D8,
+    #ECE9D8 2px,
+    #F5F4EC 2px,
+    #F5F4EC 4px
+  );
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #ECE9D8;
+  border-width: 2px;
+  border-style: solid;
+  border-color: #FFFFFF #707070 #707070 #FFFFFF;
+  box-shadow: inset 1px 1px 0px #FFFFFF, inset -1px -1px 0px #808080;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #F2EFE2;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: #DFDBD0;
+  border-color: #707070 #FFFFFF #FFFFFF #707070;
+}
+
+::-webkit-scrollbar-corner {
+  background-color: #ECE9D8;
+}
+
+/* Firefox scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #ACA899 #ECE9D8;
+}

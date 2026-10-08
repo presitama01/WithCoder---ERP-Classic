@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 
 interface StatusBarProps {
+  userName?: string;
   statusMessage?: string;
   isInsertMode?: boolean;
   onToggleInsert?: () => void;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
+  userName = 'RETNO',
   statusMessage = '',
   isInsertMode = true,
   onToggleInsert,
@@ -16,12 +18,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      // Format as 9:44 AM (no leading zero on hour, uppercase AM/PM)
       let hours = now.getHours();
       const minutes = now.getMinutes();
       const ampm = hours >= 12 ? 'PM' : 'AM';
       hours = hours % 12;
-      hours = hours ? hours : 12; // 0 hour is 12
+      hours = hours ? hours : 12;
       const formattedMin = minutes < 10 ? '0' + minutes : minutes;
       setTimeStr(`${hours}:${formattedMin} ${ampm}`);
     };
@@ -36,13 +37,13 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       id="main-statusbar"
       className="fixed bottom-0 left-0 right-0 h-[24px] bg-[#ECE9D8] border-t border-[#808080] flex items-center px-1 space-x-1 select-none text-[11px] font-sans z-50"
     >
-      {/* Panel 1: Operator / Presenter Icon */}
+      {/* Panel 1: Operator / Presenter Icon + Username (e.g. RETNO) */}
       <div
         id="status-panel-operator"
-        title="Current Operator / Session"
-        className="flex items-center justify-center w-[28px] h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner px-1"
+        title="Current Operator / User"
+        className="flex items-center space-x-1.5 px-2 h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner"
       >
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="shrink-0">
           {/* Head */}
           <circle cx="6" cy="4" r="2.2" fill="#000000" />
           {/* Body */}
@@ -55,6 +56,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           {/* Base */}
           <line x1="11" y1="13" x2="14" y2="13" stroke="#000000" strokeWidth="1.2" />
         </svg>
+        <span className="text-[11px] font-sans font-bold text-black uppercase tracking-tight">
+          {userName || 'RETNO'}
+        </span>
       </div>
 
       {/* Panel 2: INS (Insert Key Mode) */}
@@ -62,18 +66,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         id="status-panel-ins"
         onClick={onToggleInsert}
         title="Toggle Insert Mode"
-        className="flex items-center justify-center w-[40px] h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner text-[11px] font-sans font-normal text-black cursor-default"
+        className="flex items-center justify-center w-[36px] h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner text-[11px] font-sans text-black cursor-pointer"
       >
         {isInsertMode ? 'INS' : 'OVR'}
       </div>
 
-      {/* Panel 3: Live Clock (e.g. 9:44 AM) */}
+      {/* Panel 3: Live Clock (e.g. 4:38 PM) */}
       <div
         id="status-panel-clock"
         title="System Time"
-        className="flex items-center justify-center min-w-[70px] px-2 h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner text-[11px] font-sans text-black"
+        className="flex items-center justify-center min-w-[65px] px-1.5 h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner text-[11px] font-sans text-black"
       >
-        {timeStr || '9:44 AM'}
+        {timeStr || '4:38 PM'}
       </div>
 
       {/* Panel 4: Main Status Message Area */}
@@ -81,7 +85,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         id="status-panel-message"
         className="flex-1 h-[19px] bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner px-2 flex items-center text-[11px] text-gray-700 truncate"
       >
-        {statusMessage || 'WithCoder Ready'}
+        {statusMessage || ''}
       </div>
     </footer>
   );
