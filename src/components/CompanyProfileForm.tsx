@@ -29,199 +29,227 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleSave = () => {
+    alert('Data Company Profile berhasil disimpan!');
+  };
+
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-[100]">
-      <div className="bg-[#ECE9D8] w-[620px] border-2 border-[#7F9DB9] shadow-2xl flex flex-col font-sans select-none">
-        {/* Windows Aero Frame Title Bar */}
-        <div className="bg-gradient-to-r from-[#0055EA] via-[#3375FF] to-[#0055EA] text-white px-2 py-1 flex justify-between items-center text-xs">
-          <div className="flex items-center gap-1.5 font-semibold">
-            <span className="bg-blue-600 px-1 rounded">🪟</span>
-            <span>i-Software - Company Profile</span>
-          </div>
-          <div className="flex gap-1">
-            <button className="bg-[#ECE9D8] text-black w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-gray-400">_</button>
-            <button className="bg-[#ECE9D8] text-black w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-gray-400">□</button>
-            <button onClick={onClose} className="bg-[#E81123] text-white w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-gray-700 hover:bg-red-700">✕</button>
-          </div>
-        </div>
+    <div
+      id="company-profile-form-container"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans"
+    >
+      <div className="w-full h-full flex flex-col min-w-0">
+        {/* 1. Black Top Banner */}
+        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
+          <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
+            Company Profile
+          </span>
 
-        {/* Main Black Header Banner */}
-        <div className="bg-black text-white px-4 py-2.5">
-          <h1 className="text-xl font-bold tracking-wide">Program Setup</h1>
-        </div>
-
-        {/* Form Body */}
-        <div className="p-4 space-y-2.5 text-xs text-black">
-          {/* Profile Code */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Profile Code :</label>
-            <select
-              value={formData.profileCode}
-              onChange={(e) => handleChange('profileCode', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 w-20 text-xs outline-none"
+          <div className="flex items-center space-x-1.5">
+            <button
+              type="button"
+              title="Tampilan Tabel"
+              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
             >
-              <option value="01">01</option>
-              <option value="02">02</option>
-            </select>
-          </div>
-
-          {/* Company Name */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Company Name :</label>
-            <input
-              type="text"
-              value={formData.companyName}
-              onChange={(e) => handleChange('companyName', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 flex-1 text-xs outline-none"
-            />
-          </div>
-
-          {/* No.NPWP */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">No.NPWP :</label>
-            <input
-              type="text"
-              value={formData.noNpwp}
-              onChange={(e) => handleChange('noNpwp', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 w-64 text-xs outline-none"
-            />
-          </div>
-
-          {/* NPWP Address */}
-          <div className="flex items-start">
-            <label className="w-32 text-right pr-3 font-medium pt-0.5">NPWP Address :</label>
-            <textarea
-              value={formData.npwpAddress}
-              onChange={(e) => handleChange('npwpAddress', e.target.value)}
-              rows={2}
-              className="border border-[#7F9DB9] bg-white px-2 py-1 flex-1 text-xs outline-none resize-none"
-            />
-          </div>
-
-          {/* Tanggal NPWP */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Tanggal NPWP :</label>
-            <div className="flex items-center">
-              <input
-                type="text"
-                value={formData.tanggalNpwp}
-                onChange={(e) => handleChange('tanggalNpwp', e.target.value)}
-                className="border border-[#7F9DB9] bg-white px-2 py-0.5 w-28 text-xs outline-none"
-              />
-              <button type="button" className="bg-[#ECE9D8] border border-[#7F9DB9] px-1.5 py-0.5 ml-0.5 text-xs">▼</button>
-            </div>
-          </div>
-
-          {/* Address */}
-          <div className="flex items-start">
-            <label className="w-32 text-right pr-3 font-medium pt-0.5">Address :</label>
-            <textarea
-              value={formData.address}
-              onChange={(e) => handleChange('address', e.target.value)}
-              rows={2}
-              className="border border-[#7F9DB9] bg-white px-2 py-1 flex-1 text-xs outline-none resize-none"
-            />
-          </div>
-
-          {/* Country */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Country :</label>
-            <input
-              type="text"
-              value={formData.country}
-              onChange={(e) => handleChange('country', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 flex-1 text-xs outline-none"
-            />
-          </div>
-
-          {/* Phone */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Phone :</label>
-            <input
-              type="text"
-              value={formData.phone}
-              onChange={(e) => handleChange('phone', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 w-48 text-xs outline-none"
-            />
-          </div>
-
-          {/* Fax */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Fax :</label>
-            <input
-              type="text"
-              value={formData.fax}
-              onChange={(e) => handleChange('fax', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 w-48 text-xs outline-none"
-            />
-          </div>
-
-          {/* Mail */}
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-3 font-medium">Mail :</label>
-            <input
-              type="text"
-              value={formData.mail}
-              onChange={(e) => handleChange('mail', e.target.value)}
-              className="border border-[#7F9DB9] bg-white px-2 py-0.5 flex-1 text-xs outline-none"
-            />
-          </div>
-
-          {/* PPN & Right Checkboxes Layout */}
-          <div className="flex justify-between items-center pt-1 border-t border-gray-300 mt-3">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={formData.ppnActive}
-                onChange={(e) => handleChange('ppnActive', e.target.checked)}
-                className="w-3.5 h-3.5"
-              />
-              <span className="font-medium">PPN :</span>
-              <input
-                type="text"
-                value={formData.ppnValue}
-                onChange={(e) => handleChange('ppnValue', e.target.value)}
-                className="border border-[#7F9DB9] bg-white px-2 py-0.5 w-16 text-xs text-right outline-none"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1 pr-6">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.wirajaya}
-                  onChange={(e) => handleChange('wirajaya', e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                <span>Wirajaya</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.backup}
-                  onChange={(e) => handleChange('backup', e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                <span>Back Up</span>
-              </label>
-            </div>
+              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
+                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
+                <div className="bg-[#E7EFF9] h-[4px]" />
+                <div className="bg-[#E7EFF9] h-[4px]" />
+              </div>
+            </button>
+            <button
+              type="button"
+              title="Export Excel"
+              onClick={() => alert('Data Company Profile berhasil diexport ke format Excel')}
+              className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
+            >
+              <span className="text-[11px] font-bold text-white font-sans">X</span>
+            </button>
           </div>
         </div>
 
-        {/* Footer Buttons */}
-        <div className="bg-[#ECE9D8] px-4 py-3 border-t border-[#7F9DB9] flex justify-center gap-3">
+        {/* 2. Action Toolbar */}
+        <div className="shrink-0 flex items-center h-[52px] px-3 space-x-2 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans">
           <button
-            onClick={() => alert('Data Company Profile berhasil disimpan!')}
-            className="bg-[#ECE9D8] hover:bg-[#E5E2D0] active:bg-[#D4D0C8] border border-[#003C74] px-6 py-1 text-xs font-medium rounded-sm shadow-sm"
+            type="button"
+            onClick={handleSave}
+            className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
           >
             Save
           </button>
           <button
+            type="button"
             onClick={onClose}
-            className="bg-[#ECE9D8] hover:bg-[#E5E2D0] active:bg-[#D4D0C8] border border-[#003C74] px-6 py-1 text-xs font-medium rounded-sm shadow-sm"
+            className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
           >
             Close
           </button>
+        </div>
+
+        {/* 3. Scrollable Form Body Container */}
+        <div className="flex-1 overflow-auto p-4 bg-[#ECE9D8]">
+          <div className="max-w-3xl mx-auto bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white p-6 shadow-md">
+            <div className="text-sm font-bold text-[#003C74] border-b border-[#ACA899] pb-2 mb-4">
+              Program Setup & Company Profile
+            </div>
+
+            <div className="space-y-3 text-xs text-black">
+              {/* Profile Code */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Profile Code :</label>
+                <select
+                  value={formData.profileCode}
+                  onChange={(e) => handleChange('profileCode', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 w-24 text-xs outline-none focus:border-[#316AC5]"
+                >
+                  <option value="01">01</option>
+                  <option value="02">02</option>
+                </select>
+              </div>
+
+              {/* Company Name */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Company Name :</label>
+                <input
+                  type="text"
+                  value={formData.companyName}
+                  onChange={(e) => handleChange('companyName', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 flex-1 text-xs outline-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* No.NPWP */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">No.NPWP :</label>
+                <input
+                  type="text"
+                  value={formData.noNpwp}
+                  onChange={(e) => handleChange('noNpwp', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 w-72 text-xs outline-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* NPWP Address */}
+              <div className="flex items-start">
+                <label className="w-36 text-right pr-3 font-medium pt-1">NPWP Address :</label>
+                <textarea
+                  value={formData.npwpAddress}
+                  onChange={(e) => handleChange('npwpAddress', e.target.value)}
+                  rows={3}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 flex-1 text-xs outline-none resize-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* Tanggal NPWP */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Tanggal NPWP :</label>
+                <div className="flex items-center">
+                  <input
+                    type="text"
+                    value={formData.tanggalNpwp}
+                    onChange={(e) => handleChange('tanggalNpwp', e.target.value)}
+                    className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 w-32 text-xs outline-none focus:border-[#316AC5]"
+                  />
+                  <button type="button" className="bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] px-2 py-1 ml-1 text-xs active:border-t-[#707070] active:border-b-white">▼</button>
+                </div>
+              </div>
+
+              {/* Address */}
+              <div className="flex items-start">
+                <label className="w-36 text-right pr-3 font-medium pt-1">Address :</label>
+                <textarea
+                  value={formData.address}
+                  onChange={(e) => handleChange('address', e.target.value)}
+                  rows={3}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 flex-1 text-xs outline-none resize-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* Country */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Country :</label>
+                <input
+                  type="text"
+                  value={formData.country}
+                  onChange={(e) => handleChange('country', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 flex-1 text-xs outline-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* Phone */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Phone :</label>
+                <input
+                  type="text"
+                  value={formData.phone}
+                  onChange={(e) => handleChange('phone', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 w-56 text-xs outline-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* Fax */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Fax :</label>
+                <input
+                  type="text"
+                  value={formData.fax}
+                  onChange={(e) => handleChange('fax', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 w-56 text-xs outline-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* Mail */}
+              <div className="flex items-center">
+                <label className="w-36 text-right pr-3 font-medium">Mail :</label>
+                <input
+                  type="text"
+                  value={formData.mail}
+                  onChange={(e) => handleChange('mail', e.target.value)}
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 flex-1 text-xs outline-none focus:border-[#316AC5]"
+                />
+              </div>
+
+              {/* PPN & Right Checkboxes Layout */}
+              <div className="flex justify-between items-center pt-3 border-t border-[#ACA899] mt-4">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={formData.ppnActive}
+                    onChange={(e) => handleChange('ppnActive', e.target.checked)}
+                    className="w-4 h-4 cursor-pointer"
+                  />
+                  <span className="font-medium">PPN :</span>
+                  <input
+                    type="text"
+                    value={formData.ppnValue}
+                    onChange={(e) => handleChange('ppnValue', e.target.value)}
+                    className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 w-20 text-xs text-right outline-none focus:border-[#316AC5]"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5 pr-8">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.wirajaya}
+                      onChange={(e) => handleChange('wirajaya', e.target.checked)}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <span className="font-medium">Wirajaya</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.backup}
+                      onChange={(e) => handleChange('backup', e.target.checked)}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <span className="font-medium">Back Up</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

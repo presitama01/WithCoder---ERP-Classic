@@ -104,9 +104,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
         { label: 'Master Expedisi' },
         { label: 'Master Sales' },
         { label: 'Master Supplier' },
-        { label: 'Master Customer' },        
-        { divider: true, label: '' },
-        { label: 'Exit', shortcut: 'Ctrl+Q', action: onExit },
+        { label: 'Master Customer' },
       ],
     },
 
