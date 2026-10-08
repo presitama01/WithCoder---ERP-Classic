@@ -18,15 +18,29 @@ import { TypeListForm } from './components/TypeListForm';
 import { MasterBarangListForm } from './components/MasterBarangListForm';
 import { MasterWilayahListForm } from './components/MasterWilayahListForm';
 import { MasterLokasiGudangListForm } from './components/MasterLokasiGudangListForm';
-import { MasterExpedisiListForm } from './components/MasterExpedisiListForm';
-import { MasterSalesListForm } from './components/MasterSalesListForm';
 import { CompanyProfileForm } from './components/CompanyProfileForm';
 import { MasterBankListForm } from './components/MasterBankListForm';
+import { MasterExpedisiListForm } from './components/MasterExpedisiListForm';
+import { MasterSalesListForm } from './components/MasterSalesListForm';
+import { MasterSupplierListForm } from './components/MasterSupplierListForm';
+import { MasterCustomerListForm } from './components/MasterCustomerListForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [activeMdiForm, setActiveMdiForm] = useState<
-    'category' | 'merk' | 'type' | 'barang' | 'wilayah' | 'lokasi' | 'expedisi' | 'sales' | 'company_profile' | 'bank' | null
+    | 'category'
+    | 'merk'
+    | 'type'
+    | 'barang'
+    | 'wilayah'
+    | 'lokasi'
+    | 'company_profile'
+    | 'bank'
+    | 'expedisi'
+    | 'sales'
+    | 'supplier'
+    | 'customer'
+    | null
   >('lokasi');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -62,6 +76,18 @@ export default function App() {
       setActiveForm(null);
     } else if (actionName === 'Rekening Bank') {
       setActiveMdiForm('bank');
+      setActiveForm(null);
+    } else if (actionName === 'Master Expedisi') {
+      setActiveMdiForm('expedisi');
+      setActiveForm(null);
+    } else if (actionName === 'Master Sales') {
+      setActiveMdiForm('sales');
+      setActiveForm(null);
+    } else if (actionName === 'Master Supplier') {
+      setActiveMdiForm('supplier');
+      setActiveForm(null);
+    } else if (actionName === 'Master Customer') {
+      setActiveMdiForm('customer');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -110,17 +136,23 @@ export default function App() {
     } else if (actionName === 'Master Lokasi Gudang') {
       setActiveMdiForm('lokasi');
       setActiveForm(null);
+    } else if (actionName === 'Company Profile') {
+      setActiveMdiForm('company_profile');
+      setActiveForm(null);
+    } else if (actionName === 'Rekening Bank') {
+      setActiveMdiForm('bank');
+      setActiveForm(null);
     } else if (actionName === 'Master Expedisi') {
       setActiveMdiForm('expedisi');
       setActiveForm(null);
     } else if (actionName === 'Master Sales') {
       setActiveMdiForm('sales');
       setActiveForm(null);
-    } else if (actionName === 'Company Profile') {
-      setActiveMdiForm('company_profile');
+    } else if (actionName === 'Master Supplier') {
+      setActiveMdiForm('supplier');
       setActiveForm(null);
-    } else if (actionName === 'Rekening Bank') {
-      setActiveMdiForm('bank');
+    } else if (actionName === 'Master Customer') {
+      setActiveMdiForm('customer');
       setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
@@ -132,14 +164,18 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'bank'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Bank]'
-      : activeMdiForm === 'company_profile'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Company Profile]'
+    activeMdiForm === 'customer'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Customer]'
+      : activeMdiForm === 'supplier'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Supplier]'
       : activeMdiForm === 'sales'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Master Sales]'
       : activeMdiForm === 'expedisi'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Master Expedisi]'
+      : activeMdiForm === 'bank'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Bank]'
+      : activeMdiForm === 'company_profile'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Company Profile]'
       : activeMdiForm === 'lokasi'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Master Lokasi Gudang]'
       : activeMdiForm === 'wilayah'
@@ -231,18 +267,6 @@ export default function App() {
           onClose={() => setActiveMdiForm(null)}
         />
 
-        {/* List Master Expedisi MDI Child Window */}
-        <MasterExpedisiListForm
-          isOpen={activeMdiForm === 'expedisi'}
-          onClose={() => setActiveMdiForm(null)}
-        />
-
-        {/* List Master Sales MDI Child Window */}
-        <MasterSalesListForm
-          isOpen={activeMdiForm === 'sales'}
-          onClose={() => setActiveMdiForm(null)}
-        />
-
         {/* Company Profile MDI Child Window */}
         <CompanyProfileForm
           isOpen={activeMdiForm === 'company_profile'}
@@ -252,6 +276,30 @@ export default function App() {
         {/* Master Bank MDI Child Window */}
         <MasterBankListForm
           isOpen={activeMdiForm === 'bank'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Master Expedisi MDI Child Window */}
+        <MasterExpedisiListForm
+          isOpen={activeMdiForm === 'expedisi'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Master Sales MDI Child Window */}
+        <MasterSalesListForm
+          isOpen={activeMdiForm === 'sales'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Master Supplier MDI Child Window */}
+        <MasterSupplierListForm
+          isOpen={activeMdiForm === 'supplier'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Master Customer MDI Child Window */}
+        <MasterCustomerListForm
+          isOpen={activeMdiForm === 'customer'}
           onClose={() => setActiveMdiForm(null)}
         />
 

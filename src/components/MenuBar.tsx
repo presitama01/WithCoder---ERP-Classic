@@ -150,7 +150,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
     <div
       ref={containerRef}
       id="main-menubar"
-      className="relative z-50 flex items-center h-[24px] bg-[#ECE9D8] border-b border-[#919B9C] px-1 text-[11px] font-sans select-none text-black"
+      className="relative z-[999] flex items-center h-[24px] bg-[#ECE9D8] border-b border-[#919B9C] px-1 text-[11px] font-sans select-none text-black"
     >
       {menus.map((menu, index) => {
         const isOpen = openMenuIndex === index;
@@ -175,7 +175,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
             {isOpen && (
               <div
                 id={`dropdown-${menu.title.toLowerCase()}`}
-                className="absolute left-0 top-[23px] min-w-[200px] bg-[#F9F9F8] border border-[#7F9DB9] shadow-[2px_3px_5px_rgba(0,0,0,0.25)] py-0.5 z-50 text-[11px]"
+                className="absolute left-0 top-[23px] min-w-[200px] bg-[#F9F9F8] border border-[#7F9DB9] shadow-[2px_3px_5px_rgba(0,0,0,0.25)] py-0.5 z-[10000] text-[11px]"
               >
                 {menu.items.map((item, itemIdx) => {
                   if (item.divider) {

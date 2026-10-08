@@ -96,15 +96,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
         { label: 'Tabel Tipe' },
         { label: 'Master Barang' },
         { divider: true, label: '' },
+        { label: 'Company Profile' },
         { label: 'Rekening Bank' },
         { label: 'Master Wilayah' },
         { label: 'Master Lokasi Gudang' },
-        { label: 'Company Profile' },
         { divider: true, label: '' },
         { label: 'Master Expedisi' },
         { label: 'Master Sales' },
         { label: 'Master Supplier' },
-        { label: 'Master Customer' },
+        { label: 'Master Customer' },        
         { divider: true, label: '' },
         { label: 'Exit', shortcut: 'Ctrl+Q', action: onExit },
       ],
@@ -290,7 +290,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
     <div
       ref={toolbarRef}
       id="main-toolbar"
-      className="relative z-50 flex items-center h-[54px] bg-[#ECE9D8] border-b border-[#ACA899] px-2 select-none"
+      className="relative z-40 flex items-center h-[54px] bg-[#ECE9D8] border-b border-[#ACA899] px-2 select-none"
     >
       <div className="flex items-center space-x-1">
         {toolbarMenus.map((tool) => {
@@ -322,7 +322,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
               {isOpen && tool.items && (
                 <div
                   id={`toolbar-menu-${tool.id}`}
-                  className="absolute left-0 top-[52px] min-w-[215px] max-h-[calc(100vh-120px)] overflow-y-auto bg-[#F7F7F6] border border-[#7F9DB9] shadow-[2px_3px_6px_rgba(0,0,0,0.3)] py-1 z-50 text-[11px] font-sans"
+                  className="absolute left-0 top-[52px] min-w-[215px] max-h-[calc(100vh-140px)] overflow-y-auto bg-[#F7F7F6] border border-[#7F9DB9] shadow-[2px_4px_8px_rgba(0,0,0,0.35)] py-1 z-[9999] text-[11px] font-sans"
                 >
                   {tool.items.map((item, itemIdx) => {
                     if (item.divider) {

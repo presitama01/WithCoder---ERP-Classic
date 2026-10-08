@@ -1,82 +1,82 @@
 import React, { useState } from 'react';
 
-export interface SalesItem {
+export interface SupplierItem {
   id: string;
-  kodeSales: string;
-  namaSales: string;
+  kodeSupplier: string;
+  namaSupplier: string;
+  hutang: number;
+  hutangGiro: number;
   alamat: string;
   kota: string;
   telepon: string;
-  limit: number;
-  komisi: number;
 }
 
-interface MasterSalesListFormProps {
+interface MasterSupplierListFormProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
+export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [salesList, setSalesList] = useState<SalesItem[]>([
+  const [supplierList, setSupplierList] = useState<SupplierItem[]>([
     {
       id: '1',
-      kodeSales: 'SL01',
-      namaSales: 'BUDI SANTOSO',
-      alamat: 'Jl. Merdeka No. 10',
-      kota: 'JAKARTA PUSAT',
-      telepon: '081234567890',
-      limit: 50000000,
-      komisi: 2.5,
+      kodeSupplier: 'SUP01',
+      namaSupplier: 'PT. GLOBAL JAYA ABADI',
+      hutang: 25000000,
+      hutangGiro: 10000000,
+      alamat: 'Jl. Industri Raya Blok C No. 8',
+      kota: 'JAKARTA UTARA',
+      telepon: '021-6543210',
     },
     {
       id: '2',
-      kodeSales: 'SL02',
-      namaSales: 'SITI AMINAH',
-      alamat: 'Jl. Sudirman No. 45',
-      kota: 'BANDUNG',
-      telepon: '081987654321',
-      limit: 30000000,
-      komisi: 2.0,
+      kodeSupplier: 'SUP02',
+      namaSupplier: 'CV. MAKMUR SEJAHTERA',
+      hutang: 12000000,
+      hutangGiro: 0,
+      alamat: 'Jl. Hayam Wuruk No. 15',
+      kota: 'JAKARTA PUSAT',
+      telepon: '021-3456789',
     },
     {
       id: '3',
-      kodeSales: 'SL03',
-      namaSales: 'HENDRA WIJAYA',
-      alamat: 'Jl. Pemuda No. 12',
+      kodeSupplier: 'SUP03',
+      namaSupplier: 'PT. NUSANTARA DISTRIBUSI',
+      hutang: 45000000,
+      hutangGiro: 15000000,
+      alamat: 'Jl. Rungkut Industri No. 22',
       kota: 'SURABAYA',
-      telepon: '081333444555',
-      limit: 40000000,
-      komisi: 3.0,
+      telepon: '031-8765432',
     },
   ]);
 
   const [selectedId, setSelectedId] = useState<string>('1');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Sales');
+  const [searchField, setSearchField] = useState<string>('Nama Supplier');
 
   // Modal Add New
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
+  const [newHutang, setNewHutang] = useState('0');
+  const [newHutangGiro, setNewHutangGiro] = useState('0');
   const [newAlamat, setNewAlamat] = useState('');
   const [newKota, setNewKota] = useState('');
   const [newTelepon, setNewTelepon] = useState('');
-  const [newLimit, setNewLimit] = useState('10000000');
-  const [newKomisi, setNewKomisi] = useState('2.0');
 
   if (!isOpen) return null;
 
   const handleAddNew = () => {
     setNewKode('');
     setNewNama('');
+    setNewHutang('0');
+    setNewHutangGiro('0');
     setNewAlamat('');
     setNewKota('');
     setNewTelepon('');
-    setNewLimit('10000000');
-    setNewKomisi('2.0');
     setIsAddOpen(true);
   };
 
@@ -84,35 +84,35 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const newItem: SalesItem = {
+    const newItem: SupplierItem = {
       id: Date.now().toString(),
-      kodeSales: newKode.trim().toUpperCase(),
-      namaSales: newNama.trim().toUpperCase(),
+      kodeSupplier: newKode.trim().toUpperCase(),
+      namaSupplier: newNama.trim().toUpperCase(),
+      hutang: parseFloat(newHutang) || 0,
+      hutangGiro: parseFloat(newHutangGiro) || 0,
       alamat: newAlamat.trim(),
       kota: newKota.trim().toUpperCase(),
       telepon: newTelepon.trim(),
-      limit: parseFloat(newLimit) || 0,
-      komisi: parseFloat(newKomisi) || 0,
     };
-    setSalesList([newItem, ...salesList]);
+    setSupplierList([newItem, ...supplierList]);
     setSelectedId(newItem.id);
     setIsAddOpen(false);
   };
 
-  const filteredSales = salesList.filter((item) => {
+  const filteredSupplier = supplierList.filter((item) => {
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
     if (searchField === 'Kode') {
-      return item.kodeSales.toLowerCase().includes(term);
+      return item.kodeSupplier.toLowerCase().includes(term);
     } else if (searchField === 'Kota') {
       return item.kota.toLowerCase().includes(term);
     }
-    return item.namaSales.toLowerCase().includes(term);
+    return item.namaSupplier.toLowerCase().includes(term);
   });
 
   return (
     <div
-      id="master-sales-form-container"
+      id="master-supplier-form-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans"
     >
       <div className="w-full h-full flex flex-col min-w-0">
@@ -120,7 +120,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
           <div className="flex items-center space-x-3">
             <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-              List Master Sales
+              List Master Supplier
             </span>
           </div>
 
@@ -157,8 +157,8 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
           </button>
           <button
             onClick={() => {
-              const item = salesList.find(s => s.id === selectedId);
-              if (item) alert(`Edit: ${item.namaSales}`);
+              const item = supplierList.find(s => s.id === selectedId);
+              if (item) alert(`Edit: ${item.namaSupplier}`);
             }}
             className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
           >
@@ -167,8 +167,8 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
           </button>
           <button
             onClick={() => {
-              if (confirm('Hapus data sales terpilih?')) {
-                setSalesList(salesList.filter(s => s.id !== selectedId));
+              if (confirm('Hapus data supplier terpilih?')) {
+                setSupplierList(supplierList.filter(s => s.id !== selectedId));
               }
             }}
             className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
@@ -191,7 +191,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
               onChange={(e) => setSearchField(e.target.value)}
               className="h-[22px] bg-white border border-[#7F9DB9] px-1 text-[11px]"
             >
-              <option value="Nama Sales">Nama Sales</option>
+              <option value="Nama Supplier">Nama Supplier</option>
               <option value="Kode">Kode</option>
               <option value="Kota">Kota</option>
             </select>
@@ -213,16 +213,16 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                 <tr className="h-[24px]">
                   <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0"></th>
                   <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
-                  <th className="w-[200px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Sales</th>
+                  <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Supplier</th>
+                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang</th>
+                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang Giro</th>
                   <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat</th>
                   <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Telepon</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit</th>
-                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Komisi (%)</th>
+                  <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Telepon</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredSales.map((item) => {
+                {filteredSupplier.map((item) => {
                   const isSelected = selectedId === item.id;
                   return (
                     <tr
@@ -233,17 +233,17 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                       <td className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
                         {isSelected ? <span className="text-[10px] font-bold text-black">▶</span> : null}
                       </td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold text-black">{item.kodeSales}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-black font-semibold">{item.namaSales}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold text-black">{item.kodeSupplier}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-black font-semibold">{item.namaSupplier}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right text-black font-mono">
+                        {item.hutang.toLocaleString('id-ID')}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right text-black font-mono">
+                        {item.hutangGiro.toLocaleString('id-ID')}
+                      </td>
                       <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.alamat}</td>
                       <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.kota}</td>
                       <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.telepon}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right text-black font-mono">
-                        {item.limit.toLocaleString('id-ID')}
-                      </td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right text-black font-mono">
-                        {item.komisi}%
-                      </td>
                     </tr>
                   );
                 })}
@@ -258,7 +258,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
             <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
-              <span>Tambah Master Sales Baru</span>
+              <span>Tambah Master Supplier Baru</span>
               <button onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold">✕</button>
             </div>
             <form onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
@@ -271,18 +271,39 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                     value={newKode}
                     onChange={(e) => setNewKode(e.target.value)}
                     className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                    placeholder="SL01"
+                    placeholder="SUP01"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold mb-1">Nama Sales:</label>
+                  <label className="block font-bold mb-1">Nama Supplier:</label>
                   <input
                     type="text"
                     required
                     value={newNama}
                     onChange={(e) => setNewNama(e.target.value)}
                     className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                    placeholder="BUDI SANTOSO"
+                    placeholder="PT. GLOBAL JAYA"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold mb-1">Hutang (Rp):</label>
+                  <input
+                    type="number"
+                    value={newHutang}
+                    onChange={(e) => setNewHutang(e.target.value)}
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Hutang Giro (Rp):</label>
+                  <input
+                    type="number"
+                    value={newHutangGiro}
+                    onChange={(e) => setNewHutangGiro(e.target.value)}
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
                   />
                 </div>
               </div>
@@ -314,28 +335,6 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                     value={newTelepon}
                     onChange={(e) => setNewTelepon(e.target.value)}
                     className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-1">Limit (Rp):</label>
-                  <input
-                    type="number"
-                    value={newLimit}
-                    onChange={(e) => setNewLimit(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-1">Komisi (%):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={newKomisi}
-                    onChange={(e) => setNewKomisi(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
                   />
                 </div>
               </div>
