@@ -25,6 +25,14 @@ import { MasterSalesListForm } from './components/MasterSalesListForm';
 import { MasterSupplierListForm } from './components/MasterSupplierListForm';
 import { MasterCustomerListForm } from './components/MasterCustomerListForm';
 import { InputDaftarGiroForm } from './components/InputDaftarGiroForm';
+import { ListPurchaseRequestForm } from './components/ListPurchaseRequestForm';
+import { ListPurchaseOrderForm } from './components/ListPurchaseOrderForm';
+import { ListPembelianForm } from './components/ListPembelianForm';
+import { ListReturPembelianForm } from './components/ListReturPembelianForm';
+import { PendaftaranPenerimaanGiroForm } from './components/PendaftaranPenerimaanGiroForm';
+import { ListSalesInquiryForm } from './components/ListSalesInquiryForm';
+import { ListSalesQuotationForm } from './components/ListSalesQuotationForm';
+import { ListSalesOrderForm } from './components/ListSalesOrderForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -42,8 +50,16 @@ export default function App() {
     | 'supplier'
     | 'customer'
     | 'daftar_giro'
+    | 'penjualan_daftar_giro'
+    | 'purchase_request'
+    | 'purchase_order'
+    | 'list_pembelian'
+    | 'retur_pembelian'
+    | 'sales_inquiry'
+    | 'sales_quotation'
+    | 'sales_order'
     | null
-  >('daftar_giro');
+  >('sales_order');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -92,7 +108,36 @@ export default function App() {
       setActiveMdiForm('customer');
       setActiveForm(null);
     } else if (actionName === 'Input Daftar Giro') {
-      setActiveMdiForm('daftar_giro');
+      if (moduleName === 'Penjualan') {
+        setActiveMdiForm('penjualan_daftar_giro');
+      } else {
+        setActiveMdiForm('daftar_giro');
+      }
+      setActiveForm(null);
+    } else if (actionName === 'Purchase Request (PR)' || actionName === 'List Purchase Request') {
+      setActiveMdiForm('purchase_request');
+      setActiveForm(null);
+    } else if (actionName === 'Purchase Order (PO)' || actionName === 'Laporan Purchase Order') {
+      setActiveMdiForm('purchase_order');
+      setActiveForm(null);
+    } else if (actionName === 'Input Pembelian Barang' || actionName === 'Laporan Pembelian Barang') {
+      setActiveMdiForm('list_pembelian');
+      setActiveForm(null);
+    } else if (actionName === 'Retur Pembelian Barang' || actionName === 'Laporan Retur Pembelian Barang') {
+      setActiveMdiForm('retur_pembelian');
+      setActiveForm(null);
+    } else if (actionName === 'Sales Inquary (SI)') {
+      setActiveMdiForm('sales_inquiry');
+      setActiveForm(null);
+    } else if (actionName === 'Sales Quotation (SQ)') {
+      setActiveMdiForm('sales_quotation');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Sales Order (SO)' ||
+      actionName === 'Daftar Sales Order' ||
+      actionName === 'Entry Sales Order (SO)'
+    ) {
+      setActiveMdiForm('sales_order');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -162,6 +207,31 @@ export default function App() {
     } else if (actionName === 'Input Daftar Giro') {
       setActiveMdiForm('daftar_giro');
       setActiveForm(null);
+    } else if (actionName === 'Purchase Request (PR)' || actionName === 'List Purchase Request') {
+      setActiveMdiForm('purchase_request');
+      setActiveForm(null);
+    } else if (actionName === 'Purchase Order (PO)' || actionName === 'Laporan Purchase Order') {
+      setActiveMdiForm('purchase_order');
+      setActiveForm(null);
+    } else if (actionName === 'Input Pembelian Barang' || actionName === 'Laporan Pembelian Barang') {
+      setActiveMdiForm('list_pembelian');
+      setActiveForm(null);
+    } else if (actionName === 'Retur Pembelian Barang' || actionName === 'Laporan Retur Pembelian Barang') {
+      setActiveMdiForm('retur_pembelian');
+      setActiveForm(null);
+    } else if (actionName === 'Sales Inquary (SI)') {
+      setActiveMdiForm('sales_inquiry');
+      setActiveForm(null);
+    } else if (actionName === 'Sales Quotation (SQ)') {
+      setActiveMdiForm('sales_quotation');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Sales Order (SO)' ||
+      actionName === 'Daftar Sales Order' ||
+      actionName === 'Entry Sales Order (SO)'
+    ) {
+      setActiveMdiForm('sales_order');
+      setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
     } else {
@@ -172,7 +242,23 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'daftar_giro'
+    activeMdiForm === 'sales_order'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Sales Order]'
+      : activeMdiForm === 'sales_quotation'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Sales Quotation]'
+      : activeMdiForm === 'sales_inquiry'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Inquiry Penjualan]'
+      : activeMdiForm === 'penjualan_daftar_giro'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
+      : activeMdiForm === 'retur_pembelian'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [List Retur Pembelian]'
+      : activeMdiForm === 'list_pembelian'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [List Pembelian Barang]'
+      : activeMdiForm === 'purchase_order'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Purchase Order]'
+      : activeMdiForm === 'purchase_request'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Purchase Request]'
+      : activeMdiForm === 'daftar_giro'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
       : activeMdiForm === 'customer'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Master Customer]'
@@ -310,6 +396,54 @@ export default function App() {
         {/* Input Daftar Giro MDI Child Window */}
         <InputDaftarGiroForm
           isOpen={activeMdiForm === 'daftar_giro'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Purchase Request MDI Child Window */}
+        <ListPurchaseRequestForm
+          isOpen={activeMdiForm === 'purchase_request'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Purchase Order MDI Child Window */}
+        <ListPurchaseOrderForm
+          isOpen={activeMdiForm === 'purchase_order'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Pembelian Barang MDI Child Window */}
+        <ListPembelianForm
+          isOpen={activeMdiForm === 'list_pembelian'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Retur Pembelian MDI Child Window */}
+        <ListReturPembelianForm
+          isOpen={activeMdiForm === 'retur_pembelian'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Pendaftaran Penerimaan Giro MDI Child Window */}
+        <PendaftaranPenerimaanGiroForm
+          isOpen={activeMdiForm === 'penjualan_daftar_giro'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Sales Inquiry MDI Child Window */}
+        <ListSalesInquiryForm
+          isOpen={activeMdiForm === 'sales_inquiry'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Sales Quotation MDI Child Window */}
+        <ListSalesQuotationForm
+          isOpen={activeMdiForm === 'sales_quotation'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Sales Order MDI Child Window */}
+        <ListSalesOrderForm
+          isOpen={activeMdiForm === 'sales_order'}
           onClose={() => setActiveMdiForm(null)}
         />
 
