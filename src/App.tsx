@@ -33,6 +33,8 @@ import { PendaftaranPenerimaanGiroForm } from './components/PendaftaranPenerimaa
 import { ListSalesInquiryForm } from './components/ListSalesInquiryForm';
 import { ListSalesQuotationForm } from './components/ListSalesQuotationForm';
 import { ListSalesOrderForm } from './components/ListSalesOrderForm';
+import { MutasiSalesOrderForm } from './components/MutasiSalesOrderForm';
+import { ListSuratJalanForm } from './components/ListSuratJalanForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -58,8 +60,10 @@ export default function App() {
     | 'sales_inquiry'
     | 'sales_quotation'
     | 'sales_order'
+    | 'mutasi_sales_order'
+    | 'surat_jalan'
     | null
-  >('sales_order');
+  >('surat_jalan');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -138,6 +142,12 @@ export default function App() {
       actionName === 'Entry Sales Order (SO)'
     ) {
       setActiveMdiForm('sales_order');
+      setActiveForm(null);
+    } else if (actionName === 'Laporan Sales Order') {
+      setActiveMdiForm('mutasi_sales_order');
+      setActiveForm(null);
+    } else if (actionName === 'Surat Jalan (DO)' || actionName === 'Laporan Surat Jalan') {
+      setActiveMdiForm('surat_jalan');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -232,6 +242,12 @@ export default function App() {
     ) {
       setActiveMdiForm('sales_order');
       setActiveForm(null);
+    } else if (actionName === 'Laporan Sales Order') {
+      setActiveMdiForm('mutasi_sales_order');
+      setActiveForm(null);
+    } else if (actionName === 'Surat Jalan (DO)' || actionName === 'Laporan Surat Jalan') {
+      setActiveMdiForm('surat_jalan');
+      setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
     } else {
@@ -242,7 +258,11 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'sales_order'
+    activeMdiForm === 'surat_jalan'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Surat Jalan]'
+      : activeMdiForm === 'mutasi_sales_order'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [I-Software - Mutasi Sales Order]'
+      : activeMdiForm === 'sales_order'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Sales Order]'
       : activeMdiForm === 'sales_quotation'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Sales Quotation]'
@@ -444,6 +464,18 @@ export default function App() {
         {/* List Sales Order MDI Child Window */}
         <ListSalesOrderForm
           isOpen={activeMdiForm === 'sales_order'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Mutasi Sales Order MDI Child Window */}
+        <MutasiSalesOrderForm
+          isOpen={activeMdiForm === 'mutasi_sales_order'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Surat Jalan MDI Child Window */}
+        <ListSuratJalanForm
+          isOpen={activeMdiForm === 'surat_jalan'}
           onClose={() => setActiveMdiForm(null)}
         />
 
