@@ -11,6 +11,7 @@ import {
 export interface SubMenuItem {
   label: string;
   divider?: boolean;
+  disabled?: boolean;
   action?: () => void;
 }
 
@@ -18,6 +19,7 @@ export interface ToolbarMenuItem {
   label: string;
   shortcut?: string;
   divider?: boolean;
+  disabled?: boolean;
   hasSubmenu?: boolean;
   subItems?: SubMenuItem[];
   action?: () => void;
@@ -96,10 +98,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
         { label: 'Tabel Tipe' },
         { label: 'Master Barang' },
         { divider: true, label: '' },
-        { label: 'Company Profile' },
         { label: 'Rekening Bank' },
         { label: 'Master Wilayah' },
         { label: 'Master Lokasi Gudang' },
+        { label: 'Company Profile' },
         { divider: true, label: '' },
         { label: 'Master Expedisi' },
         { label: 'Master Sales' },
@@ -114,7 +116,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
       label: 'Pembelian',
       icon: <PembelianIcon />,
       items: [
-        { label: 'Input Saldo Awal Hutang' },
+        { label: 'Input Saldo Awal Hutang', disabled: true },
         { label: 'Input Daftar Giro' },
         { divider: true, label: '' },
         { label: 'Purchase Request (PR)' },
@@ -123,6 +125,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
         { label: 'Retur Pembelian Barang' },
         {
           label: 'Pembayaran Hutang Dagang',
+          disabled: true,
           hasSubmenu: true,
           subItems: [
             { label: 'Pembayaran Kas / Tunai' },
@@ -131,14 +134,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
             { label: 'Daftar Pembayaran Hutang' },
           ],
         },
-        { label: 'Posting Giro Keluar' },
+        { label: 'Posting Giro Keluar', disabled: true },
         { divider: true, label: '' },
-        { label: 'Laporan Purchase Order' },
-        { label: 'Laporan Pembelian Barang' },
-        { label: 'Laporan Retur Pembelian Barang' },
-        { label: 'Rekap Hutang Dagang' },
-        { label: 'Kartu Hutang' },
-        { label: 'Rekap Pembayaran Hutang' },
+        { label: 'Laporan Purchase Order', disabled: true },
+        { label: 'Laporan Pembelian Barang', disabled: true },
+        { label: 'Laporan Retur Pembelian Barang', disabled: true },
+        { label: 'Rekap Hutang Dagang', disabled: true },
+        { label: 'Kartu Hutang', disabled: true },
+        { label: 'Rekap Pembayaran Hutang', disabled: true },
       ],
     },
 
@@ -148,7 +151,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
       label: 'Penjualan',
       icon: <PenjualanIcon />,
       items: [
-        { label: 'Input Saldo Awal Piutang' },
+        { label: 'Input Saldo Awal Piutang', disabled: true },
         { label: 'Input Daftar Giro' },
         { divider: true, label: '' },
         { label: 'Sales Inquary (SI)' },
@@ -173,9 +176,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
           ],
         },
         { label: 'Retur Penjualan Barang' },
-        { label: 'Input Tukar Faktur' },
+        { label: 'Input Tukar Faktur', disabled: true },
         {
           label: 'A/R Payment (Piutang Dagang)',
+          disabled: true,
           hasSubmenu: true,
           subItems: [
             { label: 'Penerimaan Pembayaran Tunai' },
@@ -184,17 +188,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
             { label: 'Daftar Pembayaran Piutang' },
           ],
         },
-        { label: 'Posting Giro In' },
-        { label: 'Hitung Komisi' },
+        { label: 'Posting Giro In', disabled: true },
+        { label: 'Hitung Komisi', disabled: true },
         { divider: true, label: '' },
         { label: 'Laporan Sales Order' },
         { label: 'Laporan Surat Jalan' },
         { label: 'Laporan Penjualan Barang' },
         { label: 'Laporan Retur Penjualan Barang' },
-        { label: 'Rekap Piutang Dagang' },
-        { label: 'Kartu Piutang' },
-        { label: 'Laporan Pembayaran dan Penerimaan Giro' },
-        { label: 'Laporan Omset Penjualan' },
+        { label: 'Rekap Piutang Dagang', disabled: true },
+        { label: 'Kartu Piutang', disabled: true },
+        { label: 'Laporan Pembayaran dan Penerimaan Giro', disabled: true },
+        { label: 'Laporan Omset Penjualan', disabled: true },
       ],
     },
 
@@ -205,12 +209,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
       icon: <StockIcon />,
       items: [
         { label: 'Input Persediaan Awal' },
-        { label: 'Input Modal Barang' },
+        { label: 'Input Modal Barang', disabled: true },
         { divider: true, label: '' },
-        { label: 'Mutasi Antar Lokasi' },
+        { label: 'Mutasi Antar Lokasi', disabled: true },
         { divider: true, label: '' },
-        { label: 'Penerimaan Barang Lain' },
-        { label: 'Pengeluaran Barang Lain' },
+        { label: 'Penerimaan Barang Lain', disabled: true },
+        { label: 'Pengeluaran Barang Lain', disabled: true },
         { divider: true, label: '' },
         { label: 'Cetak Item Barang' },
         { label: 'Kartu Stock' },
@@ -350,13 +354,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
                         <button
                           id={`toolbar-menu-item-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
                           type="button"
+                          disabled={item.disabled}
                           onClick={() => {
-                            if (!hasSub) {
+                            if (!item.disabled && !hasSub) {
                               handleItemClick(tool.label, item);
                             }
                           }}
                           className={`w-full flex items-center justify-between px-3 py-1 text-left ${
-                            isSubOpen
+                            item.disabled
+                              ? 'text-[#888888] cursor-default'
+                              : isSubOpen
                               ? 'bg-gradient-to-r from-[#D7E6F8] to-[#EAF2FC] text-black border-y border-[#B2CEEF]'
                               : 'hover:bg-gradient-to-r hover:from-[#D7E6F8] hover:to-[#EAF2FC] hover:border-y hover:border-[#B2CEEF] text-black cursor-pointer'
                           }`}
@@ -365,12 +372,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
 
                           <div className="flex items-center space-x-2">
                             {item.shortcut && (
-                              <span className="text-[10px] text-gray-500 font-sans">
+                              <span className={`text-[10px] font-sans ${item.disabled ? 'text-[#888888]' : 'text-gray-500'}`}>
                                 {item.shortcut}
                               </span>
                             )}
                             {hasSub && (
-                              <span className="text-[8px] text-black pl-1">
+                              <span className={`text-[8px] pl-1 ${item.disabled ? 'text-[#888888]' : 'text-black'}`}>
                                 ▶
                               </span>
                             )}
@@ -378,7 +385,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
                         </button>
 
                         {/* Nested Submenu */}
-                        {hasSub && isSubOpen && item.subItems && (
+                        {!item.disabled && hasSub && isSubOpen && item.subItems && (
                           <div
                             id={`toolbar-submenu-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
                             className="absolute left-full top-[-2px] min-w-[190px] bg-[#F7F7F6] border border-[#7F9DB9] shadow-[2px_3px_6px_rgba(0,0,0,0.3)] py-1 z-50 text-[11px]"
@@ -396,8 +403,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
                                 <button
                                   key={subIdx}
                                   type="button"
-                                  onClick={() => handleSubItemClick(tool.label, subItem)}
-                                  className="w-full px-3 py-1 text-left text-black hover:bg-gradient-to-r hover:from-[#D7E6F8] hover:to-[#EAF2FC] hover:border-y hover:border-[#B2CEEF] cursor-pointer whitespace-nowrap"
+                                  disabled={subItem.disabled}
+                                  onClick={() => {
+                                    if (!subItem.disabled) {
+                                      handleSubItemClick(tool.label, subItem);
+                                    }
+                                  }}
+                                  className={`w-full px-3 py-1 text-left whitespace-nowrap ${
+                                    subItem.disabled
+                                      ? 'text-[#888888] cursor-default'
+                                      : 'text-black hover:bg-gradient-to-r hover:from-[#D7E6F8] hover:to-[#EAF2FC] hover:border-y hover:border-[#B2CEEF] cursor-pointer'
+                                  }`}
                                 >
                                   {subItem.label}
                                 </button>
