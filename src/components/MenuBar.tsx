@@ -37,6 +37,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       items: [
         {
           label: 'Database Utility',
+          disabled: true,
           hasSubmenu: true,
           subItems: [
             { label: 'Backup Database...', action: () => handleAction('Backup Database') },
@@ -50,6 +51,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         { divider: true, label: '' },
         {
           label: 'SecurityTransaksi',
+          disabled: true,
           hasSubmenu: true,
           subItems: [
             { label: 'Otorisasi Transaksi...', action: () => handleAction('Otorisasi Transaksi') },
@@ -60,12 +62,12 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         },
         { divider: true, label: '' },
         { label: 'Tabel Transaksi', action: () => handleAction('Tabel Transaksi') },
-        { label: 'Tabel Kurs', action: () => handleAction('Tabel Kurs') },
+        { label: 'Tabel Kurs', disabled: true, action: () => handleAction('Tabel Kurs') },
         { divider: true, label: '' },
         { label: 'Set Periode Bulan', action: () => handleAction('Set Periode Bulan') },
-        { label: 'Perbaikan Transaksi', action: () => handleAction('Perbaikan Transaksi') },
-        { label: 'Posting Transaksi To Jurnal', action: () => handleAction('Posting Transaksi To Jurnal') },
-        { label: 'Proses Bulanan', action: () => handleAction('Proses Bulanan') },
+        { label: 'Perbaikan Transaksi', disabled: true, action: () => handleAction('Perbaikan Transaksi') },
+        { label: 'Posting Transaksi To Jurnal', disabled: true, action: () => handleAction('Posting Transaksi To Jurnal') },
+        { label: 'Proses Bulanan', disabled: true, action: () => handleAction('Proses Bulanan') },
         { divider: true, label: '' },
         { label: 'LogOut', action: onLogout || onExit },
       ],
