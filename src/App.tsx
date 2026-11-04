@@ -35,6 +35,8 @@ import { ListSalesQuotationForm } from './components/ListSalesQuotationForm';
 import { ListSalesOrderForm } from './components/ListSalesOrderForm';
 import { MutasiSalesOrderForm } from './components/MutasiSalesOrderForm';
 import { ListSuratJalanForm } from './components/ListSuratJalanForm';
+import { ListFakturPenjualanForm } from './components/ListFakturPenjualanForm';
+import { ListReturPenjualanForm } from './components/ListReturPenjualanForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -62,8 +64,10 @@ export default function App() {
     | 'sales_order'
     | 'mutasi_sales_order'
     | 'surat_jalan'
+    | 'faktur_penjualan'
+    | 'retur_penjualan'
     | null
-  >('surat_jalan');
+  >('retur_penjualan');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -148,6 +152,20 @@ export default function App() {
       setActiveForm(null);
     } else if (actionName === 'Surat Jalan (DO)' || actionName === 'Laporan Surat Jalan') {
       setActiveMdiForm('surat_jalan');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Penjualan Barang' ||
+      actionName === 'Invoice Penjualan' ||
+      actionName === 'Daftar Invoice Penjualan' ||
+      actionName === 'Entry Invoice Penjualan'
+    ) {
+      setActiveMdiForm('faktur_penjualan');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Retur Penjualan Barang' ||
+      actionName === 'Laporan Retur Penjualan Barang'
+    ) {
+      setActiveMdiForm('retur_penjualan');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -248,6 +266,20 @@ export default function App() {
     } else if (actionName === 'Surat Jalan (DO)' || actionName === 'Laporan Surat Jalan') {
       setActiveMdiForm('surat_jalan');
       setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Penjualan Barang' ||
+      actionName === 'Invoice Penjualan' ||
+      actionName === 'Daftar Invoice Penjualan' ||
+      actionName === 'Entry Invoice Penjualan'
+    ) {
+      setActiveMdiForm('faktur_penjualan');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Retur Penjualan Barang' ||
+      actionName === 'Laporan Retur Penjualan Barang'
+    ) {
+      setActiveMdiForm('retur_penjualan');
+      setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
     } else {
@@ -258,7 +290,11 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'surat_jalan'
+    activeMdiForm === 'retur_penjualan'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Retur Penjualan]'
+      : activeMdiForm === 'faktur_penjualan'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Faktur Penjualan]'
+      : activeMdiForm === 'surat_jalan'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Surat Jalan]'
       : activeMdiForm === 'mutasi_sales_order'
       ? 'Indo IT - Main Menu ~ Menu Utama - [I-Software - Mutasi Sales Order]'
@@ -476,6 +512,18 @@ export default function App() {
         {/* List Surat Jalan MDI Child Window */}
         <ListSuratJalanForm
           isOpen={activeMdiForm === 'surat_jalan'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Faktur Penjualan MDI Child Window */}
+        <ListFakturPenjualanForm
+          isOpen={activeMdiForm === 'faktur_penjualan'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Retur Penjualan MDI Child Window */}
+        <ListReturPenjualanForm
+          isOpen={activeMdiForm === 'retur_penjualan'}
           onClose={() => setActiveMdiForm(null)}
         />
 
