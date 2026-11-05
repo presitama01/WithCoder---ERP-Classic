@@ -39,6 +39,9 @@ import { ListFakturPenjualanForm } from './components/ListFakturPenjualanForm';
 import { ListReturPenjualanForm } from './components/ListReturPenjualanForm';
 import { SalesOrderDetailForm } from './components/SalesOrderDetailForm';
 import { LaporanSuratJalanPrintForm } from './components/LaporanSuratJalanPrintForm';
+import { StockAwalForm } from './components/StockAwalForm';
+import { ReturPenjualanBerdasarkanFakturForm } from './components/ReturPenjualanBerdasarkanFakturForm';
+import { ItemCostStockPrintForm } from './components/ItemCostStockPrintForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -70,8 +73,11 @@ export default function App() {
     | 'retur_penjualan'
     | 'sales_order_detail'
     | 'laporan_surat_jalan'
+    | 'stock_awal'
+    | 'retur_penjualan_faktur'
+    | 'item_cost_stock'
     | null
-  >('laporan_surat_jalan');
+  >('item_cost_stock');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -182,9 +188,32 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Retur Penjualan Barang' ||
-      actionName === 'Laporan Retur Penjualan Barang'
+      actionName === 'Retur Penjualan Berdasarkan Faktur' ||
+      actionName === 'Laporan Retur Penjualan Barang' ||
+      actionName === '01 - Retur Penjualan Barang'
+    ) {
+      setActiveMdiForm('retur_penjualan_faktur');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Daftar Retur Penjualan' ||
+      actionName === 'List Retur Penjualan'
     ) {
       setActiveMdiForm('retur_penjualan');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Input Persediaan Awal' ||
+      actionName === 'Stok Awal' ||
+      actionName === 'Stock Awal'
+    ) {
+      setActiveMdiForm('stock_awal');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Cetak Item Barang' ||
+      actionName === 'Item Cost Stock' ||
+      actionName === 'Item Cost & Stock' ||
+      actionName === 'ITEM COST _STOCK'
+    ) {
+      setActiveMdiForm('item_cost_stock');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -310,9 +339,32 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Retur Penjualan Barang' ||
-      actionName === 'Laporan Retur Penjualan Barang'
+      actionName === 'Retur Penjualan Berdasarkan Faktur' ||
+      actionName === 'Laporan Retur Penjualan Barang' ||
+      actionName === '01 - Retur Penjualan Barang'
+    ) {
+      setActiveMdiForm('retur_penjualan_faktur');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Daftar Retur Penjualan' ||
+      actionName === 'List Retur Penjualan'
     ) {
       setActiveMdiForm('retur_penjualan');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Input Persediaan Awal' ||
+      actionName === 'Stok Awal' ||
+      actionName === 'Stock Awal'
+    ) {
+      setActiveMdiForm('stock_awal');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Cetak Item Barang' ||
+      actionName === 'Item Cost Stock' ||
+      actionName === 'Item Cost & Stock' ||
+      actionName === 'ITEM COST _STOCK'
+    ) {
+      setActiveMdiForm('item_cost_stock');
       setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
@@ -324,7 +376,11 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'sales_order_detail' || activeMdiForm === 'laporan_surat_jalan'
+    activeMdiForm === 'sales_order_detail' ||
+    activeMdiForm === 'laporan_surat_jalan' ||
+    activeMdiForm === 'stock_awal' ||
+    activeMdiForm === 'retur_penjualan_faktur' ||
+    activeMdiForm === 'item_cost_stock'
       ? 'Indo IT - Main Menu ~ Menu Utama'
       : activeMdiForm === 'retur_penjualan'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Retur Penjualan]'
@@ -569,11 +625,30 @@ export default function App() {
         <ListReturPenjualanForm
           isOpen={activeMdiForm === 'retur_penjualan'}
           onClose={() => setActiveMdiForm(null)}
+          onOpenPrintReport={() => setActiveMdiForm('retur_penjualan_faktur')}
+        />
+
+        {/* Retur Penjualan Berdasarkan Faktur Dialog Window */}
+        <ReturPenjualanBerdasarkanFakturForm
+          isOpen={activeMdiForm === 'retur_penjualan_faktur'}
+          onClose={() => setActiveMdiForm(null)}
         />
 
         {/* Sales Order Detail Print Report Dialog Window */}
         <SalesOrderDetailForm
           isOpen={activeMdiForm === 'sales_order_detail'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Stock Awal / Input Persediaan Awal MDI Child Dialog Window */}
+        <StockAwalForm
+          isOpen={activeMdiForm === 'stock_awal'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Item Cost Stock / Cetak Item Barang Dialog Window */}
+        <ItemCostStockPrintForm
+          isOpen={activeMdiForm === 'item_cost_stock'}
           onClose={() => setActiveMdiForm(null)}
         />
 

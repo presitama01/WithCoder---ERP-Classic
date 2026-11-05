@@ -22,11 +22,13 @@ export interface ReturPenjualanItem {
 interface ListReturPenjualanFormProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenPrintReport?: () => void;
 }
 
 export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   isOpen,
   onClose,
+  onOpenPrintReport,
 }) => {
   const [returList, setReturList] = useState<ReturPenjualanItem[]>([
     {
@@ -228,6 +230,16 @@ ALTER TABLE public.retur_penjualan ENABLE ROW LEVEL SECURITY;
             <span className="text-red-700 font-bold">🗑</span>
             <span>Delete</span>
           </button>
+          {onOpenPrintReport && (
+            <button
+              onClick={onOpenPrintReport}
+              className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
+              title="Buka Form Retur Penjualan Berdasarkan Faktur"
+            >
+              <span className="text-blue-700">🖶</span>
+              <span>Retur Berdasarkan Faktur</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center space-x-3">
