@@ -23,11 +23,13 @@ export interface SuratJalanItem {
 interface ListSuratJalanFormProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenPrintReport?: () => void;
 }
 
 export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   isOpen,
   onClose,
+  onOpenPrintReport,
 }) => {
   const [sjList, setSjList] = useState<SuratJalanItem[]>([
     {
@@ -239,6 +241,16 @@ ALTER TABLE public.surat_jalan ENABLE ROW LEVEL SECURITY;
             <span className="text-red-700 font-bold">🗑</span>
             <span>Delete</span>
           </button>
+          {onOpenPrintReport && (
+            <button
+              onClick={onOpenPrintReport}
+              className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
+              title="Buka Dialog Laporan Surat Jalan"
+            >
+              <span className="text-blue-700">🖶</span>
+              <span>Laporan Surat Jalan</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center space-x-3">

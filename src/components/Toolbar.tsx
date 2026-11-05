@@ -160,6 +160,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
           label: 'Sales Order (SO)',
           hasSubmenu: true,
           subItems: [
+            { label: 'Sales Order Detail' },
             { label: 'Entry Sales Order (SO)' },
             { label: 'Daftar Sales Order' },
             { label: 'Otorisasi SO' },
@@ -324,7 +325,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
               {isOpen && tool.items && (
                 <div
                   id={`toolbar-menu-${tool.id}`}
-                  className="absolute left-0 top-[52px] min-w-[215px] max-h-[calc(100vh-140px)] overflow-y-auto bg-[#F7F7F6] border border-[#7F9DB9] shadow-[2px_4px_8px_rgba(0,0,0,0.35)] py-1 z-[9999] text-[11px] font-sans"
+                  className="absolute left-0 top-[52px] min-w-[215px] bg-[#F7F7F6] border border-[#7F9DB9] shadow-[2px_4px_8px_rgba(0,0,0,0.35)] py-1 z-[9999] text-[11px] font-sans"
                 >
                   {tool.items.map((item, itemIdx) => {
                     if (item.divider) {
@@ -356,7 +357,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
                           type="button"
                           disabled={item.disabled}
                           onClick={() => {
-                            if (!item.disabled && !hasSub) {
+                            if (!item.disabled) {
                               handleItemClick(tool.label, item);
                             }
                           }}

@@ -23,11 +23,13 @@ export interface SalesOrderItem {
 interface ListSalesOrderFormProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenDetail?: () => void;
 }
 
 export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   isOpen,
   onClose,
+  onOpenDetail,
 }) => {
   const [soList, setSoList] = useState<SalesOrderItem[]>([
     {
@@ -243,6 +245,16 @@ ALTER TABLE public.sales_order ENABLE ROW LEVEL SECURITY;
             <span className="text-red-700 font-bold">🗑</span>
             <span>Delete</span>
           </button>
+          {onOpenDetail && (
+            <button
+              onClick={onOpenDetail}
+              className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
+              title="Cetak Sales Order Detail"
+            >
+              <span>🖶</span>
+              <span>Sales Order Detail</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center space-x-3">

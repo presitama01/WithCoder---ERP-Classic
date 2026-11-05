@@ -37,6 +37,8 @@ import { MutasiSalesOrderForm } from './components/MutasiSalesOrderForm';
 import { ListSuratJalanForm } from './components/ListSuratJalanForm';
 import { ListFakturPenjualanForm } from './components/ListFakturPenjualanForm';
 import { ListReturPenjualanForm } from './components/ListReturPenjualanForm';
+import { SalesOrderDetailForm } from './components/SalesOrderDetailForm';
+import { LaporanSuratJalanPrintForm } from './components/LaporanSuratJalanPrintForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -66,8 +68,10 @@ export default function App() {
     | 'surat_jalan'
     | 'faktur_penjualan'
     | 'retur_penjualan'
+    | 'sales_order_detail'
+    | 'laporan_surat_jalan'
     | null
-  >('retur_penjualan');
+  >('laporan_surat_jalan');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -142,15 +146,30 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Sales Order (SO)' ||
+      actionName === 'Sales Order Detail' ||
+      actionName === '01 - Sales Order Detail'
+    ) {
+      setActiveMdiForm('sales_order_detail');
+      setActiveForm(null);
+    } else if (
       actionName === 'Daftar Sales Order' ||
-      actionName === 'Entry Sales Order (SO)'
+      actionName === 'Entry Sales Order (SO)' ||
+      actionName === 'List Sales Order'
     ) {
       setActiveMdiForm('sales_order');
       setActiveForm(null);
     } else if (actionName === 'Laporan Sales Order') {
       setActiveMdiForm('mutasi_sales_order');
       setActiveForm(null);
-    } else if (actionName === 'Surat Jalan (DO)' || actionName === 'Laporan Surat Jalan') {
+    } else if (
+      actionName === 'Surat Jalan (DO)' ||
+      actionName === 'Sales Order (DO)' ||
+      actionName === 'Laporan Surat Jalan' ||
+      actionName === '01 - Laporan Detail Surat Jalan'
+    ) {
+      setActiveMdiForm('laporan_surat_jalan');
+      setActiveForm(null);
+    } else if (actionName === 'Daftar Surat Jalan' || actionName === 'List Surat Jalan') {
       setActiveMdiForm('surat_jalan');
       setActiveForm(null);
     } else if (
@@ -255,15 +274,30 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Sales Order (SO)' ||
+      actionName === 'Sales Order Detail' ||
+      actionName === '01 - Sales Order Detail'
+    ) {
+      setActiveMdiForm('sales_order_detail');
+      setActiveForm(null);
+    } else if (
       actionName === 'Daftar Sales Order' ||
-      actionName === 'Entry Sales Order (SO)'
+      actionName === 'Entry Sales Order (SO)' ||
+      actionName === 'List Sales Order'
     ) {
       setActiveMdiForm('sales_order');
       setActiveForm(null);
     } else if (actionName === 'Laporan Sales Order') {
       setActiveMdiForm('mutasi_sales_order');
       setActiveForm(null);
-    } else if (actionName === 'Surat Jalan (DO)' || actionName === 'Laporan Surat Jalan') {
+    } else if (
+      actionName === 'Surat Jalan (DO)' ||
+      actionName === 'Sales Order (DO)' ||
+      actionName === 'Laporan Surat Jalan' ||
+      actionName === '01 - Laporan Detail Surat Jalan'
+    ) {
+      setActiveMdiForm('laporan_surat_jalan');
+      setActiveForm(null);
+    } else if (actionName === 'Daftar Surat Jalan' || actionName === 'List Surat Jalan') {
       setActiveMdiForm('surat_jalan');
       setActiveForm(null);
     } else if (
@@ -290,7 +324,9 @@ export default function App() {
 
   // Window title reflects active child form
   const windowTitle =
-    activeMdiForm === 'retur_penjualan'
+    activeMdiForm === 'sales_order_detail' || activeMdiForm === 'laporan_surat_jalan'
+      ? 'Indo IT - Main Menu ~ Menu Utama'
+      : activeMdiForm === 'retur_penjualan'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Retur Penjualan]'
       : activeMdiForm === 'faktur_penjualan'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Faktur Penjualan]'
@@ -501,6 +537,7 @@ export default function App() {
         <ListSalesOrderForm
           isOpen={activeMdiForm === 'sales_order'}
           onClose={() => setActiveMdiForm(null)}
+          onOpenDetail={() => setActiveMdiForm('sales_order_detail')}
         />
 
         {/* Mutasi Sales Order MDI Child Window */}
@@ -513,6 +550,13 @@ export default function App() {
         <ListSuratJalanForm
           isOpen={activeMdiForm === 'surat_jalan'}
           onClose={() => setActiveMdiForm(null)}
+          onOpenPrintReport={() => setActiveMdiForm('laporan_surat_jalan')}
+        />
+
+        {/* Laporan Surat Jalan Print Report Dialog Window */}
+        <LaporanSuratJalanPrintForm
+          isOpen={activeMdiForm === 'laporan_surat_jalan'}
+          onClose={() => setActiveMdiForm(null)}
         />
 
         {/* List Faktur Penjualan MDI Child Window */}
@@ -524,6 +568,12 @@ export default function App() {
         {/* List Retur Penjualan MDI Child Window */}
         <ListReturPenjualanForm
           isOpen={activeMdiForm === 'retur_penjualan'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Sales Order Detail Print Report Dialog Window */}
+        <SalesOrderDetailForm
+          isOpen={activeMdiForm === 'sales_order_detail'}
           onClose={() => setActiveMdiForm(null)}
         />
 
