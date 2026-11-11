@@ -13,7 +13,7 @@ export interface SalesQuotationItem {
   amount: string;
   dibuatOleh: string;
   tglCreated: string;
-  diupdateOleh: string;
+  diUpdateOleh: string;
   tglUpdate: string;
 }
 
@@ -38,8 +38,8 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       amount: '17,327,100.',
       dibuatOleh: 'RETNO',
       tglCreated: '03-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
+      diUpdateOleh: '',
+      tglUpdate: '',
     },
     {
       id: '2',
@@ -47,13 +47,13 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       tanggal: '04-Aug-2026',
       namaCustomer: 'PT. INDOFOOD CBP SUKSES',
       sales: 'DARMASTI',
-      noInquiry: '-',
+      noInquiry: '',
       keterangan: '1. Price are Nett,',
       amount: '7,237,200.',
       dibuatOleh: 'RETNO',
       tglCreated: '04-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
+      diUpdateOleh: '',
+      tglUpdate: '',
     },
     {
       id: '3',
@@ -61,13 +61,13 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       tanggal: '05-Aug-2026',
       namaCustomer: 'PT. ASTRA HONDA MOTOR',
       sales: 'DARMASTI',
-      noInquiry: '-',
+      noInquiry: '',
       keterangan: '1. Price are Nett,',
       amount: '1,359,750.',
       dibuatOleh: 'RETNO',
       tglCreated: '05-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
+      diUpdateOleh: '',
+      tglUpdate: '',
     },
     {
       id: '4',
@@ -80,7 +80,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       amount: '6,410,250.',
       dibuatOleh: 'RETNO',
       tglCreated: '05-Aug-2026',
-      diupdateOleh: 'RETNO',
+      diUpdateOleh: 'RETNO',
       tglUpdate: '06-Aug-2026',
     },
   ]);
@@ -88,7 +88,8 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   const [selectedId, setSelectedId] = useState<string>('1');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('03-Aug-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('');
+  const [yellowNote, setYellowNote] = useState<string>('');
 
   // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -98,9 +99,9 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   const [newTanggal, setNewTanggal] = useState<string>('05-Aug-2026');
   const [newCustomer, setNewCustomer] = useState<string>('PT. STAINLESS STEEL');
   const [newSales, setNewSales] = useState<string>('M. TUTUK');
-  const [newNoInquiry, setNewNoInquiry] = useState<string>('-');
+  const [newNoInquiry, setNewNoInquiry] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('1. Price are Nett,');
-  const [newAmount, setNewAmount] = useState<string>('5,000,000');
+  const [newAmount, setNewAmount] = useState<string>('5,000,000.');
 
   if (!isOpen) return null;
 
@@ -115,15 +116,18 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     setNewTanggal('05-Aug-2026');
     setNewCustomer('PT. STAINLESS STEEL');
     setNewSales('M. TUTUK');
-    setNewNoInquiry('-');
+    setNewNoInquiry('');
     setNewKeterangan('1. Price are Nett,');
-    setNewAmount('5,000,000');
+    setNewAmount('5,000,000.');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = quotationList.find((q) => q.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris data terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoSq(item.noSq);
     setNewTanggal(item.tanggal);
@@ -146,13 +150,13 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
             ? {
                 ...item,
                 noSq: newNoSq.trim().toUpperCase(),
-                tanggal: newTanggal,
+                tanggal: newTanggal.trim(),
                 namaCustomer: newCustomer.trim().toUpperCase(),
                 sales: newSales.trim().toUpperCase(),
                 noInquiry: newNoInquiry.trim().toUpperCase(),
                 keterangan: newKeterangan.trim(),
                 amount: newAmount.trim(),
-                diupdateOleh: 'RETNO',
+                diUpdateOleh: 'RETNO',
                 tglUpdate: '06-Aug-2026',
               }
             : item
@@ -163,19 +167,19 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       const newItem: SalesQuotationItem = {
         id: Date.now().toString(),
         noSq: newNoSq.trim().toUpperCase(),
-        tanggal: newTanggal,
+        tanggal: newTanggal.trim(),
         namaCustomer: newCustomer.trim().toUpperCase(),
         sales: newSales.trim().toUpperCase(),
         noInquiry: newNoInquiry.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
         amount: newAmount.trim(),
         dibuatOleh: 'RETNO',
-        tglCreated: '05-Aug-2026',
-        diupdateOleh: '-',
-        tglUpdate: '-',
+        tglCreated: newTanggal.trim(),
+        diUpdateOleh: '',
+        tglUpdate: '',
       };
 
-      setQuotationList([newItem, ...quotationList]);
+      setQuotationList([...quotationList, newItem]);
       setSelectedId(newItem.id);
       showFeedback('Sales Quotation tersimpan');
     }
@@ -192,10 +196,20 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     showFeedback('Sales Quotation dihapus');
   };
 
+  const uniqueTanggalOptions = Array.from(
+    new Set(quotationList.map((item) => item.tanggal).filter(Boolean))
+  );
+
   const filteredList = quotationList.filter((item) => {
+    const matchesTanggal =
+      !tanggalFilter.trim() ||
+      item.tanggal.toLowerCase() === tanggalFilter.trim().toLowerCase();
+
+    if (!matchesTanggal) return false;
     if (!searchTerm.trim()) return true;
+
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.SQ') {
+    if (searchField === 'No. SQ') {
       return item.noSq.toLowerCase().includes(term);
     } else if (searchField === 'Nama Pelanggan') {
       return item.namaCustomer.toLowerCase().includes(term);
@@ -203,6 +217,8 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       return item.sales.toLowerCase().includes(term);
     } else if (searchField === 'No. Inquiry') {
       return item.noInquiry.toLowerCase().includes(term);
+    } else if (searchField === 'Keterangan') {
+      return item.keterangan.toLowerCase().includes(term);
     }
     return (
       item.noSq.toLowerCase().includes(term) ||
@@ -216,252 +232,308 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       id="list-sales-quotation-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
-      {/* 1. Black Window Header Banner */}
-      <FormHeaderBanner
-        title="List Sales Quotation"
-        onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
-      />
+      <div className="w-full h-full flex flex-col min-w-0">
+        {/* 1. Unified Black Top Banner */}
+        <FormHeaderBanner
+          title="List Sales Quotation"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
-      {/* 2. Action Toolbar & Filter Header */}
-      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
-        <div className="flex items-center space-x-2">
-          <FormActionButtons
-            onSimpan={() => showFeedback('Data Sales Quotation tersimpan')}
-            onBaru={handleAddNew}
-            onKoreksi={handleEdit}
-            onHapus={() => selectedId && handleDelete(selectedId)}
-            feedback={feedback}
-          />
-        </div>
-
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1">
-            <span className="font-semibold">Tanggal :</span>
-            <input
-              type="text"
-              value={tanggalFilter}
-              onChange={(e) => setTanggalFilter(e.target.value)}
-              className="px-2 py-0.5 w-24 bg-white border border-[#7A7A7A] text-xs"
+        {/* 2. Action Toolbar, Tanggal Filter & Rp 0 */}
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
+          <div className="flex items-center space-x-3">
+            <FormActionButtons
+              onSimpan={() => showFeedback('Data Sales Quotation tersimpan')}
+              onBaru={handleAddNew}
+              onKoreksi={handleEdit}
+              onHapus={() => selectedId && handleDelete(selectedId)}
+              feedback={feedback}
             />
-            <button className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]">
-              ▼
-            </button>
-            <button
-              onClick={() => setTanggalFilter('Semua')}
-              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]"
-            >
-              Semua
-            </button>
-          </div>
-          <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[90px] shadow-inner">
-            Rp 0
-          </div>
-        </div>
-      </div>
 
-      {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
-      <div className="flex-1 overflow-auto bg-white border border-[#7A7A7A] m-2 relative">
-        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1300px]">
-          <thead>
-            <tr className="bg-[#ECE9D8] text-black border-b border-[#919191] text-[11px] font-semibold sticky top-0 z-10">
-              <th className="border-r border-[#919191] px-2 py-1.5 w-8 text-center">▶</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">No. SQ</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Tanggal</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Nama Customer</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Sales</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">No. Inquiry</th>
-              <th className="border-r border-[#919191] px-3 py-1.5 text-center bg-[#E2DECD]" colSpan={2}>
-                List
-              </th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Dibuat Oleh</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Tgl.Created</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Diupdate Oleh</th>
-              <th className="px-3 py-1.5">Tgl.Update</th>
-            </tr>
-            <tr className="bg-[#EAE6D9] text-black border-b border-[#919191] text-[10px] sticky top-[27px] z-10">
-              <th className="border-r border-[#919191] px-2 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1">Keterangan</th>
-              <th className="border-r border-[#919191] px-3 py-1">Amount</th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="border-r border-[#919191] px-3 py-1"></th>
-              <th className="px-3 py-1"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredList.map((item, index) => {
-              const isSelected = selectedId === item.id;
-              return (
-                <tr
-                  key={item.id}
-                  onClick={() => setSelectedId(item.id)}
-                  className={`border-b border-[#E0E0E0] cursor-pointer text-xs ${
-                    isSelected ? 'bg-[#000084] text-white' : index % 2 === 0 ? 'bg-white hover:bg-[#F2F0EB]' : 'bg-[#F9F8F5] hover:bg-[#F2F0EB]'
-                  }`}
-                >
-                  <td className="border-r border-[#E0E0E0] px-2 py-1 text-center font-bold">
-                    {isSelected ? '▶' : ''}
-                  </td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noSq}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tanggal}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 font-medium">{item.namaCustomer}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.sales}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noInquiry}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right">{item.amount}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.dibuatOleh}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglCreated}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.diupdateOleh}</td>
-                  <td className="px-3 py-1">{item.tglUpdate}</td>
-                </tr>
-              );
-            })}
-            {filteredList.length === 0 && (
-              <tr>
-                <td colSpan={12} className="text-center py-6 text-gray-500">
-                  Tidak ada data sales quotation
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* 4. Bottom Search Bar & Record Status */}
-      <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2">
-          <span className="font-semibold">Search :</span>
-          <select
-            value={searchField}
-            onChange={(e) => setSearchField(e.target.value)}
-            className="px-2 py-0.5 bg-white border border-[#7A7A7A] text-xs rounded"
-          >
-            <option value="Nama Pelanggan">Nama Pelanggan</option>
-            <option value="No.SQ">No.SQ</option>
-            <option value="Sales">Sales</option>
-            <option value="No. Inquiry">No. Inquiry</option>
-          </select>
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Cari data..."
-            className="px-2 py-0.5 w-64 bg-white border border-[#7A7A7A] text-xs shadow-inner"
-          />
-        </div>
-        <div className="flex items-center space-x-4">
-          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner"></div>
-          <div className="font-semibold px-2 py-0.5 bg-[#ECE9D8] border border-[#919191]">
-            Record {filteredList.length}
-          </div>
-        </div>
-      </div>
-
-      {/* Add New Modal */}
-      {isAddOpen && (
-        <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
-              <span>{editingId ? 'Koreksi Sales Quotation' : 'Tambah Sales Quotation Baru'}</span>
-              <button
-                onClick={() => setIsAddOpen(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
+            <div className="flex items-center space-x-1.5 pl-2">
+              <span className="font-bold text-black text-[11px]">Tanggal :</span>
+              <select
+                value={tanggalFilter}
+                onChange={(e) => setTanggalFilter(e.target.value)}
+                className="w-[74px] h-[22px] px-1 bg-white border border-[#7A7A7A] text-[11px] outline-none cursor-pointer"
               >
-                ✕
+                <option value=""></option>
+                {uniqueTanggalOptions.map((tgl) => (
+                  <option key={tgl} value={tgl}>
+                    {tgl}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setTanggalFilter('')}
+                className="px-3 h-[22px] bg-[#EAE6D9] hover:bg-[#F4F1E8] border border-[#7A7A7A] shadow-2xs text-[11px] text-black cursor-pointer"
+              >
+                Semua
               </button>
             </div>
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">No. SQ:</label>
-                <input
-                  type="text"
-                  value={newNoSq}
-                  onChange={(e) => setNewNoSq(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Tanggal:</label>
-                <input
-                  type="text"
-                  value={newTanggal}
-                  onChange={(e) => setNewTanggal(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Nama Customer:</label>
-                <input
-                  type="text"
-                  value={newCustomer}
-                  onChange={(e) => setNewCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Sales:</label>
-                <input
-                  type="text"
-                  value={newSales}
-                  onChange={(e) => setNewSales(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">No. Inquiry:</label>
-                <input
-                  type="text"
-                  value={newNoInquiry}
-                  onChange={(e) => setNewNoInquiry(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Keterangan:</label>
-                <input
-                  type="text"
-                  value={newKeterangan}
-                  onChange={(e) => setNewKeterangan(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Amount:</label>
-                <input
-                  type="text"
-                  value={newAmount}
-                  onChange={(e) => setNewAmount(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-              <div className="flex justify-end space-x-2 pt-3 border-t border-[#D4D0C8]">
+          </div>
+
+          <div className="font-bold text-[15px] text-black pr-6">Rp 0</div>
+        </div>
+
+        {/* 3. Main Data Grid Table Container with Horizontal & Vertical Scrollbars */}
+        <div className="flex-1 overflow-auto bg-[#F0F0F0] border border-[#808080] m-1.5 relative shadow-inner">
+          <table className="border-collapse text-left min-w-[1120px] text-[11px]">
+            <thead className="sticky top-0 bg-[#ECE9D8] text-black font-normal border-b border-[#ACA899] z-10">
+              <tr>
+                <th className="w-[22px] px-1 py-1 border-r border-[#ACA899] text-center bg-[#ECE9D8]" />
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[95px]">
+                  No. SQ
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">
+                  Tanggal
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[195px]">
+                  Nama Customer
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[76px]">
+                  Sales
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[92px]">
+                  No. Inquiry
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[135px]">
+                  Keterangan
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal text-right whitespace-nowrap w-[90px]">
+                  Amount
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[80px]">
+                  Dibuat Oleh
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">
+                  Tgl.Created
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[92px]">
+                  DiUpdate Oleh
+                </th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">
+                  Tgl.Update
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredList.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={12}
+                    className="text-center py-8 text-gray-500 italic bg-white"
+                  >
+                    Tidak ada data Sales Quotation
+                  </td>
+                </tr>
+              ) : (
+                filteredList.map((item) => {
+                  const isSelected = selectedId === item.id;
+                  return (
+                    <tr
+                      key={item.id}
+                      onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
+                      className={`cursor-pointer border-b border-[#D4D0C8] ${
+                        isSelected
+                          ? 'bg-[#DCEBFC] text-black'
+                          : 'bg-white text-black hover:bg-[#F2F6FC]'
+                      }`}
+                    >
+                      <td className="px-1 py-0.5 border-r border-[#ACA899] bg-[#ECE9D8] text-center text-[10px] font-bold text-black">
+                        {isSelected ? '▸' : ''}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.noSq}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.tanggal}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.namaCustomer}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.sales}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.noInquiry}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.keterangan}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap">
+                        {item.amount}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.dibuatOleh}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.tglCreated}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.diUpdateOleh}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">
+                        {item.tglUpdate}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 4. Bottom Footer & Search Bar */}
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-4 py-2 border-t border-[#C0C0C0] gap-3 overflow-x-auto">
+          <div className="flex items-center space-x-2 shrink-0">
+            <span className="font-bold text-black text-[11px]">Search :</span>
+            <select
+              value={searchField}
+              onChange={(e) => setSearchField(e.target.value)}
+              className="h-[22px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] shadow-xs text-[11px] text-black outline-none cursor-pointer"
+            >
+              <option value="Nama Pelanggan">Nama Pelanggan</option>
+              <option value="No. SQ">No. SQ</option>
+              <option value="Sales">Sales</option>
+              <option value="No. Inquiry">No. Inquiry</option>
+              <option value="Keterangan">Keterangan</option>
+            </select>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-[260px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] outline-none"
+            />
+          </div>
+
+          <div className="flex items-center space-x-6 shrink-0">
+            <input
+              type="text"
+              value={yellowNote}
+              onChange={(e) => setYellowNote(e.target.value)}
+              className="w-[260px] h-[22px] px-1.5 bg-[#FFFF99] border border-[#7A7A7A] text-[11px] outline-none"
+            />
+            <div className="text-[11px] text-black flex items-center space-x-4 pr-4">
+              <span>Record</span>
+              <span className="font-semibold">{filteredList.length}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Add New / Koreksi Modal */}
+        {isAddOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[460px] flex flex-col overflow-hidden">
+              <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+                <span>
+                  {editingId
+                    ? 'Koreksi Sales Quotation'
+                    : 'Tambah Sales Quotation Baru'}
+                </span>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8]"
+                  className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
                 >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0]"
-                >
-                  Simpan
+                  ✕
                 </button>
               </div>
-            </form>
+              <form onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">No. SQ:</label>
+                  <input
+                    type="text"
+                    value={newNoSq}
+                    onChange={(e) => setNewNoSq(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    required
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Tanggal:</label>
+                  <input
+                    type="text"
+                    value={newTanggal}
+                    onChange={(e) => setNewTanggal(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">
+                    Nama Customer:
+                  </label>
+                  <input
+                    type="text"
+                    value={newCustomer}
+                    onChange={(e) => setNewCustomer(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    required
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Sales:</label>
+                  <input
+                    type="text"
+                    value={newSales}
+                    onChange={(e) => setNewSales(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">
+                    No. Inquiry:
+                  </label>
+                  <input
+                    type="text"
+                    value={newNoInquiry}
+                    onChange={(e) => setNewNoInquiry(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">
+                    Keterangan:
+                  </label>
+                  <input
+                    type="text"
+                    value={newKeterangan}
+                    onChange={(e) => setNewKeterangan(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Amount:</label>
+                  <input
+                    type="text"
+                    value={newAmount}
+                    onChange={(e) => setNewAmount(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+                <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddOpen(false)}
+                    className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-3 py-1 bg-[#0A246A] text-white border border-black text-xs hover:bg-[#163994] cursor-pointer"
+                  >
+                    Simpan
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
-
+        )}
+      </div>
     </div>
   );
 };

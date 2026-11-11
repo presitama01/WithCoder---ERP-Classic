@@ -49,6 +49,7 @@ import { LaporanPengeluaranBarangLainPrintForm } from './components/LaporanPenge
 import { ListHppPembelianForm } from './components/ListHppPembelianForm';
 import { ListJurnalUmumForm } from './components/ListJurnalUmumForm';
 import { LaporanKertasKerjaPrintForm } from './components/LaporanKertasKerjaPrintForm';
+import { LaporanPenjualanBarangPrintForm } from './components/LaporanPenjualanBarangPrintForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -90,8 +91,9 @@ export default function App() {
     | 'hpp_pembelian'
     | 'jurnal_umum'
     | 'laporan_kertas_kerja'
+    | 'laporan_penjualan_barang'
     | null
-  >('laporan_kertas_kerja');
+  >('sales_order_detail');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -166,7 +168,8 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Sales Order Detail' ||
-      actionName === '01 - Sales Order Detail'
+      actionName === '01 - Sales Order Detail' ||
+      actionName === 'Laporan Sales Order'
     ) {
       setActiveMdiForm('sales_order_detail');
       setActiveForm(null);
@@ -178,7 +181,7 @@ export default function App() {
     ) {
       setActiveMdiForm('sales_order');
       setActiveForm(null);
-    } else if (actionName === 'Laporan Sales Order') {
+    } else if (actionName === 'Mutasi Sales Order') {
       setActiveMdiForm('mutasi_sales_order');
       setActiveForm(null);
     } else if (
@@ -197,6 +200,11 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Laporan Penjualan Barang' ||
+      actionName === 'LAPORAN PENJUALAN BARANG'
+    ) {
+      setActiveMdiForm('laporan_penjualan_barang');
+      setActiveForm(null);
+    } else if (
       actionName === 'Invoice Penjualan' ||
       actionName === 'Daftar Invoice Penjualan' ||
       actionName === 'Entry Invoice Penjualan'
@@ -364,7 +372,8 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Sales Order Detail' ||
-      actionName === '01 - Sales Order Detail'
+      actionName === '01 - Sales Order Detail' ||
+      actionName === 'Laporan Sales Order'
     ) {
       setActiveMdiForm('sales_order_detail');
       setActiveForm(null);
@@ -376,7 +385,7 @@ export default function App() {
     ) {
       setActiveMdiForm('sales_order');
       setActiveForm(null);
-    } else if (actionName === 'Laporan Sales Order') {
+    } else if (actionName === 'Mutasi Sales Order') {
       setActiveMdiForm('mutasi_sales_order');
       setActiveForm(null);
     } else if (
@@ -395,6 +404,11 @@ export default function App() {
       setActiveForm(null);
     } else if (
       actionName === 'Laporan Penjualan Barang' ||
+      actionName === 'LAPORAN PENJUALAN BARANG'
+    ) {
+      setActiveMdiForm('laporan_penjualan_barang');
+      setActiveForm(null);
+    } else if (
       actionName === 'Invoice Penjualan' ||
       actionName === 'Daftar Invoice Penjualan' ||
       actionName === 'Entry Invoice Penjualan'
@@ -493,7 +507,8 @@ export default function App() {
     activeMdiForm === 'laporan_persediaan_barang' ||
     activeMdiForm === 'laporan_penerimaan_barang_lain' ||
     activeMdiForm === 'laporan_pengeluaran_barang_lain' ||
-    activeMdiForm === 'laporan_kertas_kerja'
+    activeMdiForm === 'laporan_kertas_kerja' ||
+    activeMdiForm === 'laporan_penjualan_barang'
       ? 'Indo IT - Main Menu ~ Menu Utama'
       : activeMdiForm === 'jurnal_umum'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Jurnal Umum]'
@@ -808,6 +823,12 @@ export default function App() {
         {/* Laporan Kertas Kerja Print Report Dialog Window */}
         <LaporanKertasKerjaPrintForm
           isOpen={activeMdiForm === 'laporan_kertas_kerja'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Laporan Penjualan Barang Print Report Dialog Window */}
+        <LaporanPenjualanBarangPrintForm
+          isOpen={activeMdiForm === 'laporan_penjualan_barang'}
           onClose={() => setActiveMdiForm(null)}
         />
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 
@@ -13,18 +13,36 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
 }) => {
   const [tglStart, setTglStart] = useState<string>('12-09-2026');
   const [tglEnd, setTglEnd] = useState<string>('12-09-2026');
-  const [filterType, setFilterType] = useState<string>('batasan_kode'); // 'merk', 'batasan_kode', 'customer', 'all_periode'
+  const [filterType, setFilterType] = useState<
+    'merk' | 'batasan_kode' | 'customer' | 'all_periode'
+  >('batasan_kode');
   const [kodeBarang, setKodeBarang] = useState<string>('');
   const [namaBarangDesc, setNamaBarangDesc] = useState<string>('');
   const [lokasiStock, setLokasiStock] = useState<string>('ALL');
-  const [bentukLaporan, setBentukLaporan] = useState<string>('01 - Sales Order Detail');
+  const [bentukLaporan, setBentukLaporan] = useState<string>(
+    '01 - Sales Order Detail'
+  );
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  const tglStartPickerRef = useRef<HTMLInputElement>(null);
+  const tglEndPickerRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 2000);
+  };
+
+  const handleDatePickerChange = (
+    isoDate: string,
+    setter: React.Dispatch<React.SetStateAction<string>>
+  ) => {
+    if (!isoDate) return;
+    const [yyyy, mm, dd] = isoDate.split('-');
+    if (yyyy && mm && dd) {
+      setter(`${dd}-${mm}-${yyyy}`);
+    }
   };
 
   const handleBaru = () => {
@@ -45,7 +63,17 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   };
 
   const handlePreview = () => {
-    showFeedback(`Preview: ${bentukLaporan} (${tglStart} s/d ${tglEnd})`);
+    const filterSummary =
+      filterType === 'batasan_kode'
+        ? kodeBarang.trim()
+          ? `Kode ${kodeBarang.trim()}`
+          : 'Batasan kode Barang'
+        : filterType === 'customer'
+        ? 'Customer'
+        : 'ALL berdasarkan periode';
+    showFeedback(
+      `Preview: ${bentukLaporan} (${lokasiStock} - ${filterSummary})`
+    );
   };
 
   return (
@@ -53,6 +81,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
       id="sales-order-detail-dialog"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
+      {/* Unified Black Header Banner */}
       <FormHeaderBanner
         title="Sales Order Detail"
         onClose={onClose}
@@ -61,10 +90,10 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
 
       {/* Main Scrollable Container */}
       <div className="flex-1 overflow-auto p-3">
-        <div className="max-w-[560px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
+        <div className="max-w-[630px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-2.5 shadow-xs">
           {/* Header Box: SALES ORDER DETAIL */}
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
-            <h1 className="font-extrabold text-sm tracking-wider text-black font-sans">
+            <h1 className="font-extrabold text-[15px] tracking-wide text-black font-sans">
               SALES ORDER DETAIL
             </h1>
           </div>
@@ -73,7 +102,9 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           <div className="border-b border-[#999999] pb-2">
             <FormActionButtons
               compact
-              onSimpan={() => showFeedback('Parameter Sales Order Detail tersimpan')}
+              onSimpan={() =>
+                showFeedback('Parameter Sales Order Detail tersimpan')
+              }
               onBaru={handleBaru}
               onKoreksi={() => showFeedback('Silakan ubah filter laporan')}
               onHapus={handleHapus}
@@ -82,61 +113,99 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           </div>
 
           {/* Group 1: Periode */}
-          <fieldset className="border border-[#999999] p-2 rounded-none relative">
+          <fieldset className="border border-[#999999] px-2.5 py-2 rounded-none relative">
             <legend className="text-[11px] font-semibold px-1 text-black">
               Periode
             </legend>
-            <div className="flex items-center space-x-2 pt-0.5">
-              <span className="font-semibold text-black text-[11px]">
+            <div className="flex items-center space-x-1.5 pt-0.5">
+              <label className="font-bold text-black text-[11px] whitespace-nowrap pl-2 pr-1">
                 Tanggal ( dd-mm-yyyy ) :
-              </span>
+              </label>
 
-              <div className="flex items-center bg-white border border-[#7A7A7A]">
+              <div className="flex items-center w-[98px] h-[21px] bg-white border border-[#7A7A7A]">
                 <input
                   type="text"
                   value={tglStart}
                   onChange={(e) => setTglStart(e.target.value)}
-                  className="px-1.5 py-0.5 w-20 text-[11px] outline-none font-mono"
+                  placeholder="__-__-____"
+                  className="w-full px-1.5 text-[11px] outline-none font-mono bg-transparent"
                 />
                 <button
                   type="button"
-                  className="px-1 bg-[#D4D0C8] border-l border-[#7A7A7A] hover:bg-[#E5E1D8] text-[9px] h-full"
+                  onClick={() => {
+                    if (tglStartPickerRef.current?.showPicker) {
+                      tglStartPickerRef.current.showPicker();
+                    } else {
+                      tglStartPickerRef.current?.click();
+                    }
+                  }}
+                  title="Pilih Tanggal Awal"
+                  className="px-1 bg-[#D4D0C8] border-l border-[#7A7A7A] hover:bg-[#E5E1D8] text-[9px] h-full cursor-pointer"
                 >
                   ▼
                 </button>
+                <input
+                  ref={tglStartPickerRef}
+                  type="date"
+                  onChange={(e) =>
+                    handleDatePickerChange(e.target.value, setTglStart)
+                  }
+                  className="sr-only"
+                  tabIndex={-1}
+                />
               </div>
 
-              <span className="font-bold text-[11px] px-1 text-black">s / d</span>
+              <span className="w-[62px] h-[21px] flex items-center justify-center bg-[#BDF4BA] border border-[#7A7A7A] text-[11px] font-bold text-black">
+                s / d
+              </span>
 
-              <div className="flex items-center bg-white border border-[#7A7A7A]">
+              <div className="flex items-center w-[98px] h-[21px] bg-white border border-[#7A7A7A]">
                 <input
                   type="text"
                   value={tglEnd}
                   onChange={(e) => setTglEnd(e.target.value)}
-                  className="px-1.5 py-0.5 w-20 text-[11px] outline-none font-mono"
+                  placeholder="__-__-____"
+                  className="w-full px-1.5 text-[11px] outline-none font-mono bg-transparent"
                 />
                 <button
                   type="button"
-                  className="px-1 bg-[#D4D0C8] border-l border-[#7A7A7A] hover:bg-[#E5E1D8] text-[9px] h-full"
+                  onClick={() => {
+                    if (tglEndPickerRef.current?.showPicker) {
+                      tglEndPickerRef.current.showPicker();
+                    } else {
+                      tglEndPickerRef.current?.click();
+                    }
+                  }}
+                  title="Pilih Tanggal Akhir"
+                  className="px-1 bg-[#D4D0C8] border-l border-[#7A7A7A] hover:bg-[#E5E1D8] text-[9px] h-full cursor-pointer"
                 >
                   ▼
                 </button>
+                <input
+                  ref={tglEndPickerRef}
+                  type="date"
+                  onChange={(e) =>
+                    handleDatePickerChange(e.target.value, setTglEnd)
+                  }
+                  className="sr-only"
+                  tabIndex={-1}
+                />
               </div>
             </div>
           </fieldset>
 
           {/* Group 2: Pilihan Laporan Berdasarkan */}
-          <fieldset className="border border-[#999999] p-2 rounded-none relative">
+          <fieldset className="border border-[#999999] px-2.5 py-2 rounded-none relative">
             <legend className="text-[11px] font-semibold px-1 text-black">
               Pilihan Laporan Berdasarkan :
             </legend>
 
             <div className="space-y-1.5 pt-0.5">
-              {/* Option 1: Merk Barang (Disabled as shown in image) */}
-              <label className="flex items-center space-x-2 text-[11px] text-gray-400 cursor-not-allowed">
+              {/* Option 1: Merk Barang (Disabled) */}
+              <label className="flex items-center space-x-2 text-[11px] text-[#808080] cursor-not-allowed">
                 <input
                   type="radio"
-                  name="laporan_filter"
+                  name="so_detail_filter"
                   disabled
                   checked={filterType === 'merk'}
                   onChange={() => setFilterType('merk')}
@@ -145,12 +214,12 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                 <span>Merk Barang</span>
               </label>
 
-              {/* Option 2: Batasan kode Barang with dual text inputs */}
+              {/* Option 2: Batasan kode Barang (Checked by default with white code + yellow description) */}
               <div className="flex items-center space-x-2">
-                <label className="flex items-center space-x-2 text-[11px] text-black font-semibold cursor-pointer">
+                <label className="flex items-center space-x-2 text-[11px] text-black font-bold cursor-pointer w-[148px] shrink-0">
                   <input
                     type="radio"
-                    name="laporan_filter"
+                    name="so_detail_filter"
                     checked={filterType === 'batasan_kode'}
                     onChange={() => setFilterType('batasan_kode')}
                     className="cursor-pointer"
@@ -162,25 +231,25 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                   <input
                     type="text"
                     value={kodeBarang}
-                    onChange={(e) => setKodeBarang(e.target.value)}
+                    onChange={(e) => setKodeBarang(e.target.value.toUpperCase())}
                     disabled={filterType !== 'batasan_kode'}
-                    className="bg-white border border-[#7A7A7A] px-2 py-0.5 w-24 text-[11px] font-mono disabled:bg-[#ECE9D8]"
+                    className="w-[106px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none disabled:bg-[#ECE9D8] shrink-0"
                   />
-                  {/* Yellow description field matching screenshot */}
                   <input
                     type="text"
                     value={namaBarangDesc}
-                    readOnly
-                    className="bg-[#FFFFCC] border border-[#7A7A7A] px-2 py-0.5 flex-1 text-[11px] shadow-inner"
+                    onChange={(e) => setNamaBarangDesc(e.target.value)}
+                    disabled={filterType !== 'batasan_kode'}
+                    className="flex-1 h-[21px] bg-[#FFFFBF] border border-[#7A7A7A] px-2 text-[11px] outline-none shadow-inner"
                   />
                 </div>
               </div>
 
-              {/* Option 3: Customer */}
-              <label className="flex items-center space-x-2 text-[11px] text-black cursor-pointer font-semibold">
+              {/* Option 3: Customer (Enabled) */}
+              <label className="flex items-center space-x-2 text-[11px] text-black font-bold cursor-pointer">
                 <input
                   type="radio"
-                  name="laporan_filter"
+                  name="so_detail_filter"
                   checked={filterType === 'customer'}
                   onChange={() => setFilterType('customer')}
                   className="cursor-pointer"
@@ -188,11 +257,11 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                 <span>Customer</span>
               </label>
 
-              {/* Option 4: ALL berdasarkan periode */}
-              <label className="flex items-center space-x-2 text-[11px] text-black cursor-pointer font-semibold">
+              {/* Option 4: ALL berdasarkan periode (Enabled) */}
+              <label className="flex items-center space-x-2 text-[11px] text-black font-bold cursor-pointer">
                 <input
                   type="radio"
-                  name="laporan_filter"
+                  name="so_detail_filter"
                   checked={filterType === 'all_periode'}
                   onChange={() => setFilterType('all_periode')}
                   className="cursor-pointer"
@@ -202,10 +271,10 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
             </div>
           </fieldset>
 
-          {/* Lower Section: Lokasi Stock & Bentuk Laporan (Left) and Buttons (Right) */}
-          <div className="flex items-stretch justify-between gap-3 pt-0.5">
+          {/* Lower Section: Lokasi Stock & Bentuk Laporan (Left) and PREVIEW / CLOSE Buttons (Right) */}
+          <div className="flex items-end justify-between gap-2.5 pt-0.5">
             {/* Left controls */}
-            <div className="flex-1 space-y-2">
+            <div className="flex-1 space-y-1.5">
               {/* Lokasi Stock */}
               <fieldset className="border border-[#999999] px-2 py-1 rounded-none relative">
                 <legend className="text-[11px] font-semibold px-1 text-black">
@@ -234,25 +303,41 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                   <select
                     value={bentukLaporan}
                     onChange={(e) => setBentukLaporan(e.target.value)}
-                    className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer font-bold"
+                    className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer"
                   >
-                    <option value="01 - Sales Order Detail">01 - Sales Order Detail</option>
-                    <option value="02 - Sales Order Rekap">02 - Sales Order Rekap</option>
-                    <option value="03 - Sales Order by Customer">03 - Sales Order by Customer</option>
+                    <option value="01 - Sales Order Detail">
+                      01 - Sales Order Detail
+                    </option>
+                    <option value="02 - Sales Order Rekap">
+                      02 - Sales Order Rekap
+                    </option>
+                    <option value="03 - Sales Order by Customer">
+                      03 - Sales Order by Customer
+                    </option>
                   </select>
                 </div>
               </fieldset>
             </div>
 
-            {/* Right Button: PREVIEW */}
-            <div className="w-[100px] border border-[#999999] p-1.5 flex items-center justify-center bg-[#E6E2D4]">
+            {/* Right Buttons: PREVIEW and CLOSE side by side */}
+            <div className="flex items-stretch gap-1.5 h-[84px] shrink-0">
               <button
                 type="button"
                 onClick={handlePreview}
-                className="w-full h-full py-3 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
+                className="w-[82px] h-full bg-[#FFE4C4] hover:bg-[#FFECD6] border-2 border-t-white border-l-white border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-white active:border-b-white font-extrabold text-[11px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
               >
-                <span className="border border-dotted border-black/40 px-1 py-1 w-full block">
-                  PREVIEW
+                <span>
+                  <span className="underline">P</span>REVIEW
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-[82px] h-full bg-[#FFE4C4] hover:bg-[#FFECD6] border-2 border-t-white border-l-white border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-white active:border-b-white font-extrabold text-[11px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center p-1"
+              >
+                <span className="border border-dotted border-black/60 w-full h-full flex items-center justify-center">
+                  <span className="underline">C</span>LOSE
                 </span>
               </button>
             </div>
