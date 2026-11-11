@@ -42,6 +42,13 @@ import { LaporanSuratJalanPrintForm } from './components/LaporanSuratJalanPrintF
 import { StockAwalForm } from './components/StockAwalForm';
 import { ReturPenjualanBerdasarkanFakturForm } from './components/ReturPenjualanBerdasarkanFakturForm';
 import { ItemCostStockPrintForm } from './components/ItemCostStockPrintForm';
+import { KartuStockPrintForm } from './components/KartuStockPrintForm';
+import { LaporanPersediaanBarangPrintForm } from './components/LaporanPersediaanBarangPrintForm';
+import { LaporanPenerimaanBarangLainPrintForm } from './components/LaporanPenerimaanBarangLainPrintForm';
+import { LaporanPengeluaranBarangLainPrintForm } from './components/LaporanPengeluaranBarangLainPrintForm';
+import { ListHppPembelianForm } from './components/ListHppPembelianForm';
+import { ListJurnalUmumForm } from './components/ListJurnalUmumForm';
+import { LaporanKertasKerjaPrintForm } from './components/LaporanKertasKerjaPrintForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -76,8 +83,15 @@ export default function App() {
     | 'stock_awal'
     | 'retur_penjualan_faktur'
     | 'item_cost_stock'
+    | 'kartu_stock'
+    | 'laporan_persediaan_barang'
+    | 'laporan_penerimaan_barang_lain'
+    | 'laporan_pengeluaran_barang_lain'
+    | 'hpp_pembelian'
+    | 'jurnal_umum'
+    | 'laporan_kertas_kerja'
     | null
-  >('daftar_giro');
+  >('laporan_kertas_kerja');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -151,13 +165,13 @@ export default function App() {
       setActiveMdiForm('sales_quotation');
       setActiveForm(null);
     } else if (
-      actionName === 'Sales Order (SO)' ||
       actionName === 'Sales Order Detail' ||
       actionName === '01 - Sales Order Detail'
     ) {
       setActiveMdiForm('sales_order_detail');
       setActiveForm(null);
     } else if (
+      actionName === 'Sales Order (SO)' ||
       actionName === 'Daftar Sales Order' ||
       actionName === 'Entry Sales Order (SO)' ||
       actionName === 'List Sales Order'
@@ -168,14 +182,17 @@ export default function App() {
       setActiveMdiForm('mutasi_sales_order');
       setActiveForm(null);
     } else if (
-      actionName === 'Surat Jalan (DO)' ||
       actionName === 'Sales Order (DO)' ||
       actionName === 'Laporan Surat Jalan' ||
       actionName === '01 - Laporan Detail Surat Jalan'
     ) {
       setActiveMdiForm('laporan_surat_jalan');
       setActiveForm(null);
-    } else if (actionName === 'Daftar Surat Jalan' || actionName === 'List Surat Jalan') {
+    } else if (
+      actionName === 'Surat Jalan (DO)' ||
+      actionName === 'Daftar Surat Jalan' ||
+      actionName === 'List Surat Jalan'
+    ) {
       setActiveMdiForm('surat_jalan');
       setActiveForm(null);
     } else if (
@@ -187,7 +204,6 @@ export default function App() {
       setActiveMdiForm('faktur_penjualan');
       setActiveForm(null);
     } else if (
-      actionName === 'Retur Penjualan Barang' ||
       actionName === 'Retur Penjualan Berdasarkan Faktur' ||
       actionName === 'Laporan Retur Penjualan Barang' ||
       actionName === '01 - Retur Penjualan Barang'
@@ -195,6 +211,7 @@ export default function App() {
       setActiveMdiForm('retur_penjualan_faktur');
       setActiveForm(null);
     } else if (
+      actionName === 'Retur Penjualan Barang' ||
       actionName === 'Daftar Retur Penjualan' ||
       actionName === 'List Retur Penjualan'
     ) {
@@ -214,6 +231,50 @@ export default function App() {
       actionName === 'ITEM COST _STOCK'
     ) {
       setActiveMdiForm('item_cost_stock');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Kartu Stock' ||
+      actionName === 'KARTU STOCK'
+    ) {
+      setActiveMdiForm('kartu_stock');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Persediaan Barang' ||
+      actionName === 'LAPORAN PERSEDIAAN BARANG'
+    ) {
+      setActiveMdiForm('laporan_persediaan_barang');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Penerimaan Barang Lain' ||
+      actionName === 'LAPORAN PENERIMAAN BARANG LAIN'
+    ) {
+      setActiveMdiForm('laporan_penerimaan_barang_lain');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Pengeluaran Barang Lain' ||
+      actionName === 'LAPORAN PENGELUARAN BARANG LAIN'
+    ) {
+      setActiveMdiForm('laporan_pengeluaran_barang_lain');
+      setActiveForm(null);
+    } else if (
+      actionName === 'HPP Pembelian Barang' ||
+      actionName === 'List HPPPembelian' ||
+      actionName === 'List HPP Pembelian'
+    ) {
+      setActiveMdiForm('hpp_pembelian');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Jurnal Umum' ||
+      actionName === 'List Jurnal Umum'
+    ) {
+      setActiveMdiForm('jurnal_umum');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Keuangan' ||
+      actionName === 'Laporan Kertas Kerja' ||
+      actionName === 'Laporan Kertas Kerja I'
+    ) {
+      setActiveMdiForm('laporan_kertas_kerja');
       setActiveForm(null);
     } else {
       setActiveMdiForm(null);
@@ -302,13 +363,13 @@ export default function App() {
       setActiveMdiForm('sales_quotation');
       setActiveForm(null);
     } else if (
-      actionName === 'Sales Order (SO)' ||
       actionName === 'Sales Order Detail' ||
       actionName === '01 - Sales Order Detail'
     ) {
       setActiveMdiForm('sales_order_detail');
       setActiveForm(null);
     } else if (
+      actionName === 'Sales Order (SO)' ||
       actionName === 'Daftar Sales Order' ||
       actionName === 'Entry Sales Order (SO)' ||
       actionName === 'List Sales Order'
@@ -319,14 +380,17 @@ export default function App() {
       setActiveMdiForm('mutasi_sales_order');
       setActiveForm(null);
     } else if (
-      actionName === 'Surat Jalan (DO)' ||
       actionName === 'Sales Order (DO)' ||
       actionName === 'Laporan Surat Jalan' ||
       actionName === '01 - Laporan Detail Surat Jalan'
     ) {
       setActiveMdiForm('laporan_surat_jalan');
       setActiveForm(null);
-    } else if (actionName === 'Daftar Surat Jalan' || actionName === 'List Surat Jalan') {
+    } else if (
+      actionName === 'Surat Jalan (DO)' ||
+      actionName === 'Daftar Surat Jalan' ||
+      actionName === 'List Surat Jalan'
+    ) {
       setActiveMdiForm('surat_jalan');
       setActiveForm(null);
     } else if (
@@ -338,7 +402,6 @@ export default function App() {
       setActiveMdiForm('faktur_penjualan');
       setActiveForm(null);
     } else if (
-      actionName === 'Retur Penjualan Barang' ||
       actionName === 'Retur Penjualan Berdasarkan Faktur' ||
       actionName === 'Laporan Retur Penjualan Barang' ||
       actionName === '01 - Retur Penjualan Barang'
@@ -346,6 +409,7 @@ export default function App() {
       setActiveMdiForm('retur_penjualan_faktur');
       setActiveForm(null);
     } else if (
+      actionName === 'Retur Penjualan Barang' ||
       actionName === 'Daftar Retur Penjualan' ||
       actionName === 'List Retur Penjualan'
     ) {
@@ -366,6 +430,50 @@ export default function App() {
     ) {
       setActiveMdiForm('item_cost_stock');
       setActiveForm(null);
+    } else if (
+      actionName === 'Kartu Stock' ||
+      actionName === 'KARTU STOCK'
+    ) {
+      setActiveMdiForm('kartu_stock');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Persediaan Barang' ||
+      actionName === 'LAPORAN PERSEDIAAN BARANG'
+    ) {
+      setActiveMdiForm('laporan_persediaan_barang');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Penerimaan Barang Lain' ||
+      actionName === 'LAPORAN PENERIMAAN BARANG LAIN'
+    ) {
+      setActiveMdiForm('laporan_penerimaan_barang_lain');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Pengeluaran Barang Lain' ||
+      actionName === 'LAPORAN PENGELUARAN BARANG LAIN'
+    ) {
+      setActiveMdiForm('laporan_pengeluaran_barang_lain');
+      setActiveForm(null);
+    } else if (
+      actionName === 'HPP Pembelian Barang' ||
+      actionName === 'List HPPPembelian' ||
+      actionName === 'List HPP Pembelian'
+    ) {
+      setActiveMdiForm('hpp_pembelian');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Jurnal Umum' ||
+      actionName === 'List Jurnal Umum'
+    ) {
+      setActiveMdiForm('jurnal_umum');
+      setActiveForm(null);
+    } else if (
+      actionName === 'Laporan Keuangan' ||
+      actionName === 'Laporan Kertas Kerja' ||
+      actionName === 'Laporan Kertas Kerja I'
+    ) {
+      setActiveMdiForm('laporan_kertas_kerja');
+      setActiveForm(null);
     } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
       setIsLoginOpen(true);
     } else {
@@ -380,8 +488,17 @@ export default function App() {
     activeMdiForm === 'laporan_surat_jalan' ||
     activeMdiForm === 'stock_awal' ||
     activeMdiForm === 'retur_penjualan_faktur' ||
-    activeMdiForm === 'item_cost_stock'
+    activeMdiForm === 'item_cost_stock' ||
+    activeMdiForm === 'kartu_stock' ||
+    activeMdiForm === 'laporan_persediaan_barang' ||
+    activeMdiForm === 'laporan_penerimaan_barang_lain' ||
+    activeMdiForm === 'laporan_pengeluaran_barang_lain' ||
+    activeMdiForm === 'laporan_kertas_kerja'
       ? 'Indo IT - Main Menu ~ Menu Utama'
+      : activeMdiForm === 'jurnal_umum'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [Jurnal Umum]'
+      : activeMdiForm === 'hpp_pembelian'
+      ? 'Indo IT - Main Menu ~ Menu Utama - [HPPPembelian]'
       : activeMdiForm === 'retur_penjualan'
       ? 'Indo IT - Main Menu ~ Menu Utama - [Retur Penjualan]'
       : activeMdiForm === 'faktur_penjualan'
@@ -649,6 +766,48 @@ export default function App() {
         {/* Item Cost Stock / Cetak Item Barang Dialog Window */}
         <ItemCostStockPrintForm
           isOpen={activeMdiForm === 'item_cost_stock'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Kartu Stock Print Report Dialog Window */}
+        <KartuStockPrintForm
+          isOpen={activeMdiForm === 'kartu_stock'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Laporan Persediaan Barang Print Report Dialog Window */}
+        <LaporanPersediaanBarangPrintForm
+          isOpen={activeMdiForm === 'laporan_persediaan_barang'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Laporan Penerimaan Barang Lain Print Report Dialog Window */}
+        <LaporanPenerimaanBarangLainPrintForm
+          isOpen={activeMdiForm === 'laporan_penerimaan_barang_lain'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Laporan Pengeluaran Barang Lain Print Report Dialog Window */}
+        <LaporanPengeluaranBarangLainPrintForm
+          isOpen={activeMdiForm === 'laporan_pengeluaran_barang_lain'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List HPPPembelian MDI Child Window */}
+        <ListHppPembelianForm
+          isOpen={activeMdiForm === 'hpp_pembelian'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Jurnal Umum MDI Child Window */}
+        <ListJurnalUmumForm
+          isOpen={activeMdiForm === 'jurnal_umum'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Laporan Kertas Kerja Print Report Dialog Window */}
+        <LaporanKertasKerjaPrintForm
+          isOpen={activeMdiForm === 'laporan_kertas_kerja'}
           onClose={() => setActiveMdiForm(null)}
         />
 
