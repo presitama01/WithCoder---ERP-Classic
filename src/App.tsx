@@ -50,6 +50,8 @@ import { ListHppPembelianForm } from './components/ListHppPembelianForm';
 import { ListJurnalUmumForm } from './components/ListJurnalUmumForm';
 import { LaporanKertasKerjaPrintForm } from './components/LaporanKertasKerjaPrintForm';
 import { LaporanPenjualanBarangPrintForm } from './components/LaporanPenjualanBarangPrintForm';
+import { ListFakturDpForm } from './components/ListFakturDpForm';
+import { ListFakturLainForm } from './components/ListFakturLainForm';
 
 export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -92,8 +94,10 @@ export default function App() {
     | 'jurnal_umum'
     | 'laporan_kertas_kerja'
     | 'laporan_penjualan_barang'
+    | 'faktur_dp'
+    | 'faktur_lain'
     | null
-  >('sales_order_detail');
+  >(null);
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);
@@ -210,6 +214,18 @@ export default function App() {
       actionName === 'Entry Invoice Penjualan'
     ) {
       setActiveMdiForm('faktur_penjualan');
+      setActiveForm(null);
+    } else if (
+      actionName === 'List Faktur DP' ||
+      actionName === 'Faktur DP'
+    ) {
+      setActiveMdiForm('faktur_dp');
+      setActiveForm(null);
+    } else if (
+      actionName === 'List Faktur Lain' ||
+      actionName === 'Faktur Lain'
+    ) {
+      setActiveMdiForm('faktur_lain');
       setActiveForm(null);
     } else if (
       actionName === 'Retur Penjualan Berdasarkan Faktur' ||
@@ -416,6 +432,18 @@ export default function App() {
       setActiveMdiForm('faktur_penjualan');
       setActiveForm(null);
     } else if (
+      actionName === 'List Faktur DP' ||
+      actionName === 'Faktur DP'
+    ) {
+      setActiveMdiForm('faktur_dp');
+      setActiveForm(null);
+    } else if (
+      actionName === 'List Faktur Lain' ||
+      actionName === 'Faktur Lain'
+    ) {
+      setActiveMdiForm('faktur_lain');
+      setActiveForm(null);
+    } else if (
       actionName === 'Retur Penjualan Berdasarkan Faktur' ||
       actionName === 'Laporan Retur Penjualan Barang' ||
       actionName === '01 - Retur Penjualan Barang'
@@ -509,69 +537,73 @@ export default function App() {
     activeMdiForm === 'laporan_pengeluaran_barang_lain' ||
     activeMdiForm === 'laporan_kertas_kerja' ||
     activeMdiForm === 'laporan_penjualan_barang'
-      ? 'Indo IT - Main Menu ~ Menu Utama'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama'
       : activeMdiForm === 'jurnal_umum'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Jurnal Umum]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Jurnal Umum]'
       : activeMdiForm === 'hpp_pembelian'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [HPPPembelian]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [HPPPembelian]'
       : activeMdiForm === 'retur_penjualan'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Retur Penjualan]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Retur Penjualan]'
+      : activeMdiForm === 'faktur_lain'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Faktur Lain]'
+      : activeMdiForm === 'faktur_dp'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Faktur DP]'
       : activeMdiForm === 'faktur_penjualan'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Faktur Penjualan]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Faktur Penjualan]'
       : activeMdiForm === 'surat_jalan'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Surat Jalan]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Surat Jalan]'
       : activeMdiForm === 'mutasi_sales_order'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [I-Software - Mutasi Sales Order]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [I-Software - Mutasi Sales Order]'
       : activeMdiForm === 'sales_order'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Sales Order]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Sales Order]'
       : activeMdiForm === 'sales_quotation'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Sales Quotation]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Sales Quotation]'
       : activeMdiForm === 'sales_inquiry'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Inquiry Penjualan]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Inquiry Penjualan]'
       : activeMdiForm === 'penjualan_daftar_giro'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
       : activeMdiForm === 'retur_pembelian'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [List Retur Pembelian]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [List Retur Pembelian]'
       : activeMdiForm === 'list_pembelian'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [List Pembelian Barang]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [List Pembelian Barang]'
       : activeMdiForm === 'purchase_order'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Purchase Order]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Purchase Order]'
       : activeMdiForm === 'purchase_request'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Purchase Request]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Purchase Request]'
       : activeMdiForm === 'daftar_giro'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
       : activeMdiForm === 'customer'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Customer]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Customer]'
       : activeMdiForm === 'supplier'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Supplier]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Supplier]'
       : activeMdiForm === 'sales'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Sales]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Sales]'
       : activeMdiForm === 'expedisi'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Expedisi]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Expedisi]'
       : activeMdiForm === 'bank'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Bank]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Bank]'
       : activeMdiForm === 'company_profile'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Company Profile]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Company Profile]'
       : activeMdiForm === 'lokasi'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Lokasi Gudang]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Lokasi Gudang]'
       : activeMdiForm === 'wilayah'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Wilayah]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Wilayah]'
       : activeMdiForm === 'barang'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Master Barang]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Barang]'
       : activeMdiForm === 'type'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Tabel Type]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Tabel Type]'
       : activeMdiForm === 'merk'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Tabel Merk]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Tabel Merk]'
       : activeMdiForm === 'category'
-      ? 'Indo IT - Main Menu ~ Menu Utama - [Tabel Category]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Tabel Category]'
       : activeForm
-      ? `Indo IT - Main Menu ~ Menu Utama - [${activeForm.title}]`
-      : 'Indo IT - Main Menu ~ Menu Utama';
+      ? `WithCoder - ERP - Main Menu ~ Menu Utama - [${activeForm.title}]`
+      : 'WithCoder - ERP - Main Menu ~ Menu Utama';
 
   return (
     <div
       id="desktop-root"
-      className="relative w-screen h-screen overflow-hidden flex flex-col bg-[#D4D0C8] select-none"
+      className="relative w-screen h-screen overflow-hidden flex flex-col bg-[#D4D0C8] select-none pb-[24px]"
     >
       {/* 1. Windows Aero Frame Header */}
       <WindowHeader
@@ -832,6 +864,18 @@ export default function App() {
           onClose={() => setActiveMdiForm(null)}
         />
 
+        {/* List Faktur DP MDI Child Window */}
+        <ListFakturDpForm
+          isOpen={activeMdiForm === 'faktur_dp'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* List Faktur Lain MDI Child Window */}
+        <ListFakturLainForm
+          isOpen={activeMdiForm === 'faktur_lain'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
         {/* Master Customer MDI Child Window */}
         <MasterCustomerListForm
           isOpen={activeMdiForm === 'customer'}
@@ -912,7 +956,7 @@ export default function App() {
               className="w-[330px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans"
             >
               <div className="flex items-center justify-between h-[22px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold">
-                <span>Tentang Indo IT ERP</span>
+                <span>Tentang WithCoder - ERP</span>
                 <button
                   type="button"
                   onClick={() => setAboutOpen(false)}
@@ -922,7 +966,7 @@ export default function App() {
                 </button>
               </div>
               <div className="p-4 text-[11px] text-black space-y-2">
-                <div className="font-bold text-[13px] text-[#0A246A]">Indo IT Enterprise Suite</div>
+                <div className="font-bold text-[13px] text-[#0A246A]">WithCoder - ERP Enterprise Suite</div>
                 <p className="text-gray-700">Versi 2.4.1 (Build 2026)</p>
                 <p className="text-gray-600">
                   Modul: Master Data, Pembelian, Penjualan, Manajemen Stock, dan Akuntansi Keuangan.

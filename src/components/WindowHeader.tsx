@@ -8,7 +8,7 @@ interface WindowHeaderProps {
 }
 
 export const WindowHeader: React.FC<WindowHeaderProps> = ({
-  title = 'Indo IT - Main Menu ~ Menu Utama',
+  title = 'WithCoder - ERP - Main Menu ~ Menu Utama',
   onMinimize,
   onMaximize,
   onClose,

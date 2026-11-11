@@ -1,168 +1,128 @@
 import React from 'react';
 
 /**
- * High-fidelity vector recreation of the classic curved globe world map wallpaper
- * seen in the reference screenshot:
- * - Teal/cyan sky & ocean
- * - Curved orthographic longitude/latitude grid
- * - Sage/olive green continents (Africa, Europe, South America, North America, Antarctica)
- * - Warm earthy bottom horizon curvature
+ * Vector recreation of the classic full-world oval projection wallpaper
+ * seen in the reference main screen:
+ * - Soft teal/cyan top fading smoothly into warm olive/khaki bottom
+ * - Full oval world outline with curved latitude & meridian grid lines
+ * - Sage green continents (Americas, Greenland, Europe, Africa, Asia, Australia, Antarctica)
  */
 export const GlobeBackground: React.FC = () => {
   return (
-    <div id="globe-background-container" className="absolute inset-0 overflow-hidden pointer-events-none select-none">
+    <div
+      id="globe-background-container"
+      className="absolute inset-0 overflow-hidden pointer-events-none select-none border-t border-[#4B7A84]"
+    >
       <svg
         id="globe-background-svg"
-        viewBox="0 0 1000 680"
+        viewBox="0 0 1200 660"
         preserveAspectRatio="xMidYMid slice"
         className="w-full h-full"
       >
         <defs>
-          {/* Main sky / ocean gradient */}
-          <linearGradient id="oceanGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#d1eaf1" />
-            <stop offset="20%" stopColor="#b6dfe8" />
-            <stop offset="60%" stopColor="#96cad6" />
-            <stop offset="85%" stopColor="#81bccb" />
-            <stop offset="100%" stopColor="#76b1bf" />
+          {/* Outer background gradient: pale teal top -> warm olive bottom */}
+          <linearGradient id="bgSkyOliveGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#B8DCDE" />
+            <stop offset="35%" stopColor="#A9CFD2" />
+            <stop offset="68%" stopColor="#94AD96" />
+            <stop offset="100%" stopColor="#858356" />
           </linearGradient>
 
-          {/* Earthy horizon band gradient at the bottom */}
-          <linearGradient id="horizonGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#8a804c" stopOpacity="0.4" />
-            <stop offset="25%" stopColor="#a39965" stopOpacity="0.65" />
-            <stop offset="60%" stopColor="#b5aa77" stopOpacity="0.75" />
-            <stop offset="100%" stopColor="#9a915f" stopOpacity="0.5" />
+          {/* Oval ocean gradient */}
+          <linearGradient id="ovalOceanGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#B4DADB" />
+            <stop offset="30%" stopColor="#A2CBCD" />
+            <stop offset="65%" stopColor="#8EAD9D" />
+            <stop offset="100%" stopColor="#808357" />
           </linearGradient>
 
-          {/* Horizon ring curve */}
-          <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#746c3b" />
-            <stop offset="50%" stopColor="#a1975e" />
-            <stop offset="100%" stopColor="#746c3b" />
-          </linearGradient>
+          <clipPath id="worldOvalClip">
+            <path d="M 325 46 C 480 28, 720 28, 875 46 C 1070 115, 1188 220, 1188 330 C 1188 440, 1070 545, 875 614 C 720 632, 480 632, 325 614 C 130 545, 12 440, 12 330 C 12 220, 130 115, 325 46 Z" />
+          </clipPath>
         </defs>
 
-        {/* 1. Base Ocean Layer */}
-        <rect width="1000" height="680" fill="url(#oceanGrad)" />
+        {/* 1. Outer Backdrop */}
+        <rect width="1200" height="660" fill="url(#bgSkyOliveGrad)" />
 
-        {/* 2. Atmosphere / Curvature Horizon Arc */}
-        <ellipse
-          cx="500"
-          cy="750"
-          rx="680"
-          ry="320"
-          fill="none"
-          stroke="#4f919f"
-          strokeWidth="1.5"
-          opacity="0.6"
-        />
+        {/* 2. Oval Globe Ocean & Grid */}
+        <g clipPath="url(#worldOvalClip)">
+          <rect x="0" y="0" width="1200" height="660" fill="url(#ovalOceanGrad)" />
 
-        {/* Earthy horizon arch band */}
-        <path
-          d="M -100 560 Q 500 480 1100 560 L 1100 690 L -100 690 Z"
-          fill="url(#horizonGrad)"
-        />
-        <path
-          d="M -50 560 Q 500 482 1050 560"
-          fill="none"
-          stroke="url(#ringGrad)"
-          strokeWidth="3.5"
-          opacity="0.8"
-        />
-        <path
-          d="M -50 562 Q 500 484 1050 562"
-          fill="none"
-          stroke="#554e29"
-          strokeWidth="1.2"
-          opacity="0.5"
-        />
+          {/* Latitude lines */}
+          <g stroke="#7EA4AE" strokeWidth="2" fill="none" opacity="0.85">
+            <path d="M 160 110 Q 600 95 1040 110" />
+            <path d="M 60 190 Q 600 175 1140 190" />
+            <path d="M 10 272 Q 600 264 1190 272" />
+            <path d="M 10 345 Q 600 345 1190 345" />
+            <path d="M 20 420 Q 600 430 1180 420" />
+            <path d="M 70 495 Q 600 512 1130 495" />
+            <path d="M 170 568 Q 600 584 1030 568" />
+          </g>
 
-        {/* 3. Curved Longitude / Meridian Grid Lines */}
-        <g stroke="#5697a5" strokeWidth="1.2" fill="none" opacity="0.75">
-          {/* Main vertical meridian (Prime meridian / Central axis) */}
-          <path d="M 500 135 C 500 240, 500 450, 500 580" />
+          {/* Meridian lines */}
+          <g stroke="#7EA4AE" strokeWidth="2" fill="none" opacity="0.85">
+            <line x1="600" y1="30" x2="600" y2="630" />
+            <path d="M 520 32 C 470 210, 470 450, 520 628" />
+            <path d="M 445 36 C 350 205, 350 455, 445 624" />
+            <path d="M 375 43 C 230 200, 230 460, 375 617" />
+            <path d="M 305 56 C 110 200, 110 460, 305 604" />
 
-          {/* Left meridians (arching towards America / Atlantic) */}
-          <path d="M 440 136 C 390 220, 360 410, 420 580" />
-          <path d="M 380 138 C 290 220, 240 400, 340 580" />
-          <path d="M 320 142 C 190 230, 130 400, 260 580" />
-          <path d="M 260 148 C 100 240, 30 400, 180 580" />
-          <path d="M 200 156 C 10 260, -60 410, 90 580" />
-          <path d="M 140 168 C -70 290, -140 430, 10 580" />
-          <path d="M 80 185 C -140 330, -180 470, -70 580" />
+            <path d="M 680 32 C 730 210, 730 450, 680 628" />
+            <path d="M 755 36 C 850 205, 850 455, 755 624" />
+            <path d="M 825 43 C 970 200, 970 460, 825 617" />
+            <path d="M 895 56 C 1090 200, 1090 460, 895 604" />
+          </g>
 
-          {/* Right meridians (arching towards Indian Ocean / Asia) */}
-          <path d="M 560 136 C 610 220, 640 410, 580 580" />
-          <path d="M 620 138 C 710 220, 760 400, 660 580" />
-          <path d="M 680 142 C 810 230, 870 400, 740 580" />
-          <path d="M 740 148 C 900 240, 970 400, 820 580" />
-          <path d="M 800 156 C 990 260, 1060 410, 910 580" />
-          <path d="M 860 168 C 1070 290, 1140 430, 990 580" />
-          <path d="M 920 185 C 1140 330, 1180 470, 1070 580" />
+          {/* Continents (Sage/Olive Green #A7CAA1) */}
+          <g fill="#A7CAA1" stroke="#92B68C" strokeWidth="1.2" strokeLinejoin="round">
+            {/* Greenland */}
+            <path d="M 435 52 C 460 44, 520 42, 545 55 C 555 68, 535 90, 505 112 C 482 128, 468 122, 460 105 C 450 85, 425 65, 435 52 Z" />
+
+            {/* North America & Central America */}
+            <path d="M 118 118 C 165 100, 245 96, 308 106 C 345 112, 385 105, 412 115 C 430 125, 422 145, 395 162 C 378 174, 392 185, 372 205 C 350 225, 322 238, 300 256 C 280 274, 265 280, 268 302 C 270 318, 282 328, 305 344 C 318 352, 328 362, 322 368 C 312 372, 294 358, 275 344 C 254 328, 232 308, 222 288 C 214 270, 200 248, 178 232 C 155 215, 132 195, 118 175 C 98 152, 95 130, 118 118 Z" />
+
+            {/* Caribbean islands */}
+            <ellipse cx="322" cy="316" rx="16" ry="5" />
+            <ellipse cx="348" cy="326" rx="9" ry="4" />
+
+            {/* South America */}
+            <path d="M 326 356 C 350 344, 390 352, 425 372 C 456 390, 474 414, 465 442 C 455 470, 424 495, 400 520 C 380 542, 365 568, 355 588 C 344 585, 336 565, 335 538 C 334 505, 332 474, 322 448 C 312 422, 305 375, 326 356 Z" />
+
+            {/* UK & Ireland */}
+            <path d="M 562 154 C 556 164, 560 176, 572 178 C 578 170, 576 158, 562 154 Z" />
+            <ellipse cx="550" cy="168" rx="4" ry="7" />
+
+            {/* Europe & Eurasia */}
+            <path d="M 595 104 C 630 82, 685 78, 720 96 C 755 90, 825 82, 900 88 C 975 94, 1055 105, 1098 128 C 1118 140, 1098 164, 1068 182 C 1042 198, 1038 220, 1020 240 C 1002 260, 982 280, 962 296 C 942 312, 915 330, 898 352 C 885 368, 865 362, 855 340 C 845 318, 830 298, 814 304 C 798 310, 788 338, 774 342 C 760 346, 750 315, 738 296 C 722 272, 706 254, 686 248 C 668 242, 646 242, 632 232 C 618 222, 598 228, 582 232 C 566 236, 558 220, 566 205 C 578 188, 598 180, 610 164 C 620 150, 608 134, 595 122 Z" />
+
+            {/* Japan & Maritime SE Asia */}
+            <path d="M 1035 205 C 1048 214, 1050 236, 1034 252 C 1024 242, 1026 220, 1035 205 Z" />
+            <path d="M 918 368 C 938 362, 962 372, 968 386 C 950 392, 926 385, 918 368 Z" />
+            <path d="M 980 375 C 998 370, 1018 382, 1024 396 C 1005 400, 986 392, 980 375 Z" />
+
+            {/* Africa */}
+            <path d="M 555 245 C 585 234, 628 236, 658 248 C 684 258, 704 282, 725 312 C 742 336, 766 346, 765 368 C 764 388, 736 410, 726 436 C 718 458, 712 492, 692 522 C 674 548, 654 556, 638 548 C 624 536, 618 504, 612 474 C 606 444, 594 418, 568 398 C 542 378, 514 358, 510 326 C 506 294, 526 258, 555 245 Z" />
+
+            {/* Madagascar */}
+            <path d="M 744 468 C 756 462, 760 482, 750 505 C 742 515, 735 496, 744 468 Z" />
+
+            {/* Australia & New Zealand */}
+            <path d="M 952 440 C 986 426, 1032 428, 1062 452 C 1085 470, 1084 504, 1062 524 C 1038 544, 1002 536, 968 522 C 942 512, 928 482, 952 440 Z" />
+            <path d="M 1102 520 C 1114 514, 1116 534, 1102 552 C 1094 544, 1095 528, 1102 520 Z" />
+
+            {/* Antarctica */}
+            <path d="M 245 612 C 320 582, 425 572, 540 578 C 640 584, 755 572, 875 588 C 930 595, 968 608, 980 618 L 920 635 L 280 635 Z" />
+          </g>
         </g>
 
-        {/* 4. Curved Latitude / Parallel Grid Lines */}
-        <g stroke="#5697a5" strokeWidth="1.2" fill="none" opacity="0.75">
-          {/* Outer hemisphere boundary */}
-          <ellipse cx="500" cy="460" rx="490" ry="325" />
-
-          {/* Curved Parallels */}
-          <path d="M 310 142 Q 500 130 690 142" />
-          <path d="M 210 178 Q 500 160 790 178" />
-          <path d="M 130 222 Q 500 198 870 222" />
-          <path d="M 70 274 Q 500 242 930 274" />
-          <path d="M 30 336 Q 500 295 970 336" />
-          <path d="M 8 406 Q 500 355 992 406" />
-          <path d="M 2 485 Q 500 425 998 485" />
-          <path d="M 18 565 Q 500 500 982 565" />
-          <path d="M 60 645 Q 500 575 940 645" />
-        </g>
-
-        {/* 5. Continents (Sage/Olive green) */}
-        {/* Colors matching the reference screenshot: Soft muted olive/sage #9dc39a */}
-        <g fill="#9dc39a" stroke="#89b086" strokeWidth="1">
-          {/* North America (visible top left) */}
-          <path d="M 0 160 Q 60 140 120 150 Q 150 170 170 200 Q 180 230 150 250 Q 130 270 145 290 Q 140 310 110 320 Q 90 325 80 340 Q 60 360 40 350 L 0 350 Z" />
-
-          {/* Central America & Caribbean Bridge */}
-          <path d="M 80 340 Q 110 345 130 370 Q 145 390 170 410 Q 165 420 150 415 Q 130 395 100 375 Q 85 365 75 350 Z" />
-          {/* Caribbean islands */}
-          <ellipse cx="185" cy="380" rx="14" ry="5" />
-          <ellipse cx="205" cy="390" rx="8" ry="4" />
-
-          {/* South America (center-left) */}
-          <path d="M 160 410 C 180 400, 240 380, 280 400 C 310 415, 335 445, 335 480 C 335 520, 310 560, 280 600 C 265 620, 240 660, 225 680 C 215 670, 205 650, 205 620 C 205 580, 190 550, 180 520 C 170 490, 150 450, 160 410 Z" />
-
-          {/* Europe & Mediterranean (top center-right) */}
-          {/* British Isles */}
-          <path d="M 585 288 C 580 295, 582 305, 592 312 C 598 305, 600 295, 595 288 Z" />
-          <ellipse cx="575" cy="300" rx="5" ry="9" />
-
-          {/* Western & Central Europe */}
-          <path d="M 610 240 C 650 230, 710 230, 760 235 C 800 240, 850 245, 900 250 C 930 255, 980 260, 1000 270 L 1000 370 C 960 360, 920 355, 870 355 C 840 355, 820 365, 800 360 C 780 355, 765 340, 750 345 C 730 350, 720 370, 700 370 C 680 370, 675 350, 660 340 C 640 330, 615 320, 610 300 C 605 280, 605 260, 610 240 Z" />
-
-          {/* Scandinavia */}
-          <path d="M 670 195 C 690 190, 720 200, 715 225 C 700 235, 680 235, 670 215 Z" />
-
-          {/* Africa (center-right, prominent) */}
-          <path d="M 590 355 C 610 345, 660 340, 690 350 C 725 360, 750 380, 765 410 C 775 430, 770 460, 750 480 C 740 490, 735 520, 730 550 C 725 580, 715 620, 685 650 C 660 675, 640 680, 625 680 C 615 670, 605 640, 600 610 C 595 580, 580 560, 560 540 C 540 520, 530 490, 530 460 C 530 430, 550 410, 565 390 C 575 375, 580 365, 590 355 Z" />
-
-          {/* Madagascar */}
-          <path d="M 780 565 C 790 555, 796 570, 790 590 C 785 605, 778 600, 780 565 Z" />
-
-          {/* Asia / Middle East partial edge */}
-          <path d="M 800 365 C 830 360, 870 365, 910 380 C 950 400, 990 410, 1000 415 L 1000 480 C 980 470, 940 455, 910 440 C 880 425, 840 410, 810 400 Z" />
-
-          {/* Antarctica (bottom center arc landmass) */}
-          <path d="M 230 680 C 270 655, 330 645, 410 650 C 470 655, 530 660, 600 655 C 660 650, 740 640, 820 655 C 890 670, 930 678, 960 680 L 1000 680 L 1000 750 L 0 750 L 0 680 Z" />
-          {/* Antarctica foreground cap matching screenshot */}
-          <path
-            d="M 180 660 C 260 635, 380 635, 500 640 C 620 645, 750 630, 850 645 C 900 655, 940 665, 970 675 L 970 700 L 160 700 Z"
-            fill="#a6cba3"
-            opacity="0.95"
-          />
-        </g>
+        {/* Oval Globe Outline */}
+        <path
+          d="M 325 46 C 480 28, 720 28, 875 46 C 1070 115, 1188 220, 1188 330 C 1188 440, 1070 545, 875 614 C 720 632, 480 632, 325 614 C 130 545, 12 440, 12 330 C 12 220, 130 115, 325 46 Z"
+          fill="none"
+          stroke="#7EA4AE"
+          strokeWidth="2.5"
+          opacity="0.9"
+        />
       </svg>
     </div>
   );
