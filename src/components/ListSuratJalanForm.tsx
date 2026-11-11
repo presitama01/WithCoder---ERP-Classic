@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface SuratJalanItem {
   id: string;
@@ -78,8 +80,10 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   const [tanggalFilter, setTanggalFilter] = useState<string>('03-Aug-2026');
   const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
-  // Add New Modal state
+  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const [newNoBukti, setNewNoBukti] = useState<string>('2608-DO-INV-013');
   const [newTanggal, setNewTanggal] = useState<string>('03-Aug-2026');
   const [newCustomer, setNewCustomer] = useState<string>('PT. HI-LEX INDONESIA');
@@ -91,7 +95,13 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewNoBukti(`2608-DO-INV-01${sjList.length + 1}`);
     setNewTanggal('03-Aug-2026');
     setNewCustomer('PT. HI-LEX INDONESIA');
@@ -103,43 +113,82 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = sjList.find((s) => s.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewNoBukti(item.noBukti);
+    setNewTanggal(item.tanggal);
+    setNewCustomer(item.namaCustomer);
+    setNewNoSo(item.noSo);
+    setNewPoNo(item.poNo);
+    setNewSales(item.sales);
+    setNewNoFaktur(item.noFaktur);
+    setNewKeterangan(item.keterangan);
+    setIsAddOpen(true);
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    const newItem: SuratJalanItem = {
-      id: Date.now().toString(),
-      noBukti: newNoBukti.trim().toUpperCase(),
-      tanggal: newTanggal,
-      namaCustomer: newCustomer.trim().toUpperCase(),
-      noSo: newNoSo.trim().toUpperCase(),
-      poNo: newPoNo.trim(),
-      sales: newSales.trim(),
-      noFaktur: newNoFaktur.trim().toUpperCase(),
-      keterangan: newKeterangan.trim(),
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Posting',
-      tglPost: newTanggal,
-      dibuatOleh: 'RETNO',
-      tglCreated: newTanggal,
-      diupdateOleh: '',
-      tglUpdate: '',
-    };
+    if (editingId) {
+      setSjList(
+        sjList.map((item) =>
+          item.id === editingId
+            ? {
+                ...item,
+                noBukti: newNoBukti.trim().toUpperCase(),
+                tanggal: newTanggal,
+                namaCustomer: newCustomer.trim().toUpperCase(),
+                noSo: newNoSo.trim().toUpperCase(),
+                poNo: newPoNo.trim(),
+                sales: newSales.trim(),
+                noFaktur: newNoFaktur.trim().toUpperCase(),
+                keterangan: newKeterangan.trim(),
+                diupdateOleh: 'RETNO',
+                tglUpdate: newTanggal,
+              }
+            : item
+        )
+      );
+      showFeedback('Surat Jalan diperbarui');
+    } else {
+      const newItem: SuratJalanItem = {
+        id: Date.now().toString(),
+        noBukti: newNoBukti.trim().toUpperCase(),
+        tanggal: newTanggal,
+        namaCustomer: newCustomer.trim().toUpperCase(),
+        noSo: newNoSo.trim().toUpperCase(),
+        poNo: newPoNo.trim(),
+        sales: newSales.trim(),
+        noFaktur: newNoFaktur.trim().toUpperCase(),
+        keterangan: newKeterangan.trim(),
+        stsPrint: 'Not Yet',
+        tglPrint: '',
+        stsPost: 'Posting',
+        tglPost: newTanggal,
+        dibuatOleh: 'RETNO',
+        tglCreated: newTanggal,
+        diupdateOleh: '',
+        tglUpdate: '',
+      };
 
-    setSjList([newItem, ...sjList]);
-    setSelectedId(newItem.id);
+      setSjList([newItem, ...sjList]);
+      setSelectedId(newItem.id);
+      showFeedback('Surat Jalan tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Apakah Anda yakin ingin menghapus data Surat Jalan ini?')) {
-      const updated = sjList.filter((item) => item.id !== id);
-      setSjList(updated);
-      if (selectedId === id && updated.length > 0) {
-        setSelectedId(updated[0].id);
-      }
+    const updated = sjList.filter((item) => item.id !== id);
+    setSjList(updated);
+    if (selectedId === id) {
+      setSelectedId(updated[0]?.id || '');
     }
+    showFeedback('Surat Jalan dihapus');
   };
 
   const filteredList = sjList.filter((item) => {
@@ -198,53 +247,40 @@ ALTER TABLE public.surat_jalan ENABLE ROW LEVEL SECURITY;
   return (
     <div
       id="list-surat-jalan-container"
-      className="absolute inset-4 z-30 flex flex-col bg-[#ECE9D8] border border-[#919191] shadow-2xl select-none overflow-hidden font-sans text-xs"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       {/* 1. Black Window Header Banner */}
-      <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs select-none">
-        <div className="flex items-center space-x-2">
-          <span>List Surat Jalan</span>
-        </div>
-        <div className="flex items-center space-x-1">
+      <FormHeaderBanner
+        title="List Surat Jalan"
+        onClose={onClose}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+        extraTools={
           <button
+            type="button"
             onClick={() => setShowSqlModal(true)}
-            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8]"
+            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8] cursor-pointer"
             title="Lihat Script SQL Supabase"
           >
             SQL Code
           </button>
-          <button
-            onClick={onClose}
-            className="w-5 h-5 bg-[#C0C0C0] text-black border border-white font-bold flex items-center justify-center hover:bg-red-600 hover:text-white"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* 2. Action Toolbar & Filter Header */}
       <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
         <div className="flex items-center space-x-2">
-          <button
-            onClick={handleAddNew}
-            className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
-          >
-            <span className="text-green-700 font-bold">＋</span>
-            <span>Add New</span>
-          </button>
-          <button
-            onClick={() => {
-              if (selectedId) handleDelete(selectedId);
-            }}
-            className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
-          >
-            <span className="text-red-700 font-bold">🗑</span>
-            <span>Delete</span>
-          </button>
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Surat Jalan tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={() => selectedId && handleDelete(selectedId)}
+            feedback={feedback}
+          />
           {onOpenPrintReport && (
             <button
+              type="button"
               onClick={onOpenPrintReport}
-              className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
+              className="h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-[11px] font-sans text-black cursor-pointer"
               title="Buka Dialog Laporan Surat Jalan"
             >
               <span className="text-blue-700">🖶</span>
@@ -386,7 +422,7 @@ ALTER TABLE public.surat_jalan ENABLE ROW LEVEL SECURITY;
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
-              <span>Tambah Surat Jalan Baru</span>
+              <span>{editingId ? 'Koreksi Surat Jalan' : 'Tambah Surat Jalan Baru'}</span>
               <button
                 onClick={() => setIsAddOpen(false)}
                 className="text-white hover:text-red-300 font-bold px-1.5"

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 interface ReturPenjualanBerdasarkanFakturFormProps {
   isOpen: boolean;
@@ -17,48 +19,67 @@ export const ReturPenjualanBerdasarkanFakturForm: React.FC<
   const [bentukLaporan, setBentukLaporan] = useState<string>(
     '01 - Retur Penjualan Barang'
   );
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
+  const handleBaru = () => {
+    setTglStart('12-09-2026');
+    setTglEnd('12-09-2026');
+    setFilterType('no_bukti');
+    setNoBuktiStart('');
+    setNoBuktiEnd('');
+    setLokasiStock('ALL');
+    setBentukLaporan('01 - Retur Penjualan Barang');
+    showFeedback('Filter baru direset');
+  };
+
+  const handleHapus = () => {
+    setNoBuktiStart('');
+    setNoBuktiEnd('');
+    showFeedback('Parameter dibersihkan');
+  };
+
   const handlePreview = () => {
-    alert(
-      `Memproses Preview Laporan Retur Penjualan Berdasarkan Faktur:\n• Periode: ${tglStart} s/d ${tglEnd}\n• Filter: ${filterType} (${noBuktiStart} s/d ${noBuktiEnd})\n• Lokasi: ${lokasiStock}\n• Bentuk: ${bentukLaporan}`
-    );
+    showFeedback(`Preview: ${bentukLaporan} (${tglStart} s/d ${tglEnd})`);
   };
 
   return (
-    <div className="absolute inset-0 z-30 pointer-events-none flex items-start justify-start p-4 select-none">
-      {/* Draggable/Fixed Classic Windows Dialog Window matching image_0bfe021d.png */}
-      <div
-        id="retur-penjualan-faktur-dialog"
-        className="pointer-events-auto bg-[#D4D0C8] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] shadow-[3px_3px_10px_rgba(0,0,0,0.4)] w-[540px] flex flex-col font-sans text-xs mt-1 ml-1"
-      >
-        {/* 1. Classic Windows Aero Title Bar with Printer Icon, Title, and Red Close Button */}
-        <div className="bg-gradient-to-r from-[#0055EA] via-[#2E87FA] to-[#0A66EE] text-white px-2 py-1 flex items-center justify-between font-sans text-[11px] shadow-sm select-none">
-          <div className="flex items-center space-x-1.5 font-bold drop-shadow">
-            <span className="w-3.5 h-3.5 bg-white/20 border border-white/50 rounded-xs flex items-center justify-center text-[9px]">
-              🖶
-            </span>
-            <span>I-Software - Print Report</span>
-          </div>
+    <div
+      id="retur-penjualan-faktur-dialog"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
+    >
+      <FormHeaderBanner
+        title="Retur Penjualan Berdasarkan Faktur"
+        onClose={onClose}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+      />
 
-          <button
-            onClick={onClose}
-            type="button"
-            className="w-5 h-4.5 bg-gradient-to-b from-[#E76C55] to-[#C93822] hover:from-[#FA7C65] hover:to-[#DE4832] text-white font-bold text-[10px] rounded-xs flex items-center justify-center border border-[#8B1A0E] shadow-xs active:translate-y-px cursor-pointer"
-            title="Tutup"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* 2. Main Window Inner Container */}
-        <div className="p-3 bg-[#ECE9D8] border border-[#808080] m-1 flex flex-col space-y-3">
+      {/* Main Scrollable Container */}
+      <div className="flex-1 overflow-auto p-3">
+        <div className="max-w-[560px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
           {/* Header Box: RETUR PENJUALAN BERDASARKAN FAKTUR */}
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
             <h1 className="font-extrabold text-[13px] tracking-wide text-black font-sans">
               RETUR PENJUALAN BERDASARKAN FAKTUR
             </h1>
+          </div>
+
+          {/* Action Toolbar */}
+          <div className="border-b border-[#999999] pb-2">
+            <FormActionButtons
+              compact
+              onSimpan={() => showFeedback('Parameter Retur Penjualan tersimpan')}
+              onBaru={handleBaru}
+              onKoreksi={() => showFeedback('Silakan ubah filter laporan')}
+              onHapus={handleHapus}
+              feedback={feedback}
+            />
           </div>
 
           {/* Group 1: Periode */}
@@ -236,25 +257,15 @@ export const ReturPenjualanBerdasarkanFakturForm: React.FC<
               </fieldset>
             </div>
 
-            {/* Right Buttons: PREVIEW and CLOSE */}
-            <div className="w-[145px] border border-[#999999] p-1.5 flex items-center justify-between gap-1.5 bg-[#E6E2D4]">
+            {/* Right Button: PREVIEW */}
+            <div className="w-[100px] border border-[#999999] p-1.5 flex items-center justify-center bg-[#E6E2D4]">
               <button
                 type="button"
                 onClick={handlePreview}
-                className="flex-1 h-full py-3 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
+                className="w-full h-full py-3 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
               >
                 <span className="border border-dotted border-black/40 px-1 py-1 w-full block">
                   PREVIEW
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 h-full py-3 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
-              >
-                <span className="border border-dotted border-black/40 px-1 py-1 w-full block">
-                  <u>C</u>LOSE
                 </span>
               </button>
             </div>

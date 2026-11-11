@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface ExpedisiItem {
   id: string;
@@ -71,9 +73,18 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   const [newPhone1, setNewPhone1] = useState('');
   const [newPhone2, setNewPhone2] = useState('');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewKode('');
     setNewNama('');
     setNewAlamat('');
@@ -83,12 +94,33 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = expedisiList.find((x) => x.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewKode(item.kodeExpedisi);
+    setNewNama(item.namaExpedisi);
+    setNewAlamat(item.alamat);
+    setNewKota(item.kota);
+    setNewPhone1(item.phone1);
+    setNewPhone2(item.phone2);
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = expedisiList.filter((x) => x.id !== selectedId);
+    setExpedisiList(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data dihapus');
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const newItem: ExpedisiItem = {
-      id: Date.now().toString(),
+    const payload: ExpedisiItem = {
+      id: editingId || Date.now().toString(),
       kodeExpedisi: newKode.trim().toUpperCase(),
       namaExpedisi: newNama.trim().toUpperCase(),
       alamat: newAlamat.trim(),
@@ -96,9 +128,16 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
       phone1: newPhone1.trim(),
       phone2: newPhone2.trim(),
     };
-    setExpedisiList([newItem, ...expedisiList]);
-    setSelectedId(newItem.id);
+    if (editingId) {
+      setExpedisiList(expedisiList.map((x) => (x.id === editingId ? payload : x)));
+      showFeedback('Data diperbarui');
+    } else {
+      setExpedisiList([payload, ...expedisiList]);
+      setSelectedId(payload.id);
+      showFeedback('Data tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const filteredExpedisi = expedisiList.filter((item) => {
@@ -131,45 +170,21 @@ CREATE TABLE IF NOT EXISTS public.master_expedisi (
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <div className="flex items-center space-x-3">
-            <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-              List Master Expedisi
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              title="Export Excel"
-              onClick={() => alert('Data Master Expedisi berhasil diexport ke format Excel')}
-              className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
-            >
-              <span className="text-[11px] font-bold text-white font-sans">X</span>
-            </button>
-          </div>
-        </div>
+        <FormHeaderBanner
+          title="List Master Expedisi"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
         {/* 2. Action & Search Bar */}
-        <div className="shrink-0 flex items-center h-[52px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans">
-          <button
-            type="button"
-            onClick={handleAddNew}
-            className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
-          >
-            Add New
-          </button>
+        <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Expedisi tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={handleDelete}
+            feedback={feedback}
+          />
 
           <div className="flex items-center space-x-2">
             <span className="font-bold text-[11px] text-black">Search :</span>
@@ -259,8 +274,8 @@ CREATE TABLE IF NOT EXISTS public.master_expedisi (
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-[450px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
             <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
-              <span>Tambah Master Expedisi Baru</span>
-              <button onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold">✕</button>
+              <span>{editingId ? 'Koreksi Master Expedisi' : 'Tambah Master Expedisi Baru'}</span>
+              <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
             </div>
             <form onSubmit={handleSaveNew} className="space-y-3 text-[11px]">
               <div>

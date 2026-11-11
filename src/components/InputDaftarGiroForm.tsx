@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface GiroItem {
   id: string;
@@ -68,9 +70,18 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
   const [newAmountPaid, setNewAmountPaid] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewIdSupplier(`SUP0${giroList.length + 1}`);
     setNewSupplier('');
     setNewNoCekGiro('');
@@ -81,37 +92,71 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = giroList.find((g) => g.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewIdSupplier(item.idSupplier);
+    setNewSupplier(item.supplier);
+    setNewNoCekGiro(item.noCekGiro);
+    setNewBank(item.bank);
+    setNewDue(item.due);
+    setNewAmountPaid(String(item.amountPaid));
+    setNewKeterangan(item.keterangan);
+    setIsAddOpen(true);
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSupplier.trim() || !newNoCekGiro.trim()) return;
 
-    const newItem: GiroItem = {
-      id: Date.now().toString(),
-      no: giroList.length + 1,
-      idSupplier: newIdSupplier.trim().toUpperCase(),
-      supplier: newSupplier.trim().toUpperCase(),
-      noCekGiro: newNoCekGiro.trim().toUpperCase(),
-      bank: newBank.trim().toUpperCase(),
-      due: newDue || new Date().toISOString().split('T')[0],
-      amountPaid: parseFloat(newAmountPaid) || 0,
-      keterangan: newKeterangan.trim(),
-    };
+    if (editingId) {
+      setGiroList(
+        giroList.map((g) =>
+          g.id === editingId
+            ? {
+                ...g,
+                idSupplier: newIdSupplier.trim().toUpperCase(),
+                supplier: newSupplier.trim().toUpperCase(),
+                noCekGiro: newNoCekGiro.trim().toUpperCase(),
+                bank: newBank.trim().toUpperCase(),
+                due: newDue || g.due,
+                amountPaid: parseFloat(newAmountPaid) || 0,
+                keterangan: newKeterangan.trim(),
+              }
+            : g
+        )
+      );
+      showFeedback('Data giro diperbarui');
+    } else {
+      const newItem: GiroItem = {
+        id: Date.now().toString(),
+        no: giroList.length + 1,
+        idSupplier: newIdSupplier.trim().toUpperCase(),
+        supplier: newSupplier.trim().toUpperCase(),
+        noCekGiro: newNoCekGiro.trim().toUpperCase(),
+        bank: newBank.trim().toUpperCase(),
+        due: newDue || new Date().toISOString().split('T')[0],
+        amountPaid: parseFloat(newAmountPaid) || 0,
+        keterangan: newKeterangan.trim(),
+      };
 
-    setGiroList([...giroList, newItem]);
-    setSelectedId(newItem.id);
+      setGiroList([...giroList, newItem]);
+      setSelectedId(newItem.id);
+      showFeedback('Data giro tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Apakah Anda yakin ingin menghapus data giro ini?')) {
-      const updated = giroList.filter((item) => item.id !== id);
-      // Re-index No
-      const reindexed = updated.map((item, idx) => ({ ...item, no: idx + 1 }));
-      setGiroList(reindexed);
-      if (selectedId === id && reindexed.length > 0) {
-        setSelectedId(reindexed[0].id);
-      }
+    const updated = giroList.filter((item) => item.id !== id);
+    const reindexed = updated.map((item, idx) => ({ ...item, no: idx + 1 }));
+    setGiroList(reindexed);
+    if (selectedId === id) {
+      setSelectedId(reindexed[0]?.id || '');
     }
+    showFeedback('Data giro dihapus');
   };
 
   const filteredGiroList = giroList.filter((item) => {
@@ -162,14 +207,11 @@ CREATE POLICY "Enable all access for authenticated users" ON public.daftar_giro
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Window Header (Black Banner) */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <div className="flex items-center space-x-2">
-            <span className="text-[15px] font-bold tracking-tight text-white drop-shadow">
-              PEMBELIAN &gt; Input Daftar Giro (Pendaftaran Penerimaan Giro)
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
+        <FormHeaderBanner
+          title="Input Daftar Giro (Pendaftaran Penerimaan Giro)"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+          extraTools={
             <button
               type="button"
               onClick={() => setShowSqlModal(true)}
@@ -178,45 +220,18 @@ CREATE POLICY "Enable all access for authenticated users" ON public.daftar_giro
             >
               SQL Supabase
             </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-[22px] h-[22px] bg-[#c00000] hover:bg-red-700 text-white font-bold border border-white/80 rounded-[1px] flex items-center justify-center text-[12px] cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+          }
+        />
 
         {/* 2. Toolbar / Action Ribbon */}
-        <div className="shrink-0 h-[38px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-2 space-x-1">
-          <button
-            onClick={handleAddNew}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-green-700 font-bold text-sm">＋</span>
-            <span className="text-black font-semibold">Baru</span>
-          </button>
-          <button
-            onClick={() => {
-              const item = giroList.find((g) => g.id === selectedId);
-              if (item) alert(`Edit Giro: ${item.noCekGiro} - ${item.supplier}`);
-              else alert('Pilih baris terlebih dahulu.');
-            }}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-blue-700 font-bold">✎</span>
-            <span className="text-black">Ubah</span>
-          </button>
-          <button
-            onClick={() => {
-              if (selectedId) handleDelete(selectedId);
-            }}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-red-700 font-bold">🗑</span>
-            <span className="text-black">Hapus</span>
-          </button>
+        <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
+          <FormActionButtons
+            onSimpan={() => showFeedback('Daftar Giro tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={() => selectedId && handleDelete(selectedId)}
+            feedback={feedback}
+          />
 
           <div className="h-[20px] w-[1px] bg-[#ACA899] mx-1" />
 
@@ -347,11 +362,11 @@ CREATE POLICY "Enable all access for authenticated users" ON public.daftar_giro
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
             <div className="bg-[#ECE9D8] border-2 border-[#000000] shadow-2xl w-[520px] flex flex-col rounded-[2px] font-sans">
               <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between">
-                <span className="font-bold text-sm">Tambah Daftar Giro Baru</span>
+                <span className="font-bold text-sm">{editingId ? 'Koreksi Daftar Giro' : 'Tambah Daftar Giro Baru'}</span>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="text-white hover:text-red-300 font-bold px-1"
+                  className="text-white hover:text-red-300 font-bold px-1 cursor-pointer"
                 >
                   ✕
                 </button>

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface ReturPembelianItem {
   id: string;
@@ -87,9 +89,18 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   const [newDisc, setNewDisc] = useState<string>('0%');
   const [newPpn, setNewPpn] = useState<string>('11%');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewNoBukti(`2608-RP-IMP-0${returList.length + 1}`);
     setNewTanggal('06-Aug-2026');
     setNewSupplier('DEPO TEKNIK');
@@ -101,43 +112,82 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = returList.find((r) => r.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewNoBukti(item.noBukti);
+    setNewTanggal(item.tanggal);
+    setNewSupplier(item.namaSupplier);
+    setNewNilaiRetur(item.nilaiRetur);
+    setNewKeterangan(item.keterangan);
+    setNewMataUang(item.mataUang);
+    setNewDisc(item.disc);
+    setNewPpn(item.ppn);
+    setIsAddOpen(true);
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    const newItem: ReturPembelianItem = {
-      id: Date.now().toString(),
-      noBukti: newNoBukti.trim().toUpperCase(),
-      tanggal: newTanggal,
-      namaSupplier: newSupplier.trim().toUpperCase(),
-      nilaiRetur: newNilaiRetur.trim(),
-      keterangan: newKeterangan.trim(),
-      mataUang: newMataUang.trim(),
-      disc: newDisc.trim(),
-      ppn: newPpn.trim(),
-      stsPrint: 'Not Yet',
-      tglPrint: '-',
-      stsPost: 'Posted',
-      tglPost: newTanggal,
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    };
+    if (editingId) {
+      setReturList(
+        returList.map((r) =>
+          r.id === editingId
+            ? {
+                ...r,
+                noBukti: newNoBukti.trim().toUpperCase(),
+                tanggal: newTanggal,
+                namaSupplier: newSupplier.trim().toUpperCase(),
+                nilaiRetur: newNilaiRetur.trim(),
+                keterangan: newKeterangan.trim(),
+                mataUang: newMataUang.trim(),
+                disc: newDisc.trim(),
+                ppn: newPpn.trim(),
+                diupdateOleh: 'RETNO',
+                tglUpdate: new Date().toLocaleDateString('id-ID'),
+              }
+            : r
+        )
+      );
+      showFeedback('Retur Pembelian diperbarui');
+    } else {
+      const newItem: ReturPembelianItem = {
+        id: Date.now().toString(),
+        noBukti: newNoBukti.trim().toUpperCase(),
+        tanggal: newTanggal,
+        namaSupplier: newSupplier.trim().toUpperCase(),
+        nilaiRetur: newNilaiRetur.trim(),
+        keterangan: newKeterangan.trim(),
+        mataUang: newMataUang.trim(),
+        disc: newDisc.trim(),
+        ppn: newPpn.trim(),
+        stsPrint: 'Not Yet',
+        tglPrint: '-',
+        stsPost: 'Posted',
+        tglPost: newTanggal,
+        dibuatOleh: 'RETNO',
+        tglCreated: '06-Aug-2026',
+        diupdateOleh: '-',
+        tglUpdate: '-',
+      };
 
-    setReturList([newItem, ...returList]);
-    setSelectedId(newItem.id);
+      setReturList([newItem, ...returList]);
+      setSelectedId(newItem.id);
+      showFeedback('Retur Pembelian tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Apakah Anda yakin ingin menghapus Retur Pembelian ini?')) {
-      const updated = returList.filter((item) => item.id !== id);
-      setReturList(updated);
-      if (selectedId === id && updated.length > 0) {
-        setSelectedId(updated[0].id);
-      }
+    const updated = returList.filter((item) => item.id !== id);
+    setReturList(updated);
+    if (selectedId === id) {
+      setSelectedId(updated[0]?.id || '');
     }
+    showFeedback('Retur Pembelian dihapus');
   };
 
   const filteredList = returList.filter((item) => {
@@ -196,14 +246,11 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <div className="flex items-center space-x-3">
-            <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-              List Retur Pembelian Barang
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
+        <FormHeaderBanner
+          title="List Retur Pembelian Barang"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+          extraTools={
             <button
               type="button"
               onClick={() => setShowSqlModal(true)}
@@ -212,45 +259,19 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
             >
               <span>Supabase SQL</span>
             </button>
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              title="Export Excel"
-              className="w-[24px] h-[22px] bg-[#107C41] border border-white/80 rounded-[1px] flex items-center justify-center text-white font-bold text-[10px] hover:brightness-110 cursor-pointer"
-            >
-              X
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-[22px] h-[22px] bg-[#C75050] hover:bg-[#E81123] text-white rounded-[2px] font-bold flex items-center justify-center text-[12px] border border-white/40 cursor-pointer ml-1 shadow-xs"
-              title="Close"
-            >
-              ×
-            </button>
-          </div>
-        </div>
+          }
+        />
 
-        {/* 2. Sub-toolbar with Add New & Tanggal Filter */}
-        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0]">
+        {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
-            <button
-              type="button"
-              onClick={handleAddNew}
-              className="px-3 py-1 bg-[#E1DFDD] hover:bg-[#F3F2F1] active:bg-[#C8C6C4] border border-[#ADABA1] text-black font-semibold rounded-[2px] shadow-xs flex items-center space-x-1 cursor-pointer"
-            >
-              <span>Add New</span>
-            </button>
+            <FormActionButtons
+              onSimpan={() => showFeedback('Data Retur Pembelian tersimpan')}
+              onBaru={handleAddNew}
+              onKoreksi={handleEdit}
+              onHapus={() => selectedId && handleDelete(selectedId)}
+              feedback={feedback}
+            />
             <div className="flex items-center space-x-1">
               <span className="text-gray-800 font-medium">Tanggal :</span>
               <input
@@ -449,13 +470,13 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-[#0055EA] rounded-[3px] shadow-[4px_4px_12px_rgba(0,0,0,0.4)] flex flex-col font-sans text-xs">
             {/* Modal Header */}
             <div className="flex items-center justify-between h-[28px] bg-gradient-to-r from-[#0055EA] to-[#1E90FF] text-white px-2 font-bold">
-              <span>Form Input Retur Pembelian Barang</span>
+              <span>{editingId ? 'Koreksi Retur Pembelian Barang' : 'Form Input Retur Pembelian Barang'}</span>
               <button
                 type="button"
                 onClick={() => setIsAddOpen(false)}
                 className="w-[20px] h-[20px] bg-[#C75050] hover:bg-red-600 text-white rounded-[2px] flex items-center justify-center text-[11px] cursor-pointer"
               >
-                ×
+                ✕
               </button>
             </div>
 

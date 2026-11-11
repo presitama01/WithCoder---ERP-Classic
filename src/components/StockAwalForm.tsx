@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface StockAwalData {
   id: string;
@@ -38,6 +40,8 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
   // Modal for "Open" button to browse / view existing initial stock list
   const [isBrowseOpen, setIsBrowseOpen] = useState<boolean>(false);
   const [browseSearch, setBrowseSearch] = useState<string>('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   // Sample data for the "Open" browse dialog
   const [stockList, setStockList] = useState<StockAwalData[]>([
@@ -110,7 +114,13 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleSelectItem = (item: StockAwalData) => {
+    setEditingId(item.id);
     setItemCode(item.itemCode);
     setDescription(item.description);
     setCategory(item.category);
@@ -122,35 +132,105 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
     setLokasiStock(item.lokasi);
     setPeriode(item.periode);
     setIsBrowseOpen(false);
+    showFeedback(`Item ${item.itemCode} dipilih`);
   };
 
-  const handleSaveOrUpdate = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleBaru = () => {
+    setEditingId(null);
+    setItemCode('');
+    setDescription('');
+    setCategory('');
+    setMerk('');
+    setSatuan('PCS');
+    setHpp('Rp 0');
+    setStockBagus('0');
+    setStockRusak('0');
+    showFeedback('Form Stock Awal siap diisi');
+  };
+
+  const handleSaveData = () => {
     if (!itemCode.trim()) {
-      alert('Silakan isi Item Code terlebih dahulu.');
+      showFeedback('Isi Item Code terlebih dahulu');
       return;
     }
 
     const numHpp = parseInt(hpp.replace(/[^0-9]/g, '') || '0', 10);
     const numBagus = parseInt(stockBagus || '0', 10);
     const numRusak = parseInt(stockRusak || '0', 10);
+    const normalizedCode = itemCode.trim().toUpperCase();
 
-    const newItem: StockAwalData = {
-      id: Date.now().toString(),
-      itemCode: itemCode.trim().toUpperCase(),
-      description: description.trim().toUpperCase(),
-      category: category.trim().toUpperCase(),
-      merk: merk.trim().toUpperCase(),
-      satuan: satuan.trim().toUpperCase(),
-      hpp: numHpp,
-      stockBagus: numBagus,
-      stockRusak: numRusak,
-      lokasi: lokasiStock,
-      periode,
-    };
+    const existing = stockList.find(
+      (s) => s.id === editingId || s.itemCode.toUpperCase() === normalizedCode
+    );
 
-    setStockList([newItem, ...stockList]);
-    alert(`Data Persediaan Awal untuk [${newItem.itemCode}] berhasil disimpan.`);
+    if (existing) {
+      setStockList(
+        stockList.map((s) =>
+          s.id === existing.id
+            ? {
+                ...s,
+                itemCode: normalizedCode,
+                description: description.trim().toUpperCase(),
+                category: category.trim().toUpperCase(),
+                merk: merk.trim().toUpperCase(),
+                satuan: satuan.trim().toUpperCase(),
+                hpp: numHpp,
+                stockBagus: numBagus,
+                stockRusak: numRusak,
+                lokasi: lokasiStock,
+                periode,
+              }
+            : s
+        )
+      );
+      setEditingId(existing.id);
+      showFeedback(`Data [${normalizedCode}] diperbarui`);
+    } else {
+      const newItem: StockAwalData = {
+        id: Date.now().toString(),
+        itemCode: normalizedCode,
+        description: description.trim().toUpperCase(),
+        category: category.trim().toUpperCase(),
+        merk: merk.trim().toUpperCase(),
+        satuan: satuan.trim().toUpperCase(),
+        hpp: numHpp,
+        stockBagus: numBagus,
+        stockRusak: numRusak,
+        lokasi: lokasiStock,
+        periode,
+      };
+      setStockList([newItem, ...stockList]);
+      setEditingId(newItem.id);
+      showFeedback(`Data [${normalizedCode}] tersimpan`);
+    }
+  };
+
+  const handleKoreksi = () => {
+    if (!itemCode.trim()) {
+      setIsBrowseOpen(true);
+      return;
+    }
+    handleSaveData();
+  };
+
+  const handleHapus = () => {
+    const normalizedCode = itemCode.trim().toUpperCase();
+    const target = stockList.find(
+      (s) => s.id === editingId || (normalizedCode && s.itemCode.toUpperCase() === normalizedCode)
+    );
+    if (target) {
+      setStockList(stockList.filter((s) => s.id !== target.id));
+      handleBaru();
+      showFeedback(`Data [${target.itemCode}] dihapus`);
+    } else {
+      handleBaru();
+      showFeedback('Form dibersihkan');
+    }
+  };
+
+  const handleSaveOrUpdate = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSaveData();
   };
 
   const filteredStockList = stockList.filter(
@@ -162,52 +242,20 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
   );
 
   return (
-    <div className="absolute inset-0 z-30 pointer-events-none flex items-start justify-start p-4 select-none">
-      {/* Draggable/Fixed Classic Windows Dialog Window matching I-Software - STOCK AWAL */}
-      <div
-        id="stock-awal-dialog"
-        className="pointer-events-auto bg-[#D4D0C8] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] shadow-[3px_3px_10px_rgba(0,0,0,0.4)] w-[500px] flex flex-col font-sans text-xs mt-1 ml-1"
-      >
-        {/* 1. Classic Windows Aero Title Bar with Folder Icon, Title, and Minimize, Maximize, Close */}
-        <div className="bg-gradient-to-r from-[#0055EA] via-[#2E87FA] to-[#0A66EE] text-white px-2 py-1 flex items-center justify-between font-sans text-[11px] shadow-sm select-none">
-          <div className="flex items-center space-x-1.5 font-bold drop-shadow">
-            <span className="w-3.5 h-3.5 bg-yellow-400/90 border border-amber-600 rounded-xs flex items-center justify-center text-[9px] shadow-xs text-amber-900 font-extrabold">
-              📁
-            </span>
-            <span>I-Software - STOCK AWAL</span>
-          </div>
+    <div
+      id="stock-awal-dialog"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
+    >
+      <FormHeaderBanner
+        title="Stock Awal"
+        onClose={onClose}
+        onTableView={() => setIsBrowseOpen(true)}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+      />
 
-          <div className="flex items-center space-x-1">
-            {/* Minimize button */}
-            <button
-              type="button"
-              className="w-4.5 h-4 bg-gradient-to-b from-[#FFFFFF] to-[#C0C0C0] text-black font-bold text-[9px] rounded-xs flex items-center justify-center border border-[#606060] shadow-2xs hover:brightness-110 active:translate-y-px"
-              title="Minimize"
-            >
-              _
-            </button>
-            {/* Maximize button */}
-            <button
-              type="button"
-              className="w-4.5 h-4 bg-gradient-to-b from-[#FFFFFF] to-[#C0C0C0] text-black font-bold text-[9px] rounded-xs flex items-center justify-center border border-[#606060] shadow-2xs hover:brightness-110 active:translate-y-px"
-              title="Maximize"
-            >
-              ▢
-            </button>
-            {/* Close button (red) */}
-            <button
-              onClick={onClose}
-              type="button"
-              className="w-5 h-4 bg-gradient-to-b from-[#E76C55] to-[#C93822] hover:from-[#FA7C65] hover:to-[#DE4832] text-white font-bold text-[9px] rounded-xs flex items-center justify-center border border-[#8B1A0E] shadow-xs active:translate-y-px cursor-pointer"
-              title="Tutup"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-
-        {/* 2. Main Dialog Inner Container */}
-        <div className="p-2 bg-[#ECE9D8] border border-[#808080] m-1">
+      {/* Main Scrollable Container */}
+      <div className="flex-1 overflow-auto p-3">
+        <div className="max-w-[540px] bg-[#ECE9D8] border border-[#808080] p-2 shadow-xs">
           {/* Inner bordered fieldset container matching image_caed022e.png */}
           <div className="border border-[#999999] p-3 bg-[#ECE9D8] flex flex-col">
             <form onSubmit={handleSaveOrUpdate} className="flex flex-col space-y-2">
@@ -362,8 +410,16 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
                 </div>
               </div>
 
-              {/* Action Buttons: Open & Close */}
-              <div className="flex items-center justify-end space-x-2 pt-2">
+              {/* Action Buttons: FormActionButtons & Open */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#999999]">
+                <FormActionButtons
+                  compact
+                  onSimpan={handleSaveData}
+                  onBaru={handleBaru}
+                  onKoreksi={handleKoreksi}
+                  onHapus={handleHapus}
+                  feedback={feedback}
+                />
                 <button
                   type="button"
                   onClick={() => setIsBrowseOpen(true)}
@@ -371,16 +427,6 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
                 >
                   <span className="border border-dotted border-black/50 px-2 py-0.5 w-full block">
                     Open
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="w-18 py-1 bg-[#ECE9D8] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] text-[11px] font-bold text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
-                >
-                  <span className="border border-dotted border-transparent px-2 py-0.5 w-full block">
-                    <u>C</u>lose
                   </span>
                 </button>
               </div>

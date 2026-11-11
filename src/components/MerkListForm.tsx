@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface MerkItem {
   id: string;
@@ -70,32 +72,70 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Description');
 
-  // Modal for Add New
+  // Modal for Add / Koreksi
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
     const nextCode = (merks.length + 1).toString().padStart(4, '0');
+    setEditingId(null);
     setNewKode(nextCode);
     setNewNama('');
     setIsAddOpen(true);
+  };
+
+  const handleEdit = () => {
+    const item = merks.find((m) => m.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewKode(item.kode);
+    setNewNama(item.namaMerk);
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = merks.filter((m) => m.id !== selectedId);
+    setMerks(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data dihapus');
   };
 
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const newItem: MerkItem = {
-      id: Date.now().toString(),
-      kode: newKode.trim().toUpperCase(),
-      namaMerk: newNama.trim().toUpperCase(),
-    };
-    setMerks([newItem, ...merks]);
-    setSelectedId(newItem.id);
+    if (editingId) {
+      setMerks(
+        merks.map((m) =>
+          m.id === editingId
+            ? { ...m, kode: newKode.trim().toUpperCase(), namaMerk: newNama.trim().toUpperCase() }
+            : m
+        )
+      );
+      showFeedback('Data diperbarui');
+    } else {
+      const newItem: MerkItem = {
+        id: Date.now().toString(),
+        kode: newKode.trim().toUpperCase(),
+        namaMerk: newNama.trim().toUpperCase(),
+      };
+      setMerks([newItem, ...merks]);
+      setSelectedId(newItem.id);
+      showFeedback('Data tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const filteredMerks = merks.filter((item) => {
@@ -113,75 +153,25 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none"
     >
       {/* 1. Black Top Banner: List Tabel Merk */}
-      <div
+      <FormHeaderBanner
         id="merk-form-banner"
-        className="flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]"
-      >
-        <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-          List Tabel Merk
-        </span>
-
-        {/* Right tools: Table view icon & Excel export icon + Close button */}
-        <div className="flex items-center space-x-1.5">
-          {/* Table view icon button */}
-          <button
-            type="button"
-            title="Tampilan Tabel"
-            className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-          >
-            <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-              <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-              <div className="bg-[#E7EFF9] h-[4px]" />
-              <div className="bg-[#E7EFF9] h-[4px]" />
-            </div>
-          </button>
-
-          {/* Excel Export icon button */}
-          <button
-            type="button"
-            title="Export Excel"
-            onClick={() => alert('Data Merk berhasil diexport ke format Excel')}
-            className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
-          >
-            <div className="relative flex items-center justify-center">
-              <span className="text-[11px] font-bold text-white font-sans tracking-tighter">
-                X
-              </span>
-              <div className="absolute -bottom-1 -right-1 w-[7px] h-[5px] bg-white grid grid-cols-2 gap-[0.5px]">
-                <div className="bg-[#1E7145]" />
-                <div className="bg-[#1E7145]" />
-                <div className="bg-[#1E7145]" />
-                <div className="bg-[#1E7145]" />
-              </div>
-            </div>
-          </button>
-
-          {/* Close MDI Child Form Button */}
-          <button
-            type="button"
-            onClick={onClose}
-            title="Tutup Form"
-            className="ml-2 w-[22px] h-[22px] bg-[#ECE9D8] hover:bg-[#E81123] hover:text-white border border-[#707070] text-black text-[11px] font-bold flex items-center justify-center cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
+        title="List Tabel Merk"
+        onClose={onClose}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+      />
 
       {/* 2. Action & Search Bar */}
       <div
         id="merk-form-toolbar"
-        className="flex items-center h-[52px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans"
+        className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
       >
-        {/* Add New Button */}
-        <button
-          id="btn-add-new-merk"
-          type="button"
-          onClick={handleAddNew}
-          className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
-        >
-          Add New
-        </button>
+        <FormActionButtons
+          onSimpan={() => showFeedback('Data Merk tersimpan')}
+          onBaru={handleAddNew}
+          onKoreksi={handleEdit}
+          onHapus={handleDelete}
+          feedback={feedback}
+        />
 
         {/* Search controls */}
         <div className="flex items-center space-x-2">

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface LokasiGudangItem {
   id: string;
@@ -51,10 +53,19 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
   const [newPic, setNewPic] = useState('');
   const [newKeterangan, setNewKeterangan] = useState('');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
+
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
 
   const handleAddNew = () => {
     const nextCode = (lokasiList.length + 1).toString().padStart(2, '0');
+    setEditingId(null);
     setNewKode(nextCode);
     setNewNama('');
     setNewAlamat('');
@@ -67,12 +78,36 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = lokasiList.find((l) => l.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewKode(item.kode);
+    setNewNama(item.namaLokasi);
+    setNewAlamat(item.alamat);
+    setNewKota(item.kota);
+    setNewTelp1(item.telepon1);
+    setNewTelp2(item.telepon2);
+    setNewFax(item.fax);
+    setNewPic(item.pic);
+    setNewKeterangan(item.keterangan);
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = lokasiList.filter((l) => l.id !== selectedId);
+    setLokasiList(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data dihapus');
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const newItem: LokasiGudangItem = {
-      id: Date.now().toString(),
+    const payload: LokasiGudangItem = {
+      id: editingId || Date.now().toString(),
       kode: newKode.trim().toUpperCase(),
       namaLokasi: newNama.trim().toUpperCase(),
       alamat: newAlamat.trim().toUpperCase(),
@@ -83,9 +118,16 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
       pic: newPic.trim().toUpperCase(),
       keterangan: newKeterangan.trim().toUpperCase(),
     };
-    setLokasiList([...lokasiList, newItem]);
-    setSelectedId(newItem.id);
+    if (editingId) {
+      setLokasiList(lokasiList.map((l) => (l.id === editingId ? payload : l)));
+      showFeedback('Data diperbarui');
+    } else {
+      setLokasiList([...lokasiList, payload]);
+      setSelectedId(payload.id);
+      showFeedback('Data tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const filteredLokasi = lokasiList.filter((item) => {
@@ -107,65 +149,25 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner: List Master Lokasi Gudang */}
-        <div
+        <FormHeaderBanner
           id="master-lokasi-banner"
-          className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]"
-        >
-          <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-            List Master Lokasi Gudang
-          </span>
-
-        {/* Right tools: Table view icon & Excel export icon + Close button */}
-        <div className="flex items-center space-x-1.5">
-          {/* Table view icon button */}
-          <button
-            type="button"
-            title="Tampilan Tabel"
-            className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-          >
-            <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-              <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-              <div className="bg-[#E7EFF9] h-[4px]" />
-              <div className="bg-[#E7EFF9] h-[4px]" />
-            </div>
-          </button>
-
-          {/* Excel Export icon button */}
-          <button
-            type="button"
-            title="Export Excel"
-            onClick={() => alert('Data Master Lokasi Gudang berhasil diexport ke format Excel')}
-            className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
-          >
-            <div className="relative flex items-center justify-center">
-              <span className="text-[11px] font-bold text-white font-sans tracking-tighter">
-                X
-              </span>
-              <div className="absolute -bottom-1 -right-1 w-[7px] h-[5px] bg-white grid grid-cols-2 gap-[0.5px]">
-                <div className="bg-[#1E7145]" />
-                <div className="bg-[#1E7145]" />
-                <div className="bg-[#1E7145]" />
-                <div className="bg-[#1E7145]" />
-              </div>
-            </div>
-          </button>
-        </div>
-      </div>
+          title="List Master Lokasi Gudang"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
       {/* 2. Action & Search Bar */}
       <div
         id="master-lokasi-toolbar"
-        className="flex items-center h-[52px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans"
+        className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
       >
-        {/* Add New Button */}
-        <button
-          id="btn-add-new-lokasi"
-          type="button"
-          onClick={handleAddNew}
-          className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
-        >
-          Add New
-        </button>
+        <FormActionButtons
+          onSimpan={() => showFeedback('Data Lokasi Gudang tersimpan')}
+          onBaru={handleAddNew}
+          onKoreksi={handleEdit}
+          onHapus={handleDelete}
+          feedback={feedback}
+        />
 
         {/* Search controls */}
         <div className="flex items-center space-x-2">

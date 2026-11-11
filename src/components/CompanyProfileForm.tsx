@@ -1,36 +1,78 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 interface CompanyProfileFormProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+const DEFAULT_PROFILE = {
+  profileCode: '01',
+  companyName: 'PT. UNIMETRIKA UTAMA',
+  noNpwp: '01.603.251.8-048.000',
+  npwpAddress: 'JL. AGUNG TIMUR 8 BLOK D KAV. NO.7\nSUNTER JAYA, TANJUNG PRIOK- JAKARTA UTARA',
+  tanggalNpwp: '26-05-1993',
+  address: 'JL. AGUNG TIMUR 8 BLOK D KAV. NO.7\nSUNTER JAYA, TANJUNG PRIOK- JAKARTA UTARA',
+  country: 'INDONESIA',
+  phone: '021-65304111',
+  fax: '021-65304110',
+  mail: 'umu@unimetrika.co.id',
+  ppnActive: false,
+  ppnValue: '0',
+  wirajaya: true,
+  backup: true,
+};
+
 export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, onClose }) => {
+  const [formData, setFormData] = useState(DEFAULT_PROFILE);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const companyNameRef = useRef<HTMLInputElement>(null);
+
   if (!isOpen) return null;
 
-  const [formData, setFormData] = useState({
-    profileCode: '01',
-    companyName: 'PT. UNIMETRIKA UTAMA',
-    noNpwp: '01.603.251.8-048.000',
-    npwpAddress: 'JL. AGUNG TIMUR 8 BLOK D KAV. NO.7\nSUNTER JAYA, TANJUNG PRIOK- JAKARTA UTARA',
-    tanggalNpwp: '26-05-1993',
-    address: 'JL. AGUNG TIMUR 8 BLOK D KAV. NO.7\nSUNTER JAYA, TANJUNG PRIOK- JAKARTA UTARA',
-    country: 'INDONESIA',
-    phone: '021-65304111',
-    fax: '021-65304110',
-    mail: 'umu@unimetrika.co.id',
-    ppnActive: false,
-    ppnValue: '0',
-    wirajaya: true,
-    backup: true,
-  });
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
 
   const handleChange = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSave = () => {
-    alert('Data Company Profile berhasil disimpan!');
+    showFeedback('Data Company Profile tersimpan');
+  };
+
+  const handleBaru = () => {
+    setFormData({
+      profileCode: '02',
+      companyName: '',
+      noNpwp: '',
+      npwpAddress: '',
+      tanggalNpwp: '',
+      address: '',
+      country: 'INDONESIA',
+      phone: '',
+      fax: '',
+      mail: '',
+      ppnActive: false,
+      ppnValue: '0',
+      wirajaya: false,
+      backup: false,
+    });
+    showFeedback('Form baru siap diisi');
+    companyNameRef.current?.focus();
+  };
+
+  const handleKoreksi = () => {
+    companyNameRef.current?.focus();
+    showFeedback('Mode koreksi aktif');
+  };
+
+  const handleHapus = () => {
+    setFormData(DEFAULT_PROFILE);
+    showFeedback('Data dikembalikan ke default');
   };
 
   return (
@@ -40,50 +82,21 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-            Company Profile
-          </span>
-
-          <div className="flex items-center space-x-1.5">
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              title="Export Excel"
-              onClick={() => alert('Data Company Profile berhasil diexport ke format Excel')}
-              className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
-            >
-              <span className="text-[11px] font-bold text-white font-sans">X</span>
-            </button>
-          </div>
-        </div>
+        <FormHeaderBanner
+          title="Company Profile"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
         {/* 2. Action Toolbar */}
-        <div className="shrink-0 flex items-center h-[52px] px-3 space-x-2 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans">
-          <button
-            type="button"
-            onClick={handleSave}
-            className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
-          >
-            Close
-          </button>
+        <div className="shrink-0 flex items-center h-[48px] px-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans">
+          <FormActionButtons
+            onSimpan={handleSave}
+            onBaru={handleBaru}
+            onKoreksi={handleKoreksi}
+            onHapus={handleHapus}
+            feedback={feedback}
+          />
         </div>
 
         {/* 3. Scrollable Form Body Container */}
@@ -111,6 +124,7 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
               <div className="flex items-center">
                 <label className="w-36 text-right pr-3 font-medium">Company Name :</label>
                 <input
+                  ref={companyNameRef}
                   type="text"
                   value={formData.companyName}
                   onChange={(e) => handleChange('companyName', e.target.value)}

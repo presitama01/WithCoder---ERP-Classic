@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface MutasiSoItem {
   id: string;
@@ -34,10 +36,21 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
   const [jenisTransaksi, setJenisTransaksi] = useState<string>('Semua Berdasarkan Periode');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [selectedId, setSelectedId] = useState<string>('');
+  const [selectedId, setSelectedId] = useState<string>('1');
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formNoSo, setFormNoSo] = useState<string>('2608-SO-003');
+  const [formNoPo, setFormNoPo] = useState<string>('PO-99220');
+  const [formCustomer, setFormCustomer] = useState<string>('PT. DJABESMEN');
+  const [formKodeBarang, setFormKodeBarang] = useState<string>('BRG-002');
+  const [formNamaBarang, setFormNamaBarang] = useState<string>('PIPA PVC 3 INCH AW');
+  const [formUnit, setFormUnit] = useState<string>('BATANG');
+  const [formPesan, setFormPesan] = useState<string>('50');
+  const [formKirim, setFormKirim] = useState<string>('20');
 
   // Sample data to showcase table and column fields
-  const [soList] = useState<MutasiSoItem[]>([
+  const [soList, setSoList] = useState<MutasiSoItem[]>([
     {
       id: '1',
       noSo: '2608-SO-001',
@@ -75,6 +88,95 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
+  const handleAddNew = () => {
+    setEditingId(null);
+    setFormNoSo(`2608-SO-00${soList.length + 1}`);
+    setFormNoPo('PO-99220');
+    setFormCustomer('PT. DJABESMEN');
+    setFormKodeBarang('BRG-002');
+    setFormNamaBarang('');
+    setFormUnit('PCS');
+    setFormPesan('10');
+    setFormKirim('0');
+    setIsAddOpen(true);
+  };
+
+  const handleEdit = () => {
+    const item = soList.find((s) => s.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setFormNoSo(item.noSo);
+    setFormNoPo(item.noPo);
+    setFormCustomer(item.customer);
+    setFormKodeBarang(item.kodeBarang);
+    setFormNamaBarang(item.namaBarang);
+    setFormUnit(item.unit);
+    setFormPesan(item.pesan.toString());
+    setFormKirim(item.kirim.toString());
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = soList.filter((item) => item.id !== selectedId);
+    setSoList(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data Mutasi SO dihapus');
+  };
+
+  const handleSaveForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formNoSo.trim() || !formCustomer.trim()) return;
+    const pesanNum = parseInt(formPesan || '0', 10) || 0;
+    const kirimNum = parseInt(formKirim || '0', 10) || 0;
+    const sisaNum = Math.max(0, pesanNum - kirimNum);
+
+    if (editingId) {
+      setSoList(
+        soList.map((item) =>
+          item.id === editingId
+            ? {
+                ...item,
+                noSo: formNoSo.trim().toUpperCase(),
+                noPo: formNoPo.trim().toUpperCase(),
+                customer: formCustomer.trim().toUpperCase(),
+                kodeBarang: formKodeBarang.trim().toUpperCase(),
+                namaBarang: formNamaBarang.trim().toUpperCase(),
+                unit: formUnit.trim().toUpperCase(),
+                pesan: pesanNum,
+                kirim: kirimNum,
+                sisa: sisaNum,
+              }
+            : item
+        )
+      );
+      showFeedback('Mutasi SO diperbarui');
+    } else {
+      const newItem: MutasiSoItem = {
+        id: Date.now().toString(),
+        noSo: formNoSo.trim().toUpperCase(),
+        noPo: formNoPo.trim().toUpperCase(),
+        customer: formCustomer.trim().toUpperCase(),
+        kodeBarang: formKodeBarang.trim().toUpperCase(),
+        namaBarang: formNamaBarang.trim().toUpperCase(),
+        unit: formUnit.trim().toUpperCase(),
+        pesan: pesanNum,
+        kirim: kirimNum,
+        sisa: sisaNum,
+      };
+      setSoList([newItem, ...soList]);
+      setSelectedId(newItem.id);
+      showFeedback('Mutasi SO tersimpan');
+    }
+    setIsAddOpen(false);
+    setEditingId(null);
+  };
+
   const filteredList = soList.filter((item) => {
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
@@ -97,24 +199,27 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
   return (
     <div
       id="mutasi-sales-order-container"
-      className="absolute inset-4 z-30 flex flex-col bg-[#ECE9D8] border border-[#919191] shadow-2xl select-none overflow-hidden font-sans text-xs"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       {/* 1. Black Window Header Banner */}
-      <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs select-none">
-        <div className="flex items-center space-x-2">
-          <span>Mutasi Sales Order</span>
-        </div>
-        <div className="flex items-center space-x-1">
-          <button
-            onClick={onClose}
-            className="w-5 h-5 bg-[#C0C0C0] text-black border border-white font-bold flex items-center justify-center hover:bg-red-600 hover:text-white"
-          >
-            ✕
-          </button>
-        </div>
+      <FormHeaderBanner
+        title="Mutasi Sales Order"
+        onClose={onClose}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+      />
+
+      {/* 2. Action Toolbar */}
+      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-3 py-1.5 flex items-center justify-between text-xs shadow-sm">
+        <FormActionButtons
+          onSimpan={() => showFeedback('Data Mutasi Sales Order tersimpan')}
+          onBaru={handleAddNew}
+          onKoreksi={handleEdit}
+          onHapus={handleDelete}
+          feedback={feedback}
+        />
       </div>
 
-      {/* 2. Filter & Search Header Controls */}
+      {/* 3. Filter & Search Header Controls */}
       <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-3 py-2 flex flex-col gap-2 text-xs shadow-sm">
         {/* Row 1: Periode */}
         <div className="flex items-center justify-between">
@@ -305,6 +410,116 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Add / Edit Modal */}
+      {isAddOpen && (
+        <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[460px] flex flex-col overflow-hidden">
+            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+              <span>{editingId ? 'Koreksi Mutasi Sales Order' : 'Tambah Mutasi Sales Order Baru'}</span>
+              <button
+                type="button"
+                onClick={() => setIsAddOpen(false)}
+                className="text-white hover:text-red-300 font-bold px-1.5"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSaveForm} className="p-4 space-y-2.5 text-xs">
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">No. SO:</label>
+                <input
+                  type="text"
+                  value={formNoSo}
+                  onChange={(e) => setFormNoSo(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">No. PO:</label>
+                <input
+                  type="text"
+                  value={formNoPo}
+                  onChange={(e) => setFormNoPo(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Customer:</label>
+                <input
+                  type="text"
+                  value={formCustomer}
+                  onChange={(e) => setFormCustomer(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Kode Barang:</label>
+                <input
+                  type="text"
+                  value={formKodeBarang}
+                  onChange={(e) => setFormKodeBarang(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Nama Barang:</label>
+                <input
+                  type="text"
+                  value={formNamaBarang}
+                  onChange={(e) => setFormNamaBarang(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Unit:</label>
+                <input
+                  type="text"
+                  value={formUnit}
+                  onChange={(e) => setFormUnit(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Pesan / Kirim:</label>
+                <div className="col-span-2 flex gap-2">
+                  <input
+                    type="number"
+                    value={formPesan}
+                    onChange={(e) => setFormPesan(e.target.value)}
+                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Pesan"
+                  />
+                  <input
+                    type="number"
+                    value={formKirim}
+                    onChange={(e) => setFormKirim(e.target.value)}
+                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Kirim"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end space-x-2 pt-3 border-t border-[#D4D0C8]">
+                <button
+                  type="button"
+                  onClick={() => setIsAddOpen(false)}
+                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8]"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0]"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

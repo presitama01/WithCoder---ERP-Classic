@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface SalesInquiryItem {
   id: string;
@@ -67,8 +69,10 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [tanggalFilter, setTanggalFilter] = useState<string>('04-Aug-2026');
   const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
-  // Add New Modal state
+  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const [newNoBukti, setNewNoBukti] = useState<string>('2608-SI-003');
   const [newTanggalDo, setNewTanggalDo] = useState<string>('04-Aug-2026');
   const [newCustomer, setNewCustomer] = useState<string>('PT. DJABESMEN');
@@ -80,7 +84,13 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewNoBukti(`2608-SI-00${inquiryList.length + 1}`);
     setNewTanggalDo('04-Aug-2026');
     setNewCustomer('PT. DJABESMEN');
@@ -92,40 +102,79 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = inquiryList.find((i) => i.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewNoBukti(item.noBukti);
+    setNewTanggalDo(item.tanggalDo);
+    setNewCustomer(item.namaCustomer);
+    setNewSales(item.namaSales);
+    setNewKeterangan(item.keterangan);
+    setNewFollow(item.follow);
+    setNewNoSq(item.noSq);
+    setNewTglSq(item.tglSq);
+    setIsAddOpen(true);
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    const newItem: SalesInquiryItem = {
-      id: Date.now().toString(),
-      noBukti: newNoBukti.trim().toUpperCase(),
-      tanggalDo: newTanggalDo,
-      namaCustomer: newCustomer.trim().toUpperCase(),
-      namaSales: newSales.trim().toUpperCase(),
-      keterangan: newKeterangan.trim(),
-      follow: newFollow.trim(),
-      tglFollow: '-',
-      noSq: newNoSq.trim().toUpperCase(),
-      tglSq: newTglSq,
-      dibuatOleh: 'RETNO',
-      tglCreated: '04-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    };
+    if (editingId) {
+      setInquiryList(
+        inquiryList.map((item) =>
+          item.id === editingId
+            ? {
+                ...item,
+                noBukti: newNoBukti.trim().toUpperCase(),
+                tanggalDo: newTanggalDo,
+                namaCustomer: newCustomer.trim().toUpperCase(),
+                namaSales: newSales.trim().toUpperCase(),
+                keterangan: newKeterangan.trim(),
+                follow: newFollow.trim(),
+                noSq: newNoSq.trim().toUpperCase(),
+                tglSq: newTglSq,
+                diupdateOleh: 'RETNO',
+                tglUpdate: '05-Aug-2026',
+              }
+            : item
+        )
+      );
+      showFeedback('Sales Inquiry diperbarui');
+    } else {
+      const newItem: SalesInquiryItem = {
+        id: Date.now().toString(),
+        noBukti: newNoBukti.trim().toUpperCase(),
+        tanggalDo: newTanggalDo,
+        namaCustomer: newCustomer.trim().toUpperCase(),
+        namaSales: newSales.trim().toUpperCase(),
+        keterangan: newKeterangan.trim(),
+        follow: newFollow.trim(),
+        tglFollow: '-',
+        noSq: newNoSq.trim().toUpperCase(),
+        tglSq: newTglSq,
+        dibuatOleh: 'RETNO',
+        tglCreated: '04-Aug-2026',
+        diupdateOleh: '-',
+        tglUpdate: '-',
+      };
 
-    setInquiryList([newItem, ...inquiryList]);
-    setSelectedId(newItem.id);
+      setInquiryList([newItem, ...inquiryList]);
+      setSelectedId(newItem.id);
+      showFeedback('Sales Inquiry tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Apakah Anda yakin ingin menghapus Sales Inquiry ini?')) {
-      const updated = inquiryList.filter((item) => item.id !== id);
-      setInquiryList(updated);
-      if (selectedId === id && updated.length > 0) {
-        setSelectedId(updated[0].id);
-      }
+    const updated = inquiryList.filter((item) => item.id !== id);
+    setInquiryList(updated);
+    if (selectedId === id) {
+      setSelectedId(updated[0]?.id || '');
     }
+    showFeedback('Sales Inquiry dihapus');
   };
 
   const filteredList = inquiryList.filter((item) => {
@@ -179,49 +228,35 @@ ALTER TABLE public.sales_inquiry ENABLE ROW LEVEL SECURITY;
   return (
     <div
       id="list-sales-inquiry-container"
-      className="absolute inset-4 z-30 flex flex-col bg-[#ECE9D8] border border-[#919191] shadow-2xl select-none overflow-hidden font-sans text-xs"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       {/* 1. Black Window Header Banner */}
-      <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs select-none">
-        <div className="flex items-center space-x-2">
-          <span>List Inquiry Penjualan</span>
-        </div>
-        <div className="flex items-center space-x-1">
+      <FormHeaderBanner
+        title="List Inquiry Penjualan"
+        onClose={onClose}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+        extraTools={
           <button
+            type="button"
             onClick={() => setShowSqlModal(true)}
-            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8]"
+            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8] cursor-pointer"
             title="Lihat Script SQL Supabase"
           >
             SQL Code
           </button>
-          <button
-            onClick={onClose}
-            className="w-5 h-5 bg-[#C0C0C0] text-black border border-white font-bold flex items-center justify-center hover:bg-red-600 hover:text-white"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* 2. Action Toolbar & Filter Header */}
       <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
         <div className="flex items-center space-x-2">
-          <button
-            onClick={handleAddNew}
-            className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
-          >
-            <span className="text-green-700 font-bold">＋</span>
-            <span>Add New</span>
-          </button>
-          <button
-            onClick={() => {
-              if (selectedId) handleDelete(selectedId);
-            }}
-            className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
-          >
-            <span className="text-red-700 font-bold">🗑</span>
-            <span>Delete</span>
-          </button>
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Inquiry Penjualan tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={() => selectedId && handleDelete(selectedId)}
+            feedback={feedback}
+          />
         </div>
 
         <div className="flex items-center space-x-3">
@@ -346,7 +381,7 @@ ALTER TABLE public.sales_inquiry ENABLE ROW LEVEL SECURITY;
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
-              <span>Tambah Sales Inquiry Baru</span>
+              <span>{editingId ? 'Koreksi Sales Inquiry' : 'Tambah Sales Inquiry Baru'}</span>
               <button
                 onClick={() => setIsAddOpen(false)}
                 className="text-white hover:text-red-300 font-bold px-1.5"

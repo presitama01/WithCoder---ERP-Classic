@@ -1,4 +1,6 @@
 import React, { useState, useRef } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface BankItem {
   id: string;
@@ -32,11 +34,20 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
   const [newNamaBank, setNewNamaBank] = useState('');
   const [newCabang, setNewCabang] = useState('');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewAccNumber('');
     setNewAccName('PT. UNIMETRIKA UTAMA');
     setNewNamaBank('');
@@ -44,20 +55,46 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = banks.find((b) => b.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewAccNumber(item.accNumber);
+    setNewAccName(item.accName);
+    setNewNamaBank(item.namaBank);
+    setNewCabang(item.cabang);
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = banks.filter((b) => b.id !== selectedId);
+    setBanks(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data dihapus');
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccNumber.trim() || !newNamaBank.trim()) return;
 
-    const newItem: BankItem = {
-      id: Date.now().toString(),
+    const payload: BankItem = {
+      id: editingId || Date.now().toString(),
       accNumber: newAccNumber.trim(),
       accName: newAccName.trim().toUpperCase(),
       namaBank: newNamaBank.trim().toUpperCase(),
       cabang: newCabang.trim().toUpperCase(),
     };
-    setBanks([newItem, ...banks]);
-    setSelectedId(newItem.id);
+    if (editingId) {
+      setBanks(banks.map((b) => (b.id === editingId ? payload : b)));
+      showFeedback('Data diperbarui');
+    } else {
+      setBanks([payload, ...banks]);
+      setSelectedId(payload.id);
+      showFeedback('Data tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const filteredBanks = banks.filter((item) => {
@@ -80,43 +117,21 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner: List Master Bank */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-            List Master Bank
-          </span>
-
-          <div className="flex items-center space-x-1.5">
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              title="Export Excel"
-              onClick={() => alert('Data Master Bank berhasil diexport ke format Excel')}
-              className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
-            >
-              <span className="text-[11px] font-bold text-white font-sans">X</span>
-            </button>
-          </div>
-        </div>
+        <FormHeaderBanner
+          title="List Master Bank"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
         {/* 2. Action & Search Toolbar */}
-        <div className="shrink-0 flex items-center h-[52px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans">
-          <button
-            type="button"
-            onClick={handleAddNew}
-            className="w-[92px] h-[30px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold text-black hover:bg-[#F2EFE2] active:bg-[#DFDBD0] cursor-pointer shadow-sm"
-          >
-            Add New
-          </button>
+        <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Rekening Bank tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={handleDelete}
+            feedback={feedback}
+          />
 
           <div className="flex items-center space-x-2">
             <span className="font-bold text-[11px] text-black">Search :</span>

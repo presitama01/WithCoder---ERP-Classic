@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface SalesItem {
   id: string;
@@ -67,9 +69,18 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
   const [newLimit, setNewLimit] = useState('10000000');
   const [newKomisi, setNewKomisi] = useState('2.0');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewKode('');
     setNewNama('');
     setNewAlamat('');
@@ -80,12 +91,34 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = salesList.find((s) => s.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewKode(item.kodeSales);
+    setNewNama(item.namaSales);
+    setNewAlamat(item.alamat);
+    setNewKota(item.kota);
+    setNewTelepon(item.telepon);
+    setNewLimit(String(item.limit));
+    setNewKomisi(String(item.komisi));
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = salesList.filter((s) => s.id !== selectedId);
+    setSalesList(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data dihapus');
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const newItem: SalesItem = {
-      id: Date.now().toString(),
+    const payload: SalesItem = {
+      id: editingId || Date.now().toString(),
       kodeSales: newKode.trim().toUpperCase(),
       namaSales: newNama.trim().toUpperCase(),
       alamat: newAlamat.trim(),
@@ -94,9 +127,16 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
       limit: parseFloat(newLimit) || 0,
       komisi: parseFloat(newKomisi) || 0,
     };
-    setSalesList([newItem, ...salesList]);
-    setSelectedId(newItem.id);
+    if (editingId) {
+      setSalesList(salesList.map((s) => (s.id === editingId ? payload : s)));
+      showFeedback('Data diperbarui');
+    } else {
+      setSalesList([payload, ...salesList]);
+      setSelectedId(payload.id);
+      showFeedback('Data tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const filteredSales = salesList.filter((item) => {
@@ -117,71 +157,28 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <div className="flex items-center space-x-3">
-            <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-              List Master Sales
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-[22px] h-[22px] bg-[#c00000] hover:bg-red-700 text-white font-bold border border-white/80 rounded-[1px] flex items-center justify-center text-[12px] cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <FormHeaderBanner
+          title="List Master Sales"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
         {/* 2. Toolbar / Action Ribbon */}
-        <div className="shrink-0 h-[38px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-2 space-x-1">
+        <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Master Sales tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={handleDelete}
+            feedback={feedback}
+          />
+          <div className="h-[22px] w-[1px] bg-[#ACA899] mx-1" />
           <button
-            onClick={handleAddNew}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
+            type="button"
+            onClick={() => showFeedback('Data direfresh')}
+            className="h-[28px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] cursor-pointer text-[11px] font-semibold text-black"
           >
-            <span className="text-green-700 font-bold">＋</span>
-            <span className="text-black font-semibold">Baru</span>
-          </button>
-          <button
-            onClick={() => {
-              const item = salesList.find(s => s.id === selectedId);
-              if (item) alert(`Edit: ${item.namaSales}`);
-            }}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-blue-700 font-bold">✎</span>
-            <span className="text-black font-semibold">Koreksi</span>
-          </button>
-          <button
-            onClick={() => {
-              if (confirm('Hapus data sales terpilih?')) {
-                setSalesList(salesList.filter(s => s.id !== selectedId));
-              }
-            }}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-red-700 font-bold">🗑</span>
-            <span className="text-black font-semibold">Hapus</span>
-          </button>
-          <div className="h-[20px] w-[1px] bg-[#ACA899] mx-1" />
-          <button
-            onClick={() => alert('Data direfresh')}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-black font-semibold">Refresh</span>
+            Refresh
           </button>
 
           <div className="ml-auto flex items-center space-x-2 text-[11px]">
@@ -258,8 +255,8 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
             <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
-              <span>Tambah Master Sales Baru</span>
-              <button onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold">✕</button>
+              <span>{editingId ? 'Koreksi Master Sales' : 'Tambah Master Sales Baru'}</span>
+              <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
             </div>
             <form onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
               <div className="grid grid-cols-2 gap-2">

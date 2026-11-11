@@ -232,13 +232,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
       label: 'Keuangan',
       icon: <KeuanganIcon />,
       items: [
-        { label: 'Jurnal Header' },
-        { label: 'Daftar Akun/Perkiraan' },
-        { label: 'Input Saldo Awal Ledger' },
+        { label: 'Jurnal Header', disabled: true },
+        { label: 'Daftar Akun/Perkiraan', disabled: true },
+        { label: 'Input Saldo Awal Ledger', disabled: true },
         { divider: true, label: '' },
-        { label: 'Ledger Setup Transaksi' },
+        { label: 'Ledger Setup Transaksi', disabled: true },
         {
           label: 'Tabel Pembayaran',
+          disabled: true,
           hasSubmenu: true,
           subItems: [
             { label: 'Metode Pembayaran' },
@@ -250,10 +251,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
         { label: 'HPP Pembelian Barang' },
         { divider: true, label: '' },
         { label: 'Jurnal Umum' },
-        { label: 'Posting Ledger' },
+        { label: 'Posting Ledger', disabled: true },
         { divider: true, label: '' },
         { label: 'Laporan Keuangan' },
-        { label: 'Rekap Jurnal Umum' },
+        { label: 'Rekap Jurnal Umum', disabled: true },
       ],
     },
 

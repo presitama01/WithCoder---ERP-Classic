@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface PurchaseOrderItem {
   id: string;
@@ -78,9 +80,18 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newNilaiPo, setNewNilaiPo] = useState<string>('1,500,000');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewNoBukti(`2608-PO-IMP-0${poList.length + 1}`);
     setNewTanggal('06-Aug-2026');
     setNewSupplier('DEPO TEKNIK');
@@ -89,41 +100,74 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = poList.find((p) => p.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewNoBukti(item.noBukti);
+    setNewTanggal(item.tanggal);
+    setNewSupplier(item.namaSupplier);
+    setNewKeterangan(item.keterangan);
+    setNewNilaiPo(item.nilaiPo);
+    setIsAddOpen(true);
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    const newItem: PurchaseOrderItem = {
-      id: Date.now().toString(),
-      noBukti: newNoBukti.trim().toUpperCase(),
-      tanggal: newTanggal,
-      namaSupplier: newSupplier.trim().toUpperCase(),
-      keterangan: newKeterangan.trim(),
-      nilaiPo: newNilaiPo.trim(),
-      deposit: '-',
-      tglLunas: '-',
-      tglKirim: newTanggal,
-      persen: '0%',
-      poClose: 'Not Yet',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    };
+    if (editingId) {
+      setPoList(
+        poList.map((p) =>
+          p.id === editingId
+            ? {
+                ...p,
+                noBukti: newNoBukti.trim().toUpperCase(),
+                tanggal: newTanggal,
+                namaSupplier: newSupplier.trim().toUpperCase(),
+                keterangan: newKeterangan.trim(),
+                nilaiPo: newNilaiPo.trim(),
+                diupdateOleh: 'RETNO',
+                tglUpdate: new Date().toLocaleDateString('id-ID'),
+              }
+            : p
+        )
+      );
+      showFeedback('Purchase Order diperbarui');
+    } else {
+      const newItem: PurchaseOrderItem = {
+        id: Date.now().toString(),
+        noBukti: newNoBukti.trim().toUpperCase(),
+        tanggal: newTanggal,
+        namaSupplier: newSupplier.trim().toUpperCase(),
+        keterangan: newKeterangan.trim(),
+        nilaiPo: newNilaiPo.trim(),
+        deposit: '-',
+        tglLunas: '-',
+        tglKirim: newTanggal,
+        persen: '0%',
+        poClose: 'Not Yet',
+        dibuatOleh: 'RETNO',
+        tglCreated: '06-Aug-2026',
+        diupdateOleh: '-',
+        tglUpdate: '-',
+      };
 
-    setPoList([newItem, ...poList]);
-    setSelectedId(newItem.id);
+      setPoList([newItem, ...poList]);
+      setSelectedId(newItem.id);
+      showFeedback('Purchase Order tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Apakah Anda yakin ingin menghapus Purchase Order ini?')) {
-      const updated = poList.filter((item) => item.id !== id);
-      setPoList(updated);
-      if (selectedId === id && updated.length > 0) {
-        setSelectedId(updated[0].id);
-      }
+    const updated = poList.filter((item) => item.id !== id);
+    setPoList(updated);
+    if (selectedId === id) {
+      setSelectedId(updated[0]?.id || '');
     }
+    showFeedback('Purchase Order dihapus');
   };
 
   const filteredPoList = poList.filter((item) => {
@@ -180,14 +224,11 @@ ALTER TABLE public.purchase_order ENABLE ROW LEVEL SECURITY;
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <div className="flex items-center space-x-3">
-            <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-              List Purchase Order
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
+        <FormHeaderBanner
+          title="List Purchase Order"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+          extraTools={
             <button
               type="button"
               onClick={() => setShowSqlModal(true)}
@@ -196,37 +237,19 @@ ALTER TABLE public.purchase_order ENABLE ROW LEVEL SECURITY;
             >
               <span>Supabase SQL</span>
             </button>
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              title="Export Excel"
-              className="w-[24px] h-[22px] bg-[#107C41] border border-white/80 rounded-[1px] flex items-center justify-center text-white font-bold text-[10px] hover:brightness-110 cursor-pointer"
-            >
-              X
-            </button>
-          </div>
-        </div>
+          }
+        />
 
-        {/* 2. Sub-toolbar with Add New & Tanggal Filter */}
-        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0]">
+        {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
-            <button
-              type="button"
-              onClick={handleAddNew}
-              className="px-3 py-1 bg-[#E1DFDD] hover:bg-[#F3F2F1] active:bg-[#C8C6C4] border border-[#ADABA1] text-black font-semibold rounded-[2px] shadow-xs flex items-center space-x-1 cursor-pointer"
-            >
-              <span>Add New</span>
-            </button>
+            <FormActionButtons
+              onSimpan={() => showFeedback('Data Purchase Order tersimpan')}
+              onBaru={handleAddNew}
+              onKoreksi={handleEdit}
+              onHapus={() => selectedId && handleDelete(selectedId)}
+              feedback={feedback}
+            />
             <div className="flex items-center space-x-1">
               <span className="text-gray-800 font-medium">Tanggal :</span>
               <input
@@ -367,13 +390,13 @@ ALTER TABLE public.purchase_order ENABLE ROW LEVEL SECURITY;
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[440px] overflow-hidden">
               <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
-                <span>Tambah Purchase Order Baru</span>
+                <span>{editingId ? 'Koreksi Purchase Order' : 'Tambah Purchase Order Baru'}</span>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
                   className="text-white hover:bg-red-600 px-1.5 rounded cursor-pointer"
                 >
-                  X
+                  ✕
                 </button>
               </div>
               <form onSubmit={handleSaveNew} className="p-4 space-y-3">

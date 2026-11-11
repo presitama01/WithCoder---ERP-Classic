@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface CustomerItem {
   id: string;
@@ -77,9 +79,18 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   const [newGroupArea, setNewGroupArea] = useState('');
   const [newSales, setNewSales] = useState('');
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewKode('');
     setNewNama('');
     setNewPiutang('0');
@@ -92,12 +103,36 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = customerList.find((c) => c.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewKode(item.kodeCustomer);
+    setNewNama(item.namaCustomer);
+    setNewPiutang(String(item.piutang));
+    setNewPiutangGiro(String(item.piutangGiro));
+    setNewAlamat(item.alamat);
+    setNewKota(item.kota);
+    setNewPhone(item.phone);
+    setNewGroupArea(item.groupArea);
+    setNewSales(item.sales);
+    setIsAddOpen(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedId) return;
+    const updated = customerList.filter((c) => c.id !== selectedId);
+    setCustomerList(updated);
+    setSelectedId(updated[0]?.id || '');
+    showFeedback('Data dihapus');
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const newItem: CustomerItem = {
-      id: Date.now().toString(),
+    const payload: CustomerItem = {
+      id: editingId || Date.now().toString(),
       kodeCustomer: newKode.trim().toUpperCase(),
       namaCustomer: newNama.trim().toUpperCase(),
       piutang: parseFloat(newPiutang) || 0,
@@ -108,9 +143,16 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
       groupArea: newGroupArea.trim().toUpperCase(),
       sales: newSales.trim().toUpperCase(),
     };
-    setCustomerList([newItem, ...customerList]);
-    setSelectedId(newItem.id);
+    if (editingId) {
+      setCustomerList(customerList.map((c) => (c.id === editingId ? payload : c)));
+      showFeedback('Data diperbarui');
+    } else {
+      setCustomerList([payload, ...customerList]);
+      setSelectedId(payload.id);
+      showFeedback('Data tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const filteredCustomer = customerList.filter((item) => {
@@ -133,71 +175,28 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     >
       <div className="w-full h-full flex flex-col min-w-0">
         {/* 1. Black Top Banner */}
-        <div className="shrink-0 flex items-center justify-between h-[36px] bg-black text-white px-3 border-b border-[#333333]">
-          <div className="flex items-center space-x-3">
-            <span className="text-[17px] font-sans font-bold tracking-tight text-white drop-shadow">
-              List Master Pelanggan
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
-            <button
-              type="button"
-              title="Tampilan Tabel"
-              className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
-            >
-              <div className="w-full h-full border border-white/60 grid grid-cols-2 gap-[1px] bg-white p-[1px]">
-                <div className="bg-[#2B579A] col-span-2 h-[3px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-                <div className="bg-[#E7EFF9] h-[4px]" />
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-[22px] h-[22px] bg-[#c00000] hover:bg-red-700 text-white font-bold border border-white/80 rounded-[1px] flex items-center justify-center text-[12px] cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <FormHeaderBanner
+          title="List Master Pelanggan"
+          onClose={onClose}
+          onExportExcel={() => showFeedback('Export Excel selesai')}
+        />
 
         {/* 2. Toolbar / Action Ribbon */}
-        <div className="shrink-0 h-[38px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-2 space-x-1">
+        <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Master Pelanggan tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={handleDelete}
+            feedback={feedback}
+          />
+          <div className="h-[22px] w-[1px] bg-[#ACA899] mx-1" />
           <button
-            onClick={handleAddNew}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
+            type="button"
+            onClick={() => showFeedback('Data direfresh')}
+            className="h-[28px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] cursor-pointer text-[11px] font-semibold text-black"
           >
-            <span className="text-green-700 font-bold">＋</span>
-            <span className="text-black font-semibold">Baru</span>
-          </button>
-          <button
-            onClick={() => {
-              const item = customerList.find(c => c.id === selectedId);
-              if (item) alert(`Edit: ${item.namaCustomer}`);
-            }}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-blue-700 font-bold">✎</span>
-            <span className="text-black font-semibold">Koreksi</span>
-          </button>
-          <button
-            onClick={() => {
-              if (confirm('Hapus data pelanggan terpilih?')) {
-                setCustomerList(customerList.filter(c => c.id !== selectedId));
-              }
-            }}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-red-700 font-bold">🗑</span>
-            <span className="text-black font-semibold">Hapus</span>
-          </button>
-          <div className="h-[20px] w-[1px] bg-[#ACA899] mx-1" />
-          <button
-            onClick={() => alert('Data direfresh')}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-black font-semibold">Refresh</span>
+            Refresh
           </button>
 
           <div className="ml-auto flex items-center space-x-2 text-[11px]">
@@ -279,8 +278,8 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
             <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
-              <span>Tambah Master Pelanggan Baru</span>
-              <button onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold">✕</button>
+              <span>{editingId ? 'Koreksi Master Pelanggan' : 'Tambah Master Pelanggan Baru'}</span>
+              <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
             </div>
             <form onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
               <div className="grid grid-cols-2 gap-2">

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { FormActionButtons } from './FormActionButtons';
+import { FormHeaderBanner } from './FormHeaderBanner';
 
 export interface SalesQuotationItem {
   id: string;
@@ -89,8 +91,10 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   const [tanggalFilter, setTanggalFilter] = useState<string>('03-Aug-2026');
   const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
-  // Add New Modal state
+  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const [newNoSq, setNewNoSq] = useState<string>('2608-SQ-005');
   const [newTanggal, setNewTanggal] = useState<string>('05-Aug-2026');
   const [newCustomer, setNewCustomer] = useState<string>('PT. STAINLESS STEEL');
@@ -101,7 +105,13 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
   if (!isOpen) return null;
 
+  const showFeedback = (msg: string) => {
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 2000);
+  };
+
   const handleAddNew = () => {
+    setEditingId(null);
     setNewNoSq(`2608-SQ-00${quotationList.length + 1}`);
     setNewTanggal('05-Aug-2026');
     setNewCustomer('PT. STAINLESS STEEL');
@@ -112,38 +122,75 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     setIsAddOpen(true);
   };
 
+  const handleEdit = () => {
+    const item = quotationList.find((q) => q.id === selectedId);
+    if (!item) return;
+    setEditingId(item.id);
+    setNewNoSq(item.noSq);
+    setNewTanggal(item.tanggal);
+    setNewCustomer(item.namaCustomer);
+    setNewSales(item.sales);
+    setNewNoInquiry(item.noInquiry);
+    setNewKeterangan(item.keterangan);
+    setNewAmount(item.amount);
+    setIsAddOpen(true);
+  };
+
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoSq.trim()) return;
 
-    const newItem: SalesQuotationItem = {
-      id: Date.now().toString(),
-      noSq: newNoSq.trim().toUpperCase(),
-      tanggal: newTanggal,
-      namaCustomer: newCustomer.trim().toUpperCase(),
-      sales: newSales.trim().toUpperCase(),
-      noInquiry: newNoInquiry.trim().toUpperCase(),
-      keterangan: newKeterangan.trim(),
-      amount: newAmount.trim(),
-      dibuatOleh: 'RETNO',
-      tglCreated: '05-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    };
+    if (editingId) {
+      setQuotationList(
+        quotationList.map((item) =>
+          item.id === editingId
+            ? {
+                ...item,
+                noSq: newNoSq.trim().toUpperCase(),
+                tanggal: newTanggal,
+                namaCustomer: newCustomer.trim().toUpperCase(),
+                sales: newSales.trim().toUpperCase(),
+                noInquiry: newNoInquiry.trim().toUpperCase(),
+                keterangan: newKeterangan.trim(),
+                amount: newAmount.trim(),
+                diupdateOleh: 'RETNO',
+                tglUpdate: '06-Aug-2026',
+              }
+            : item
+        )
+      );
+      showFeedback('Sales Quotation diperbarui');
+    } else {
+      const newItem: SalesQuotationItem = {
+        id: Date.now().toString(),
+        noSq: newNoSq.trim().toUpperCase(),
+        tanggal: newTanggal,
+        namaCustomer: newCustomer.trim().toUpperCase(),
+        sales: newSales.trim().toUpperCase(),
+        noInquiry: newNoInquiry.trim().toUpperCase(),
+        keterangan: newKeterangan.trim(),
+        amount: newAmount.trim(),
+        dibuatOleh: 'RETNO',
+        tglCreated: '05-Aug-2026',
+        diupdateOleh: '-',
+        tglUpdate: '-',
+      };
 
-    setQuotationList([newItem, ...quotationList]);
-    setSelectedId(newItem.id);
+      setQuotationList([newItem, ...quotationList]);
+      setSelectedId(newItem.id);
+      showFeedback('Sales Quotation tersimpan');
+    }
     setIsAddOpen(false);
+    setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Apakah Anda yakin ingin menghapus Sales Quotation ini?')) {
-      const updated = quotationList.filter((item) => item.id !== id);
-      setQuotationList(updated);
-      if (selectedId === id && updated.length > 0) {
-        setSelectedId(updated[0].id);
-      }
+    const updated = quotationList.filter((item) => item.id !== id);
+    setQuotationList(updated);
+    if (selectedId === id) {
+      setSelectedId(updated[0]?.id || '');
     }
+    showFeedback('Sales Quotation dihapus');
   };
 
   const filteredList = quotationList.filter((item) => {
@@ -195,49 +242,35 @@ ALTER TABLE public.sales_quotation ENABLE ROW LEVEL SECURITY;
   return (
     <div
       id="list-sales-quotation-container"
-      className="absolute inset-4 z-30 flex flex-col bg-[#ECE9D8] border border-[#919191] shadow-2xl select-none overflow-hidden font-sans text-xs"
+      className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       {/* 1. Black Window Header Banner */}
-      <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs select-none">
-        <div className="flex items-center space-x-2">
-          <span>List Sales Quotation</span>
-        </div>
-        <div className="flex items-center space-x-1">
+      <FormHeaderBanner
+        title="List Sales Quotation"
+        onClose={onClose}
+        onExportExcel={() => showFeedback('Export Excel selesai')}
+        extraTools={
           <button
+            type="button"
             onClick={() => setShowSqlModal(true)}
-            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8]"
+            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8] cursor-pointer"
             title="Lihat Script SQL Supabase"
           >
             SQL Code
           </button>
-          <button
-            onClick={onClose}
-            className="w-5 h-5 bg-[#C0C0C0] text-black border border-white font-bold flex items-center justify-center hover:bg-red-600 hover:text-white"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* 2. Action Toolbar & Filter Header */}
       <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
         <div className="flex items-center space-x-2">
-          <button
-            onClick={handleAddNew}
-            className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
-          >
-            <span className="text-green-700 font-bold">＋</span>
-            <span>Add New</span>
-          </button>
-          <button
-            onClick={() => {
-              if (selectedId) handleDelete(selectedId);
-            }}
-            className="px-3 py-1 bg-[#F0EEEB] border border-[#919191] rounded shadow-sm hover:bg-[#E2DECD] active:bg-[#C5C1B4] flex items-center space-x-1 font-medium"
-          >
-            <span className="text-red-700 font-bold">🗑</span>
-            <span>Delete</span>
-          </button>
+          <FormActionButtons
+            onSimpan={() => showFeedback('Data Sales Quotation tersimpan')}
+            onBaru={handleAddNew}
+            onKoreksi={handleEdit}
+            onHapus={() => selectedId && handleDelete(selectedId)}
+            feedback={feedback}
+          />
         </div>
 
         <div className="flex items-center space-x-3">
@@ -373,7 +406,7 @@ ALTER TABLE public.sales_quotation ENABLE ROW LEVEL SECURITY;
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
-              <span>Tambah Sales Quotation Baru</span>
+              <span>{editingId ? 'Koreksi Sales Quotation' : 'Tambah Sales Quotation Baru'}</span>
               <button
                 onClick={() => setIsAddOpen(false)}
                 className="text-white hover:text-red-300 font-bold px-1.5"
