@@ -55,7 +55,6 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('No.PR');
   const [tanggalFilter, setTanggalFilter] = useState<string>('01-08-2026');
-  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
   // Add New Modal
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -163,31 +162,6 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
     return item.noPr.toLowerCase().includes(term) || item.deliveryTo.toLowerCase().includes(term);
   });
 
-  const sqlQueryCode = `-- ==========================================
--- SQL Query untuk Supabase: Table "purchase_request"
--- Sesuai form: List Purchase Request
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.purchase_request (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    no_pr VARCHAR(50) NOT NULL UNIQUE,
-    tanggal DATE NOT NULL,
-    delivery_to VARCHAR(255),
-    delivery VARCHAR(100),
-    no_po VARCHAR(50),
-    dibuat_oleh VARCHAR(100),
-    tgl_created TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    diupdate_oleh VARCHAR(100),
-    tgl_update TIMESTAMP WITH TIME ZONE
-);
-
-CREATE INDEX IF NOT EXISTS idx_pr_no_pr ON public.purchase_request(no_pr);
-CREATE INDEX IF NOT EXISTS idx_pr_tanggal ON public.purchase_request(tanggal);
-
--- Enable RLS
-ALTER TABLE public.purchase_request ENABLE ROW LEVEL SECURITY;
-`;
-
   return (
     <div
       id="list-purchase-request-container"
@@ -199,16 +173,6 @@ ALTER TABLE public.purchase_request ENABLE ROW LEVEL SECURITY;
           title="List Purchase Request"
           onClose={onClose}
           onExportExcel={() => showFeedback('Export Excel selesai')}
-          extraTools={
-            <button
-              type="button"
-              onClick={() => setShowSqlModal(true)}
-              className="px-2 py-0.5 bg-[#2B579A] text-white rounded text-[11px] font-medium hover:bg-[#1F4E79] border border-white/40 flex items-center gap-1 shadow-sm cursor-pointer"
-              title="Lihat SQL Query Supabase"
-            >
-              <span>Supabase SQL</span>
-            </button>
-          }
         />
 
         {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
@@ -423,46 +387,6 @@ ALTER TABLE public.purchase_request ENABLE ROW LEVEL SECURITY;
           </div>
         )}
 
-        {/* Supabase SQL Query Modal */}
-        {showSqlModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[650px] overflow-hidden">
-              <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
-                <span>Supabase SQL Query - List Purchase Request</span>
-                <button
-                  type="button"
-                  onClick={() => setShowSqlModal(false)}
-                  className="text-white hover:bg-red-600 px-1.5 rounded cursor-pointer"
-                >
-                  X
-                </button>
-              </div>
-              <div className="p-4 space-y-2">
-                <p className="text-xs text-gray-700">
-                  Salin dan jalankan SQL Query berikut di SQL Editor Supabase Anda:
-                </p>
-                <textarea
-                  readOnly
-                  value={sqlQueryCode}
-                  rows={16}
-                  className="w-full font-mono text-xs p-2 bg-gray-900 text-green-400 border border-gray-700 rounded select-all"
-                />
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(sqlQueryCode);
-                      alert('SQL Query berhasil disalin ke clipboard!');
-                    }}
-                    className="px-3 py-1 bg-[#0055EA] text-white font-medium rounded text-xs hover:bg-blue-700 cursor-pointer"
-                  >
-                    Salin SQL
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

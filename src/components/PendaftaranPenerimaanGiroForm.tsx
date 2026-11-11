@@ -57,7 +57,6 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   ]);
 
   const [selectedId, setSelectedId] = useState<string>('1');
-  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [noBukti, setNoBukti] = useState<string>('GIRO00001');
   const [tanggal, setTanggal] = useState<string>('2017-07-13');
@@ -172,36 +171,6 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     );
   });
 
-  const sqlQueryCode = `-- ==========================================
--- SQL Query untuk Supabase: Table "pendaftaran_penerimaan_giro"
--- Sesuai form: Pendaftaran Penerimaan Giro (Penjualan -> Input Daftar Giro)
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.pendaftaran_penerimaan_giro (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    no INTEGER NOT NULL,
-    id_customer VARCHAR(50) NOT NULL,
-    customer VARCHAR(255) NOT NULL,
-    no_cek_giro VARCHAR(100) NOT NULL,
-    bank VARCHAR(100) NOT NULL,
-    due DATE NOT NULL,
-    amount_paid NUMERIC(15, 2) DEFAULT 0.00,
-    keterangan TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- Index untuk pencarian cepat
-CREATE INDEX IF NOT EXISTS idx_penerimaan_giro_customer ON public.pendaftaran_penerimaan_giro(customer);
-CREATE INDEX IF NOT EXISTS idx_penerimaan_giro_no_cek ON public.pendaftaran_penerimaan_giro(no_cek_giro);
-
--- Enable Row Level Security (RLS)
-ALTER TABLE public.pendaftaran_penerimaan_giro ENABLE ROW LEVEL SECURITY;
-
--- Policy akses terbuka untuk pengembangan
-CREATE POLICY "Enable all access for authenticated users" ON public.pendaftaran_penerimaan_giro
-    FOR ALL USING (true) WITH CHECK (true);
-`;
-
   return (
     <div
       id="pendaftaran-penerimaan-giro-form"
@@ -213,16 +182,6 @@ CREATE POLICY "Enable all access for authenticated users" ON public.pendaftaran_
           title="Pendaftaran Penerimaan Giro"
           onClose={onClose}
           onExportExcel={() => showFeedback('Export Excel selesai')}
-          extraTools={
-            <button
-              type="button"
-              onClick={() => setShowSqlModal(true)}
-              title="Lihat SQL Query Supabase"
-              className="px-2 py-0.5 bg-[#2B579A] hover:bg-[#1F4E79] text-white font-semibold border border-white/80 rounded-[1px] text-[11px] cursor-pointer shadow-sm"
-            >
-              SQL Supabase
-            </button>
-          }
         />
 
         {/* 2. Top Header Fields (No.Bukti & Tanggal) */}
@@ -532,53 +491,6 @@ CREATE POLICY "Enable all access for authenticated users" ON public.pendaftaran_
           </div>
         )}
 
-        {/* Modal SQL Query Supabase */}
-        {showSqlModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px]">
-            <div className="bg-[#ECE9D8] border-2 border-[#000000] shadow-2xl w-[700px] flex flex-col rounded-[2px] font-sans">
-              <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between">
-                <span className="font-bold text-sm">Supabase SQL Query - Table: pendaftaran_penerimaan_giro</span>
-                <button
-                  type="button"
-                  onClick={() => setShowSqlModal(false)}
-                  className="text-white hover:text-red-300 font-bold px-1"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="p-4 flex flex-col space-y-3">
-                <p className="text-gray-700 text-xs">
-                  Salin dan jalankan SQL Query berikut di <strong>Supabase SQL Editor</strong> untuk membuat tabel <code>pendaftaran_penerimaan_giro</code>:
-                </p>
-                <textarea
-                  readOnly
-                  value={sqlQueryCode}
-                  rows={14}
-                  className="w-full font-mono text-xs p-2.5 bg-gray-900 text-green-400 border border-[#7F9DB9] rounded select-all"
-                />
-                <div className="flex justify-between items-center pt-2 border-t border-[#ACA899]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(sqlQueryCode);
-                      alert('SQL Query berhasil disalin ke clipboard!');
-                    }}
-                    className="px-3 py-1 bg-[#2B579A] hover:bg-blue-800 text-white font-semibold border border-blue-900 rounded text-xs cursor-pointer shadow"
-                  >
-                    📋 Salin ke Clipboard
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowSqlModal(false)}
-                    className="px-4 py-1 bg-[#D4D0C8] hover:bg-gray-300 border border-[#707070] rounded text-black font-semibold text-xs cursor-pointer"
-                  >
-                    Tutup
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

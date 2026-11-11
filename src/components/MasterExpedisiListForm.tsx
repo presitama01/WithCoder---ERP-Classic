@@ -151,18 +151,6 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
     return item.namaExpedisi.toLowerCase().includes(term);
   });
 
-  const sqlQueryCode = `-- SQL Query untuk Supabase - Master Expedisi
-CREATE TABLE IF NOT EXISTS public.master_expedisi (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    kode_expedisi VARCHAR(50) NOT NULL UNIQUE,
-    nama_expedisi VARCHAR(150) NOT NULL,
-    alamat TEXT,
-    kota VARCHAR(100),
-    phone1 VARCHAR(50),
-    phone2 VARCHAR(50),
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);`;
-
   return (
     <div
       id="master-expedisi-form-container"

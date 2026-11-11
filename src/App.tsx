@@ -77,7 +77,7 @@ export default function App() {
     | 'retur_penjualan_faktur'
     | 'item_cost_stock'
     | null
-  >('item_cost_stock');
+  >('daftar_giro');
   const [activeUser, setActiveUser] = useState<string>('RETNO');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isInsertMode, setIsInsertMode] = useState(true);

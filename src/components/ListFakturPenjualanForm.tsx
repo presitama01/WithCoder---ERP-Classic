@@ -194,7 +194,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
   const [tanggalFilter, setTanggalFilter] = useState<string>('');
-  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
   // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -352,44 +351,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     );
   });
 
-  const sqlQueryCode = `-- ==========================================
--- SQL Query untuk Supabase: Table "faktur_penjualan"
--- Sesuai form: List Faktur Penjualan
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.faktur_penjualan (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    no_bukti VARCHAR(50) NOT NULL UNIQUE,
-    tanggal VARCHAR(50) NOT NULL,
-    nama_customer VARCHAR(255) NOT NULL,
-    no_so VARCHAR(50),
-    po_no VARCHAR(50),
-    no_sj VARCHAR(50),
-    no_faktur_pajak VARCHAR(50),
-    sales VARCHAR(50),
-    jth_tmp VARCHAR(50),
-    keterangan TEXT,
-    ppn VARCHAR(20) DEFAULT '10.',
-    nilai_penjualan VARCHAR(50) DEFAULT '0',
-    sts_lunas VARCHAR(20) DEFAULT 'Not Yet',
-    tgl_lunas VARCHAR(50),
-    sts_print VARCHAR(20) DEFAULT 'Not Yet',
-    tgl_print VARCHAR(50),
-    sts_post VARCHAR(20) DEFAULT 'Not Yet',
-    tgl_post VARCHAR(50),
-    dibuat_oleh VARCHAR(100),
-    tgl_created VARCHAR(50),
-    diupdate_oleh VARCHAR(100),
-    tgl_update VARCHAR(50)
-);
-
-CREATE INDEX IF NOT EXISTS idx_fp_no_bukti ON public.faktur_penjualan(no_bukti);
-CREATE INDEX IF NOT EXISTS idx_fp_customer ON public.faktur_penjualan(nama_customer);
-
--- Enable RLS
-ALTER TABLE public.faktur_penjualan ENABLE ROW LEVEL SECURITY;
-`;
-
   return (
     <div
       id="list-faktur-penjualan-container"
@@ -400,16 +361,6 @@ ALTER TABLE public.faktur_penjualan ENABLE ROW LEVEL SECURITY;
         title="List Faktur Penjualan"
         onClose={onClose}
         onExportExcel={() => showFeedback('Export Excel selesai')}
-        extraTools={
-          <button
-            type="button"
-            onClick={() => setShowSqlModal(true)}
-            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8] cursor-pointer"
-            title="Lihat Script SQL Supabase"
-          >
-            SQL Code
-          </button>
-        }
       />
 
       {/* 2. Action Toolbar & Filter Header */}
@@ -699,43 +650,6 @@ ALTER TABLE public.faktur_penjualan ENABLE ROW LEVEL SECURITY;
         </div>
       )}
 
-      {/* SQL Code Modal */}
-      {showSqlModal && (
-        <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[650px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
-              <span>SQL Query CODE untuk Supabase (Faktur Penjualan)</span>
-              <button
-                onClick={() => setShowSqlModal(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <p className="text-xs text-gray-700">
-                Salin kode SQL di bawah ini dan jalankan di SQL Editor Supabase Anda:
-              </p>
-              <textarea
-                readOnly
-                value={sqlQueryCode}
-                className="w-full h-64 font-mono text-[11px] p-2 bg-white border border-[#7A7A7A] select-all"
-              />
-              <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(sqlQueryCode);
-                    alert('SQL Code berhasil disalin ke clipboard!');
-                  }}
-                  className="px-4 py-1.5 bg-[#000084] text-white rounded text-xs font-semibold hover:bg-[#0000A0]"
-                >
-                  Copy to Clipboard
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

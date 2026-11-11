@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 
-export interface GiroItem {
+export interface GiroDetailRow {
   id: string;
-  no: number;
+  no: string;
   idSupplier: string;
   supplier: string;
   noCekGiro: string;
   bank: string;
   due: string;
-  amountPaid: number;
+  amountPaid: string;
   keterangan: string;
+  markedDelete: boolean;
 }
 
 interface InputDaftarGiroFormProps {
@@ -19,58 +20,31 @@ interface InputDaftarGiroFormProps {
   onClose: () => void;
 }
 
+const createEmptyRow = (index?: number): GiroDetailRow => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  no: index !== undefined ? String(index) : '',
+  idSupplier: '',
+  supplier: '',
+  noCekGiro: '',
+  bank: '',
+  due: '',
+  amountPaid: '',
+  keterangan: '',
+  markedDelete: false,
+});
+
 export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen, onClose }) => {
-  const [giroList, setGiroList] = useState<GiroItem[]>([
-    {
-      id: '1',
-      no: 1,
-      idSupplier: 'SUP01',
-      supplier: 'PT. GLOBAL JAYA ABADI',
-      noCekGiro: 'BG-982341',
-      bank: 'BCA KCU JAKARTA',
-      due: '2026-11-15',
-      amountPaid: 15000000,
-      keterangan: 'Pelunasan Faktur #INV-2026-001',
-    },
-    {
-      id: '2',
-      no: 2,
-      idSupplier: 'SUP02',
-      supplier: 'CV. MAKMUR SEJAHTERA',
-      noCekGiro: 'CH-452109',
-      bank: 'MANDIRI CABANG KOTA',
-      due: '2026-11-20',
-      amountPaid: 8500000,
-      keterangan: 'Pembayaran Termin 1 Material Bangunan',
-    },
-    {
-      id: '3',
-      no: 3,
-      idSupplier: 'SUP03',
-      supplier: 'PT. NUSANTARA DISTRIBUSI',
-      noCekGiro: 'BG-110293',
-      bank: 'BNI KCP INDUSTRIAL',
-      due: '2026-12-01',
-      amountPaid: 25000000,
-      keterangan: 'Giro Mundur Pembelian Stok Elektronik',
-    },
-  ]);
+  const [noBukti, setNoBukti] = useState<string>('');
+  const [tanggal, setTanggal] = useState<string>('');
+  const datePickerRef = useRef<HTMLInputElement>(null);
 
-  const [selectedId, setSelectedId] = useState<string>('1');
-  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
-  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [rows, setRows] = useState<GiroDetailRow[]>([createEmptyRow()]);
+  const [selectedId, setSelectedId] = useState<string>(() => rows[0]?.id || '');
 
-  // Add new modal state
-  const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
-  const [newIdSupplier, setNewIdSupplier] = useState<string>('SUP04');
-  const [newSupplier, setNewSupplier] = useState<string>('');
-  const [newNoCekGiro, setNewNoCekGiro] = useState<string>('');
-  const [newBank, setNewBank] = useState<string>('');
-  const [newDue, setNewDue] = useState<string>('');
-  const [newAmountPaid, setNewAmountPaid] = useState<string>('0');
-  const [newKeterangan, setNewKeterangan] = useState<string>('');
-
+  // Optional modal for + Baru / Koreksi button workflow
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formRow, setFormRow] = useState<GiroDetailRow>(createEmptyRow(1));
   const [feedback, setFeedback] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -80,125 +54,114 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     setTimeout(() => setFeedback(null), 2000);
   };
 
+  const handleCellChange = (id: string, field: keyof GiroDetailRow, value: string | boolean) => {
+    setRows((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+    );
+  };
+
+  const handleTanggalMaskInput = (raw: string) => {
+    const cleaned = raw.replace(/[^0-9-]/g, '').slice(0, 10);
+    setTanggal(cleaned);
+  };
+
+  const handleDatePickerChange = (isoDate: string) => {
+    if (!isoDate) return;
+    const [yyyy, mm, dd] = isoDate.split('-');
+    if (yyyy && mm && dd) {
+      setTanggal(`${dd}-${mm}-${yyyy}`);
+    }
+  };
+
+  const handleSimpan = () => {
+    const hasDeletedChecked = rows.some((r) => r.markedDelete);
+    if (hasDeletedChecked) {
+      const remaining = rows.filter((r) => !r.markedDelete);
+      const nextRows = remaining.length > 0 ? remaining : [createEmptyRow()];
+      setRows(nextRows);
+      setSelectedId(nextRows[0].id);
+    }
+    showFeedback('Data Daftar Giro tersimpan');
+  };
+
   const handleAddNew = () => {
+    const filledCount = rows.filter(
+      (r) => r.idSupplier.trim() || r.supplier.trim() || r.noCekGiro.trim()
+    ).length;
     setEditingId(null);
-    setNewIdSupplier(`SUP0${giroList.length + 1}`);
-    setNewSupplier('');
-    setNewNoCekGiro('');
-    setNewBank('');
-    setNewDue('');
-    setNewAmountPaid('0');
-    setNewKeterangan('');
-    setIsAddOpen(true);
+    setFormRow(createEmptyRow(filledCount + 1));
+    setIsModalOpen(true);
   };
 
   const handleEdit = () => {
-    const item = giroList.find((g) => g.id === selectedId);
-    if (!item) return;
-    setEditingId(item.id);
-    setNewIdSupplier(item.idSupplier);
-    setNewSupplier(item.supplier);
-    setNewNoCekGiro(item.noCekGiro);
-    setNewBank(item.bank);
-    setNewDue(item.due);
-    setNewAmountPaid(String(item.amountPaid));
-    setNewKeterangan(item.keterangan);
-    setIsAddOpen(true);
+    const current = rows.find((r) => r.id === selectedId) || rows[0];
+    if (!current) return;
+    setEditingId(current.id);
+    setFormRow({ ...current });
+    setIsModalOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveModal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSupplier.trim() || !newNoCekGiro.trim()) return;
-
     if (editingId) {
-      setGiroList(
-        giroList.map((g) =>
-          g.id === editingId
-            ? {
-                ...g,
-                idSupplier: newIdSupplier.trim().toUpperCase(),
-                supplier: newSupplier.trim().toUpperCase(),
-                noCekGiro: newNoCekGiro.trim().toUpperCase(),
-                bank: newBank.trim().toUpperCase(),
-                due: newDue || g.due,
-                amountPaid: parseFloat(newAmountPaid) || 0,
-                keterangan: newKeterangan.trim(),
-              }
-            : g
-        )
+      setRows((prev) =>
+        prev.map((r) => (r.id === editingId ? { ...formRow, id: editingId } : r))
       );
-      showFeedback('Data giro diperbarui');
+      showFeedback('Baris giro diperbarui');
     } else {
-      const newItem: GiroItem = {
-        id: Date.now().toString(),
-        no: giroList.length + 1,
-        idSupplier: newIdSupplier.trim().toUpperCase(),
-        supplier: newSupplier.trim().toUpperCase(),
-        noCekGiro: newNoCekGiro.trim().toUpperCase(),
-        bank: newBank.trim().toUpperCase(),
-        due: newDue || new Date().toISOString().split('T')[0],
-        amountPaid: parseFloat(newAmountPaid) || 0,
-        keterangan: newKeterangan.trim(),
+      const isFirstBlank =
+        rows.length === 1 &&
+        !rows[0].no &&
+        !rows[0].idSupplier &&
+        !rows[0].supplier &&
+        !rows[0].noCekGiro &&
+        !rows[0].amountPaid;
+
+      const newEntry: GiroDetailRow = {
+        ...formRow,
+        id: `${Date.now()}`,
+        no: formRow.no.trim() || String(isFirstBlank ? 1 : rows.length + 1),
       };
 
-      setGiroList([...giroList, newItem]);
-      setSelectedId(newItem.id);
-      showFeedback('Data giro tersimpan');
+      if (isFirstBlank) {
+        setRows([newEntry]);
+      } else {
+        setRows((prev) => [...prev, newEntry]);
+      }
+      setSelectedId(newEntry.id);
+      showFeedback('Baris giro ditambahkan');
     }
-    setIsAddOpen(false);
+    setIsModalOpen(false);
     setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = giroList.filter((item) => item.id !== id);
-    const reindexed = updated.map((item, idx) => ({ ...item, no: idx + 1 }));
-    setGiroList(reindexed);
-    if (selectedId === id) {
-      setSelectedId(reindexed[0]?.id || '');
+  const handleHapus = () => {
+    const hasMarked = rows.some((r) => r.markedDelete);
+    const remaining = hasMarked
+      ? rows.filter((r) => !r.markedDelete)
+      : rows.filter((r) => r.id !== selectedId);
+
+    if (remaining.length === 0) {
+      const blank = createEmptyRow();
+      setRows([blank]);
+      setSelectedId(blank.id);
+    } else {
+      setRows(remaining);
+      setSelectedId(remaining[0].id);
     }
-    showFeedback('Data giro dihapus');
+    showFeedback('Baris giro dihapus');
   };
 
-  const filteredGiroList = giroList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      item.supplier.toLowerCase().includes(term) ||
-      item.noCekGiro.toLowerCase().includes(term) ||
-      item.bank.toLowerCase().includes(term) ||
-      item.idSupplier.toLowerCase().includes(term)
-    );
-  });
+  const parseNumericAmount = (val: string): number => {
+    const normalized = val.replace(/[^0-9.-]/g, '');
+    const parsed = parseFloat(normalized);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
 
-  const sqlQueryCode = `-- ==========================================
--- SQL Query untuk Supabase: Table "daftar_giro"
--- Sesuai form: Pendaftaran Penerimaan Giro
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.daftar_giro (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    no INTEGER NOT NULL,
-    id_supplier VARCHAR(50) NOT NULL,
-    supplier VARCHAR(255) NOT NULL,
-    no_cek_giro VARCHAR(100) NOT NULL,
-    bank VARCHAR(100) NOT NULL,
-    due DATE NOT NULL,
-    amount_paid NUMERIC(15, 2) DEFAULT 0.00,
-    keterangan TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- Index untuk pencarian cepat
-CREATE INDEX IF NOT EXISTS idx_daftar_giro_supplier ON public.daftar_giro(supplier);
-CREATE INDEX IF NOT EXISTS idx_daftar_giro_no_cek ON public.daftar_giro(no_cek_giro);
-
--- Enable Row Level Security (RLS)
-ALTER TABLE public.daftar_giro ENABLE ROW LEVEL SECURITY;
-
--- Policy akses terbuka untuk pengembangan (dapat disesuaikan)
-CREATE POLICY "Enable all access for authenticated users" ON public.daftar_giro
-    FOR ALL USING (true) WITH CHECK (true);
-`;
+  const totalAmountPaid = rows.reduce(
+    (sum, item) => sum + (item.markedDelete ? 0 : parseNumericAmount(item.amountPaid)),
+    0
+  );
 
   return (
     <div
@@ -206,322 +169,423 @@ CREATE POLICY "Enable all access for authenticated users" ON public.daftar_giro
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Window Header (Black Banner) */}
+        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="Input Daftar Giro (Pendaftaran Penerimaan Giro)"
           onClose={onClose}
           onExportExcel={() => showFeedback('Export Excel selesai')}
-          extraTools={
-            <button
-              type="button"
-              onClick={() => setShowSqlModal(true)}
-              title="Lihat SQL Query Supabase"
-              className="px-2 py-0.5 bg-[#2B579A] hover:bg-[#1F4E79] text-white font-semibold border border-white/80 rounded-[1px] text-[11px] cursor-pointer shadow-sm"
-            >
-              SQL Supabase
-            </button>
-          }
         />
 
-        {/* 2. Toolbar / Action Ribbon */}
-        <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
+        {/* 2. Toolbar Aksi (Simpan, + Baru, Koreksi, Hapus) */}
+        <div className="shrink-0 h-[40px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
           <FormActionButtons
-            onSimpan={() => showFeedback('Daftar Giro tersimpan')}
+            compact
+            onSimpan={handleSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={() => selectedId && handleDelete(selectedId)}
+            onHapus={handleHapus}
             feedback={feedback}
           />
+        </div>
 
-          <div className="h-[20px] w-[1px] bg-[#ACA899] mx-1" />
+        {/* 3. Classic Desktop Form Body */}
+        <div className="flex-1 flex flex-col overflow-auto bg-[#ECE9D8] p-2.5">
+          {/* Header Input Box (No.Bukti & Tanggal) */}
+          <div className="shrink-0 max-w-[920px] w-full bg-[#EFEFEF] border border-[#ACA899] shadow-[inset_1px_1px_0_#FFFFFF] px-4 py-2.5 mb-2 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center space-x-2">
+              <label
+                htmlFor="giro-no-bukti"
+                className="font-bold text-[11px] text-black whitespace-nowrap"
+              >
+                No.Bukti :
+              </label>
+              <input
+                id="giro-no-bukti"
+                type="text"
+                value={noBukti}
+                onChange={(e) => setNoBukti(e.target.value)}
+                className="w-[100px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-1.5 text-[11px] font-mono text-black outline-none focus:border-[#316AC5]"
+              />
+            </div>
 
-          <button
-            onClick={() => setShowSqlModal(true)}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#FFE7A2] border border-[#707070] rounded-[2px] active:border-black cursor-pointer text-[11px]"
-          >
-            <span className="text-indigo-700 font-bold">📊</span>
-            <span className="text-black">SQL Query</span>
-          </button>
+            <div className="flex items-center space-x-2 pr-4">
+              <label
+                htmlFor="giro-tanggal"
+                className="font-bold text-[11px] text-black whitespace-nowrap"
+              >
+                Tanggal :
+              </label>
+              <div className="relative flex items-center">
+                <input
+                  id="giro-tanggal"
+                  type="text"
+                  value={tanggal}
+                  onChange={(e) => handleTanggalMaskInput(e.target.value)}
+                  placeholder="__-__-____"
+                  className="w-[84px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-1.5 text-[11px] font-mono text-black outline-none focus:border-[#316AC5]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (datePickerRef.current?.showPicker) {
+                      datePickerRef.current.showPicker();
+                    } else {
+                      datePickerRef.current?.click();
+                    }
+                  }}
+                  title="Pilih Tanggal"
+                  className="w-[18px] h-[22px] bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-l-0 border-[#7F9DB9] flex items-center justify-center text-[8px] text-black cursor-pointer"
+                >
+                  ▼
+                </button>
+                <input
+                  ref={datePickerRef}
+                  type="date"
+                  onChange={(e) => handleDatePickerChange(e.target.value)}
+                  className="sr-only"
+                  tabIndex={-1}
+                />
+              </div>
+            </div>
+          </div>
 
-          <div className="flex-1" />
+          {/* Grid Panel Container with Scrollbars */}
+          <div className="flex-1 min-h-[260px] max-w-[1040px] w-full bg-[#EFEFEF] border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white flex flex-col overflow-hidden">
+            {/* Scrollable Table Container */}
+            <div className="flex-1 overflow-auto bg-[#EFEFEF]">
+              <div className="min-w-[920px] flex flex-col">
+                {/* Centered Group Title Header */}
+                <div className="h-[22px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-normal text-black tracking-wide">
+                  GIRO / CEK / CASH DETAIL
+                </div>
 
-          <div className="flex items-center space-x-1 px-2">
-            <span className="text-gray-700">Cari:</span>
+                <table className="w-full border-collapse text-left text-[11px] select-none bg-white">
+                  <thead className="sticky top-0 z-10 bg-[#ECE9D8] text-black">
+                    <tr className="h-[22px] border-b border-[#808080]">
+                      <th className="w-[22px] min-w-[22px] border-r border-[#ACA899] bg-[#ECE9D8] p-0" />
+                      <th className="w-[40px] min-w-[40px] border-r border-[#ACA899] px-1.5 font-normal text-center bg-[#ECE9D8]">
+                        No.
+                      </th>
+                      <th className="w-[82px] min-w-[82px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        ID Supplier
+                      </th>
+                      <th className="w-[190px] min-w-[190px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        Supplier
+                      </th>
+                      <th className="w-[115px] min-w-[115px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        No. Cek / Giro
+                      </th>
+                      <th className="w-[95px] min-w-[95px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        Bank
+                      </th>
+                      <th className="w-[95px] min-w-[95px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        Due
+                      </th>
+                      <th className="w-[110px] min-w-[110px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        Amount Paid
+                      </th>
+                      <th className="min-w-[175px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        Keterangan
+                      </th>
+                      <th className="w-[56px] min-w-[56px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
+                        Delete
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => {
+                      const isSelected = selectedId === row.id;
+                      return (
+                        <tr
+                          key={row.id}
+                          onClick={() => setSelectedId(row.id)}
+                          className="h-[22px] border-b border-[#ACA899] bg-white"
+                        >
+                          {/* Row Selector Marker (*) */}
+                          <td className="w-[22px] border-r border-[#ACA899] bg-[#ECE9D8] text-center font-bold text-black text-[13px] leading-none p-0">
+                            {isSelected ? '*' : ''}
+                          </td>
+
+                          {/* No. */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.no}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) => handleCellChange(row.id, 'no', e.target.value)}
+                              className="w-full h-[21px] px-1 text-center font-mono text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* ID Supplier */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.idSupplier}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'idSupplier', e.target.value.toUpperCase())
+                              }
+                              className="w-full h-[21px] px-1.5 font-mono text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* Supplier (highlighted pale yellow on active row matching reference) */}
+                          <td
+                            className={`border-r border-[#ACA899] p-0 ${
+                              isSelected ? 'bg-[#FFFF99]' : 'bg-white'
+                            }`}
+                          >
+                            <input
+                              type="text"
+                              value={row.supplier}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'supplier', e.target.value.toUpperCase())
+                              }
+                              className={`w-full h-[21px] px-1.5 text-[11px] font-semibold outline-none ${
+                                isSelected ? 'bg-[#FFFF99]' : 'bg-transparent focus:bg-[#FFFF99]'
+                              }`}
+                            />
+                          </td>
+
+                          {/* No. Cek / Giro */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.noCekGiro}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'noCekGiro', e.target.value.toUpperCase())
+                              }
+                              className="w-full h-[21px] px-1.5 font-mono text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* Bank */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.bank}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'bank', e.target.value.toUpperCase())
+                              }
+                              className="w-full h-[21px] px-1.5 text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* Due */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.due}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) => handleCellChange(row.id, 'due', e.target.value)}
+                              className="w-full h-[21px] px-1.5 font-mono text-center text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* Amount Paid */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.amountPaid}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'amountPaid', e.target.value)
+                              }
+                              className="w-full h-[21px] px-1.5 font-mono text-right text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* Keterangan */}
+                          <td className="border-r border-[#ACA899] p-0">
+                            <input
+                              type="text"
+                              value={row.keterangan}
+                              onFocus={() => setSelectedId(row.id)}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'keterangan', e.target.value)
+                              }
+                              className="w-full h-[21px] px-1.5 text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                            />
+                          </td>
+
+                          {/* Delete Checkbox */}
+                          <td
+                            className="border-r border-[#ACA899] text-center p-0 bg-white"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={row.markedDelete}
+                              onChange={(e) =>
+                                handleCellChange(row.id, 'markedDelete', e.target.checked)
+                              }
+                              aria-label="Tandai Hapus"
+                              className="cursor-pointer align-middle"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Total Amount Paid Bar (matching reference layout) */}
+          <div className="shrink-0 max-w-[1040px] w-full flex items-center justify-end space-x-2 pt-2 pr-6">
+            <label
+              htmlFor="giro-total-amount-paid"
+              className="font-bold text-[11px] text-black whitespace-nowrap"
+            >
+              Total Amount Paid :
+            </label>
             <input
+              id="giro-total-amount-paid"
               type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Supplier / No Cek / Bank..."
-              className="px-2 py-0.5 bg-white border border-[#7F9DB9] rounded-[1px] text-black text-xs w-[180px] focus:outline-none focus:border-blue-600"
+              readOnly
+              value={`Rp ${totalAmountPaid.toLocaleString('id-ID')}`}
+              className="w-[180px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-2 text-right font-mono text-[11px] text-gray-600 outline-none"
             />
           </div>
         </div>
+      </div>
 
-        {/* 3. Main Content Container with Horizontal and Vertical Scrollbars */}
-        <div className="flex-1 overflow-auto p-3 bg-[#D4D0C8] relative">
-          <div className="bg-white border border-[#7F9DB9] shadow-sm min-w-[950px] flex flex-col h-full">
-            {/* Table Header & Scrollable Body */}
-            <div className="overflow-auto flex-1 max-h-[calc(100vh-165px)]">
-              <table className="w-full border-collapse text-left select-none text-[11px]">
-                <thead>
-                  <tr className="bg-gradient-to-b from-[#F2F2F2] to-[#DFDFDF] border-b border-[#7F9DB9] text-black font-semibold sticky top-0 z-10">
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] w-[45px] text-center">No</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] w-[90px]">Id Supplier</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] min-w-[200px]">Supplier</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] w-[120px]">No Cek/Giro</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] w-[150px]">Bank</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] w-[95px] text-center">Due</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] w-[120px] text-right">Amount Paid</th>
-                    <th className="py-1.5 px-2 border-r border-[#ACC0E9] min-w-[220px]">Keterangan</th>
-                    <th className="py-1.5 px-2 w-[70px] text-center">Delete</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredGiroList.map((item, index) => {
-                    const isSelected = selectedId === item.id;
-                    return (
-                      <tr
-                        key={item.id}
-                        onClick={() => setSelectedId(item.id)}
-                        onDoubleClick={() => alert(`Detail Giro: ${item.noCekGiro}`)}
-                        className={`cursor-pointer border-b border-gray-200 ${
-                          isSelected
-                            ? 'bg-[#316AC5] text-white'
-                            : index % 2 === 0
-                            ? 'bg-white hover:bg-[#F0F4F8]'
-                            : 'bg-[#F9FBFD] hover:bg-[#F0F4F8]'
-                        }`}
-                      >
-                        <td className="py-1 px-2 border-r border-gray-200 text-center font-mono">
-                          {item.no}
-                        </td>
-                        <td className="py-1 px-2 border-r border-gray-200 font-mono">
-                          {item.idSupplier}
-                        </td>
-                        <td className="py-1 px-2 border-r border-gray-200 font-semibold">
-                          {item.supplier}
-                        </td>
-                        <td className="py-1 px-2 border-r border-gray-200 font-mono">
-                          {item.noCekGiro}
-                        </td>
-                        <td className="py-1 px-2 border-r border-gray-200">{item.bank}</td>
-                        <td className="py-1 px-2 border-r border-gray-200 text-center font-mono">
-                          {item.due}
-                        </td>
-                        <td className="py-1 px-2 border-r border-gray-200 text-right font-mono">
-                          {item.amountPaid.toLocaleString('id-ID', {
-                            style: 'currency',
-                            currency: 'IDR',
-                            maximumFractionDigits: 0,
-                          })}
-                        </td>
-                        <td className="py-1 px-2 border-r border-gray-200">{item.keterangan}</td>
-                        <td className="py-1 px-2 text-center" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(item.id)}
-                            className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer shadow-sm"
-                            title="Hapus Baris"
-                          >
-                            Del
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredGiroList.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="py-6 text-center text-gray-500 italic">
-                        Tidak ada data daftar giro yang ditemukan.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+      {/* Modal Add / Edit Giro Row */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl w-[500px] flex flex-col font-sans text-xs">
+            <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between">
+              <span className="font-bold text-[12px]">
+                {editingId ? 'Koreksi Detail Giro' : 'Tambah Detail Giro Baru'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="w-[20px] h-[20px] bg-[#C00000] hover:bg-red-700 text-white font-bold flex items-center justify-center text-[11px] cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
 
-            {/* Status / Footer bar inside container */}
-            <div className="shrink-0 bg-[#ECE9D8] border-t border-[#7F9DB9] px-3 py-1 flex items-center justify-between text-[11px] text-gray-700">
-              <div>Total Data: {filteredGiroList.length} Giro</div>
-              <div className="font-mono">
-                Total Nominal:{' '}
-                {filteredGiroList
-                  .reduce((sum, i) => sum + i.amountPaid, 0)
-                  .toLocaleString('id-ID', {
-                    style: 'currency',
-                    currency: 'IDR',
-                    maximumFractionDigits: 0,
-                  })}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Modal Add New Giro */}
-        {isAddOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-            <div className="bg-[#ECE9D8] border-2 border-[#000000] shadow-2xl w-[520px] flex flex-col rounded-[2px] font-sans">
-              <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between">
-                <span className="font-bold text-sm">{editingId ? 'Koreksi Daftar Giro' : 'Tambah Daftar Giro Baru'}</span>
-                <button
-                  type="button"
-                  onClick={() => setIsAddOpen(false)}
-                  className="text-white hover:text-red-300 font-bold px-1 cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-gray-800 font-semibold mb-1">Id Supplier</label>
-                    <input
-                      type="text"
-                      value={newIdSupplier}
-                      onChange={(e) => setNewIdSupplier(e.target.value)}
-                      required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-gray-800 font-semibold mb-1">No Cek / Giro</label>
-                    <input
-                      type="text"
-                      value={newNoCekGiro}
-                      onChange={(e) => setNewNoCekGiro(e.target.value)}
-                      placeholder="Cth: BG-889922"
-                      required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono"
-                    />
-                  </div>
-                </div>
-
+            <form onSubmit={handleSaveModal} className="p-4 space-y-2.5 text-[11px]">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
-                  <label className="block text-gray-800 font-semibold mb-1">Nama Supplier</label>
+                  <label className="block font-bold text-black mb-1">No.</label>
                   <input
                     type="text"
-                    value={newSupplier}
-                    onChange={(e) => setNewSupplier(e.target.value)}
-                    placeholder="Nama Perusahaan Supplier..."
-                    required
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-semibold"
+                    value={formRow.no}
+                    onChange={(e) => setFormRow({ ...formRow, no: e.target.value })}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] font-mono"
                   />
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-gray-800 font-semibold mb-1">Bank</label>
-                    <input
-                      type="text"
-                      value={newBank}
-                      onChange={(e) => setNewBank(e.target.value)}
-                      placeholder="Cth: BCA / Mandiri..."
-                      required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-gray-800 font-semibold mb-1">Jatuh Tempo (Due)</label>
-                    <input
-                      type="date"
-                      value={newDue}
-                      onChange={(e) => setNewDue(e.target.value)}
-                      required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono"
-                    />
-                  </div>
+                <div className="col-span-2">
+                  <label className="block font-bold text-black mb-1">ID Supplier</label>
+                  <input
+                    type="text"
+                    value={formRow.idSupplier}
+                    onChange={(e) =>
+                      setFormRow({ ...formRow, idSupplier: e.target.value.toUpperCase() })
+                    }
+                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] font-mono uppercase"
+                  />
                 </div>
+              </div>
 
+              <div>
+                <label className="block font-bold text-black mb-1">Supplier</label>
+                <input
+                  type="text"
+                  required
+                  value={formRow.supplier}
+                  onChange={(e) =>
+                    setFormRow({ ...formRow, supplier: e.target.value.toUpperCase() })
+                  }
+                  className="w-full h-[24px] px-2 bg-[#FFFF99] border border-[#7F9DB9] font-semibold uppercase"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block text-gray-800 font-semibold mb-1">Amount Paid (Jumlah)</label>
+                  <label className="block font-bold text-black mb-1">No. Cek / Giro</label>
+                  <input
+                    type="text"
+                    required
+                    value={formRow.noCekGiro}
+                    onChange={(e) =>
+                      setFormRow({ ...formRow, noCekGiro: e.target.value.toUpperCase() })
+                    }
+                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-black mb-1">Bank</label>
+                  <input
+                    type="text"
+                    value={formRow.bank}
+                    onChange={(e) =>
+                      setFormRow({ ...formRow, bank: e.target.value.toUpperCase() })
+                    }
+                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold text-black mb-1">Due</label>
+                  <input
+                    type="text"
+                    placeholder="dd-mm-yyyy"
+                    value={formRow.due}
+                    onChange={(e) => setFormRow({ ...formRow, due: e.target.value })}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-black mb-1">Amount Paid</label>
                   <input
                     type="number"
-                    value={newAmountPaid}
-                    onChange={(e) => setNewAmountPaid(e.target.value)}
-                    required
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono text-right"
+                    value={formRow.amountPaid}
+                    onChange={(e) => setFormRow({ ...formRow, amountPaid: e.target.value })}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] font-mono text-right"
                   />
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-gray-800 font-semibold mb-1">Keterangan</label>
-                  <input
-                    type="text"
-                    value={newKeterangan}
-                    onChange={(e) => setNewKeterangan(e.target.value)}
-                    placeholder="Keterangan transaksi giro..."
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black"
-                  />
-                </div>
+              <div>
+                <label className="block font-bold text-black mb-1">Keterangan</label>
+                <input
+                  type="text"
+                  value={formRow.keterangan}
+                  onChange={(e) => setFormRow({ ...formRow, keterangan: e.target.value })}
+                  className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9]"
+                />
+              </div>
 
-                <div className="flex justify-end space-x-2 pt-3 border-t border-[#ACA899]">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddOpen(false)}
-                    className="px-4 py-1.5 bg-[#D4D0C8] hover:bg-gray-300 border border-[#707070] rounded text-black font-semibold cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-1.5 bg-[#0055EA] hover:bg-blue-700 text-white border border-blue-900 rounded font-semibold cursor-pointer shadow"
-                  >
-                    Simpan Giro
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Modal SQL Query Supabase */}
-        {showSqlModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[1px]">
-            <div className="bg-[#ECE9D8] border-2 border-[#000000] shadow-2xl w-[700px] flex flex-col rounded-[2px] font-sans">
-              <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between">
-                <span className="font-bold text-sm">Supabase SQL Query - Table: daftar_giro</span>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
+                <button
+                  type="submit"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold active:border-t-[#707070] active:border-b-white cursor-pointer"
+                >
+                  Simpan
+                </button>
                 <button
                   type="button"
-                  onClick={() => setShowSqlModal(false)}
-                  className="text-white hover:text-red-300 font-bold px-1"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-b-white cursor-pointer"
                 >
-                  ✕
+                  Batal
                 </button>
               </div>
-              <div className="p-4 flex flex-col space-y-3">
-                <p className="text-gray-700 text-xs">
-                  Salin dan jalankan SQL Query berikut di <strong>Supabase SQL Editor</strong> untuk membuat tabel <code>daftar_giro</code>:
-                </p>
-                <textarea
-                  readOnly
-                  value={sqlQueryCode}
-                  rows={14}
-                  className="w-full font-mono text-xs p-2.5 bg-gray-900 text-green-400 border border-[#7F9DB9] rounded select-all"
-                />
-                <div className="flex justify-between items-center pt-2 border-t border-[#ACA899]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(sqlQueryCode);
-                      alert('SQL Query berhasil disalin ke clipboard!');
-                    }}
-                    className="px-3 py-1 bg-[#2B579A] hover:bg-blue-800 text-white font-semibold border border-blue-900 rounded text-xs cursor-pointer shadow"
-                  >
-                    📋 Salin ke Clipboard
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowSqlModal(false)}
-                    className="px-4 py-1 bg-[#D4D0C8] hover:bg-gray-300 border border-[#707070] rounded text-black font-semibold text-xs cursor-pointer"
-                  >
-                    Tutup
-                  </button>
-                </div>
-              </div>
-            </div>
+            </form>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

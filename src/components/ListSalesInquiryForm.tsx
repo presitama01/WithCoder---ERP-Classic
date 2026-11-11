@@ -67,7 +67,6 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
   const [tanggalFilter, setTanggalFilter] = useState<string>('04-Aug-2026');
-  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
   // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -196,35 +195,6 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     );
   });
 
-  const sqlQueryCode = `-- ==========================================
--- SQL Query untuk Supabase: Table "sales_inquiry"
--- Sesuai form: List Inquiry Penjualan (Sales Inquiry SI)
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.sales_inquiry (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    no_bukti VARCHAR(50) NOT NULL UNIQUE,
-    tanggal_do VARCHAR(50) NOT NULL,
-    nama_customer VARCHAR(255) NOT NULL,
-    nama_sales VARCHAR(100),
-    keterangan TEXT,
-    follow VARCHAR(50),
-    tgl_follow VARCHAR(50),
-    no_sq VARCHAR(50),
-    tgl_sq VARCHAR(50),
-    dibuat_oleh VARCHAR(100),
-    tgl_created VARCHAR(50),
-    diupdate_oleh VARCHAR(100),
-    tgl_update VARCHAR(50)
-);
-
-CREATE INDEX IF NOT EXISTS idx_si_no_bukti ON public.sales_inquiry(no_bukti);
-CREATE INDEX IF NOT EXISTS idx_si_customer ON public.sales_inquiry(nama_customer);
-
--- Enable RLS
-ALTER TABLE public.sales_inquiry ENABLE ROW LEVEL SECURITY;
-`;
-
   return (
     <div
       id="list-sales-inquiry-container"
@@ -235,16 +205,6 @@ ALTER TABLE public.sales_inquiry ENABLE ROW LEVEL SECURITY;
         title="List Inquiry Penjualan"
         onClose={onClose}
         onExportExcel={() => showFeedback('Export Excel selesai')}
-        extraTools={
-          <button
-            type="button"
-            onClick={() => setShowSqlModal(true)}
-            className="px-2 py-0.5 bg-[#D4D0C8] text-black border border-white/40 rounded text-[10px] font-semibold hover:bg-white active:bg-[#B5B3A8] cursor-pointer"
-            title="Lihat Script SQL Supabase"
-          >
-            SQL Code
-          </button>
-        }
       />
 
       {/* 2. Action Toolbar & Filter Header */}
@@ -484,43 +444,6 @@ ALTER TABLE public.sales_inquiry ENABLE ROW LEVEL SECURITY;
         </div>
       )}
 
-      {/* SQL Code Modal */}
-      {showSqlModal && (
-        <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[650px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
-              <span>SQL Query CODE untuk Supabase (Sales Inquiry)</span>
-              <button
-                onClick={() => setShowSqlModal(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <p className="text-xs text-gray-700">
-                Salin kode SQL di bawah ini dan jalankan di SQL Editor Supabase Anda:
-              </p>
-              <textarea
-                readOnly
-                value={sqlQueryCode}
-                className="w-full h-64 font-mono text-[11px] p-2 bg-white border border-[#7A7A7A] select-all"
-              />
-              <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(sqlQueryCode);
-                    alert('SQL Code berhasil disalin ke clipboard!');
-                  }}
-                  className="px-4 py-1.5 bg-[#000084] text-white rounded text-xs font-semibold hover:bg-[#0000A0]"
-                >
-                  Copy to Clipboard
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

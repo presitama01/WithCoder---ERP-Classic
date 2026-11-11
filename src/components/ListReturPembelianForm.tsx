@@ -76,7 +76,6 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Supplier');
   const [tanggalFilter, setTanggalFilter] = useState<string>('06-Aug-2026');
-  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
 
   // Add New Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -207,38 +206,6 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     );
   });
 
-  const sqlQueryCode = `-- ==========================================
--- SQL Query untuk Supabase: Table "retur_pembelian"
--- Sesuai form: List Retur Pembelian
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS public.retur_pembelian (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    no_bukti VARCHAR(50) NOT NULL UNIQUE,
-    tanggal VARCHAR(50) NOT NULL,
-    nama_supplier VARCHAR(255) NOT NULL,
-    nilai_retur VARCHAR(50) DEFAULT '0',
-    keterangan TEXT,
-    mata_uang VARCHAR(10) DEFAULT 'IDR',
-    disc VARCHAR(20) DEFAULT '0%',
-    ppn VARCHAR(20) DEFAULT '11%',
-    sts_print VARCHAR(20) DEFAULT 'Not Yet',
-    tgl_print VARCHAR(50) DEFAULT '-',
-    sts_post VARCHAR(20) DEFAULT 'Posted',
-    tgl_post VARCHAR(50),
-    dibuat_oleh VARCHAR(100),
-    tgl_created VARCHAR(50),
-    diupdate_oleh VARCHAR(100),
-    tgl_update VARCHAR(50)
-);
-
-CREATE INDEX IF NOT EXISTS idx_retur_pembelian_no_bukti ON public.retur_pembelian(no_bukti);
-CREATE INDEX IF NOT EXISTS idx_retur_pembelian_supplier ON public.retur_pembelian(nama_supplier);
-
--- Enable RLS
-ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
-`;
-
   return (
     <div
       id="list-retur-pembelian-container"
@@ -250,16 +217,6 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
           title="List Retur Pembelian Barang"
           onClose={onClose}
           onExportExcel={() => showFeedback('Export Excel selesai')}
-          extraTools={
-            <button
-              type="button"
-              onClick={() => setShowSqlModal(true)}
-              className="px-2 py-0.5 bg-[#2B579A] text-white rounded text-[11px] font-medium hover:bg-[#1F4E79] border border-white/40 flex items-center gap-1 shadow-sm cursor-pointer"
-              title="Lihat SQL Query Supabase"
-            >
-              <span>Supabase SQL</span>
-            </button>
-          }
         />
 
         {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
@@ -280,20 +237,6 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
                 onChange={(e) => setTanggalFilter(e.target.value)}
                 className="w-[95px] px-1.5 py-0.5 bg-white border border-[#7F9DB9] rounded-[2px] text-black text-center font-mono"
               />
-            </div>
-            <div className="flex items-center space-x-1">
-              <span className="text-gray-800 font-medium">Periode :</span>
-              <select className="px-1 py-0.5 bg-white border border-[#7F9DB9] rounded-[2px] text-black">
-                <option>08/2026 - Agustus 2026</option>
-                <option>09/2026 - September 2026</option>
-              </select>
-            </div>
-            <div className="flex items-center space-x-1">
-              <span className="text-gray-800 font-medium">Lokasi :</span>
-              <select className="px-1 py-0.5 bg-white border border-[#7F9DB9] rounded-[2px] text-black">
-                <option>GUDANG UTAMA</option>
-                <option>CABANG SURABAYA</option>
-              </select>
             </div>
           </div>
 
@@ -459,7 +402,6 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
 
           <div className="flex items-center space-x-4 text-gray-700">
             <span>Record: {filteredList.length} of {returList.length}</span>
-            <span className="font-mono text-gray-500">[Active Database: Supabase Connected]</span>
           </div>
         </div>
       </div>
@@ -590,53 +532,6 @@ ALTER TABLE public.retur_pembelian ENABLE ROW LEVEL SECURITY;
         </div>
       )}
 
-      {/* Supabase SQL Code Modal */}
-      {showSqlModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-[640px] bg-[#ECE9D8] border-2 border-[#1E90FF] rounded-[3px] shadow-[4px_4px_16px_rgba(0,0,0,0.5)] flex flex-col font-sans text-xs">
-            <div className="flex items-center justify-between h-[28px] bg-black text-white px-3 font-bold">
-              <span>Supabase SQL Query - List Retur Pembelian</span>
-              <button
-                type="button"
-                onClick={() => setShowSqlModal(false)}
-                className="w-[20px] h-[20px] bg-[#C75050] hover:bg-red-600 text-white rounded-[2px] flex items-center justify-center text-[11px] cursor-pointer"
-              >
-                ×
-              </button>
-            </div>
-            <div className="p-4 space-y-3 bg-[#ECE9D8]">
-              <p className="text-gray-700">
-                Salin dan jalankan script SQL berikut di SQL Editor Supabase Anda untuk membuat tabel <code className="font-mono bg-white px-1 py-0.5 border border-gray-300">retur_pembelian</code>:
-              </p>
-              <textarea
-                readOnly
-                value={sqlQueryCode}
-                rows={14}
-                className="w-full p-2.5 font-mono text-[11px] bg-white border border-[#7F9DB9] rounded-[2px] text-gray-800 select-all"
-              />
-              <div className="flex justify-between items-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(sqlQueryCode);
-                    alert('SQL Query berhasil disalin ke clipboard!');
-                  }}
-                  className="px-4 py-1.5 bg-[#2B579A] hover:bg-[#1F4E79] text-white font-medium rounded-[2px] shadow-xs cursor-pointer"
-                >
-                  Salin SQL Query
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSqlModal(false)}
-                  className="px-4 py-1.5 bg-[#E1DFDD] hover:bg-[#F3F2F1] border border-[#ADABA1] text-black font-semibold rounded-[2px] shadow-xs cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
