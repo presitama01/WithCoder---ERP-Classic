@@ -446,10 +446,31 @@ async function startServer() {
     }
   });
 
+  // Catch-all 404 for any unmatched /api route to ensure it always returns JSON, never HTML
+  app.all('/api/*', (req: Request, res: Response) => {
+    return res.status(404).json({
+      error: `API endpoint '${req.method} ${req.path}' tidak ditemukan.`,
+    });
+  });
+
+  // Global error handler for API
+  app.use((err: any, _req: Request, res: Response, next: any) => {
+    if (res.headersSent) {
+      return next(err);
+    }
+    console.error('[WithCoder ERP API Error]', err);
+    return res.status(500).json({
+      error: err?.message || 'Internal Server Error pada server ERP.',
+    });
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

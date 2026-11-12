@@ -93,26 +93,79 @@ function buildQueryParams(opts?: ErpQueryOptions): string {
   return qs ? `?${qs}` : '';
 }
 
+async function parseApiResponse<T = any>(res: Response, fallbackErrMsg: string): Promise<T> {
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
+  if (!isJson) {
+    const rawText = await res.text().catch(() => '');
+    if (res.status === 502 || res.status === 503 || res.status === 504 || rawText.includes('The page c')) {
+      throw new Error('Server backend sedang memuat atau memulai ulang. Mohon tunggu beberapa detik lalu coba lagi.');
+    }
+    if (!res.ok) {
+      throw new Error(`Koneksi server gagal (${res.status}): ${rawText.slice(0, 120) || res.statusText}`);
+    }
+    throw new Error(`Respon tidak terduga dari server (${contentType || 'non-JSON'}).`);
+  }
+
+  let json: any = null;
+  try {
+    json = await res.json();
+  } catch (parseErr: any) {
+    if (!res.ok) {
+      throw new Error(`Gagal memproses data server (HTTP ${res.status}).`);
+    }
+    throw new Error(`Respon format JSON tidak valid: ${parseErr?.message || 'Parse error'}`);
+  }
+
+  if (!res.ok) {
+    throw new Error(json?.error || fallbackErrMsg);
+  }
+
+  return json as T;
+}
+
+async function requestWithRetry(
+  url: string,
+  init?: RequestInit,
+  retries = 2,
+  backoffMs = 600
+): Promise<Response> {
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      // If server returned a 502/503/504 (dev server still warming up), retry
+      if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < retries) {
+        await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+        continue;
+      }
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+        continue;
+      }
+    }
+  }
+  throw lastError || new Error('Gagal terhubung ke server ERP.');
+}
+
 export async function erpList<T = any>(table: string, opts?: ErpQueryOptions): Promise<T[]> {
   const qs = buildQueryParams(opts);
-  const res = await fetch(`/api/erp/${encodeURIComponent(table)}${qs}`);
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(json?.error || `Gagal mengambil data ${table}`);
-  }
+  const res = await requestWithRetry(`/api/erp/${encodeURIComponent(table)}${qs}`);
+  const json = await parseApiResponse<{ data: T[] }>(res, `Gagal mengambil data ${table}`);
   return (json.data || []) as T[];
 }
 
 export async function erpCreate<T = any>(table: string, payload: Partial<T> | Partial<T>[]): Promise<T> {
-  const res = await fetch(`/api/erp/${encodeURIComponent(table)}`, {
+  const res = await requestWithRetry(`/api/erp/${encodeURIComponent(table)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(json?.error || `Gagal menyimpan data ${table}`);
-  }
+  const json = await parseApiResponse<{ data: T }>(res, `Gagal menyimpan data ${table}`);
   return json.data as T;
 }
 
@@ -122,15 +175,12 @@ export async function erpUpsert<T = any>(
   onConflict?: string
 ): Promise<T> {
   const qs = onConflict ? `?onConflict=${encodeURIComponent(onConflict)}` : '';
-  const res = await fetch(`/api/erp/${encodeURIComponent(table)}/upsert${qs}`, {
+  const res = await requestWithRetry(`/api/erp/${encodeURIComponent(table)}/upsert${qs}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(json?.error || `Gagal upsert data ${table}`);
-  }
+  const json = await parseApiResponse<{ data: T }>(res, `Gagal upsert data ${table}`);
   return json.data as T;
 }
 
@@ -141,27 +191,21 @@ export async function erpUpdate<T = any>(
   matchCol = 'id'
 ): Promise<T> {
   const qs = matchCol !== 'id' ? `?matchCol=${encodeURIComponent(matchCol)}` : '';
-  const res = await fetch(`/api/erp/${encodeURIComponent(table)}/${encodeURIComponent(id)}${qs}`, {
+  const res = await requestWithRetry(`/api/erp/${encodeURIComponent(table)}/${encodeURIComponent(id)}${qs}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(json?.error || `Gagal memperbarui data ${table}`);
-  }
+  const json = await parseApiResponse<{ data: T }>(res, `Gagal memperbarui data ${table}`);
   return json.data as T;
 }
 
 export async function erpDelete(table: string, id: string, matchCol = 'id'): Promise<void> {
   const qs = matchCol !== 'id' ? `?matchCol=${encodeURIComponent(matchCol)}` : '';
-  const res = await fetch(`/api/erp/${encodeURIComponent(table)}/${encodeURIComponent(id)}${qs}`, {
+  const res = await requestWithRetry(`/api/erp/${encodeURIComponent(table)}/${encodeURIComponent(id)}${qs}`, {
     method: 'DELETE',
   });
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(json?.error || `Gagal menghapus data ${table}`);
-  }
+  await parseApiResponse<{ ok: boolean }>(res, `Gagal menghapus data ${table}`);
 }
 
 export async function erpCompositeSave<T = any>(
@@ -169,16 +213,13 @@ export async function erpCompositeSave<T = any>(
   header: Record<string, any>,
   details?: Record<string, any>[]
 ): Promise<T> {
-  const res = await fetch(`/api/erp/composite/${endpoint}`, {
+  const res = await requestWithRetry(`/api/erp/composite/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ header, details }),
   });
-  const json = await res.json();
-  if (!res.ok) {
-    throw new Error(json?.error || `Gagal menyimpan transaksi ${endpoint}`);
-  }
-  return json as T;
+  const json = await parseApiResponse<T>(res, `Gagal menyimpan transaksi ${endpoint}`);
+  return json;
 }
 
 export async function fetchActiveCompanyProfile(): Promise<CompanyProfileData> {
