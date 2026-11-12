@@ -113,3 +113,53 @@
   scrollbar-width: thin;
   scrollbar-color: #ACA899 #ECE9D8;
 }
+
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    width: 100%;
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide everything in desktop UI except A4 Print Preview Modal when printing */
+  #desktop-root > :not(#a4-print-preview-overlay),
+  #desktop-root #mdi-workspace > :not(#a4-print-preview-overlay) {
+    display: none !important;
+  }
+
+  #a4-print-preview-overlay {
+    position: static !important;
+    inset: auto !important;
+    background: #ffffff !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+  }
+
+  #a4-print-root {
+    overflow: visible !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+
+  .a4-page {
+    width: 100% !important;
+    min-height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    font-size: 11pt !important;
+    page-break-inside: avoid;
+  }
+}
+

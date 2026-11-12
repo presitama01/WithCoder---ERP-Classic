@@ -1,11 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface FakturLainItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaCustomer: string;
   noSo: string;
   poNo: string;
@@ -16,6 +33,7 @@ export interface FakturLainItem {
   keterangan: string;
   ppn: string;
   nilaiPenjualan: string;
+  nilaiPenjualanNum: number;
   stsLunas: string;
   tglLunas: string;
   stsPrint: string;
@@ -33,6 +51,37 @@ interface ListFakturLainFormProps {
   onClose: () => void;
 }
 
+function mapDbToFakturLain(r: any): FakturLainItem {
+  const nilaiNum = Number(r.nilai_penjualan || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaCustomer: r.nama_customer || '',
+    noSo: r.no_so || '',
+    poNo: r.po_no || '',
+    noSj: r.no_sj || '',
+    noFakturPajak: r.no_faktur_pajak || '',
+    sales: r.sales || '',
+    jthTmp: toDisplayDMyShort(r.jth_tmp),
+    keterangan: r.keterangan || '',
+    ppn: `${Number(r.ppn ?? 11)}.`,
+    nilaiPenjualan: formatMoney(nilaiNum, true),
+    nilaiPenjualanNum: nilaiNum,
+    stsLunas: r.sts_lunas || 'Not Yet',
+    tglLunas: toDisplayDMyShort(r.tgl_lunas) || '',
+    stsPrint: r.sts_print || 'Not Yet',
+    tglPrint: toDisplayDMyShort(r.tgl_print) || '',
+    stsPost: r.sts_post || 'Not Yet',
+    tglPost: toDisplayDMyShort(r.tgl_post) || '',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diUpdateOleh: r.diupdate_oleh || '',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '',
+  };
+}
+
 export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   isOpen,
   onClose,
@@ -44,44 +93,71 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [yellowNote, setYellowNote] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Add / Edit Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [newNoBukti, setNewNoBukti] = useState<string>('INV-2608-0001');
-  const [newTanggal, setNewTanggal] = useState<string>('01-Aug-2026');
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
   const [newCustomer, setNewCustomer] = useState<string>('');
   const [newNoSo, setNewNoSo] = useState<string>('');
   const [newPoNo, setNewPoNo] = useState<string>('');
   const [newNoSj, setNewNoSj] = useState<string>('');
   const [newNoFakturPajak, setNewNoFakturPajak] = useState<string>('');
   const [newSales, setNewSales] = useState<string>('01');
-  const [newJthTmp, setNewJthTmp] = useState<string>('01-Aug-2026');
+  const [newJthTmp, setNewJthTmp] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
-  const [newPpn, setNewPpn] = useState<string>('10.');
-  const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('0.');
-
-  if (!isOpen) return null;
+  const [newPpn, setNewPpn] = useState<string>('11');
+  const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('0');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('faktur_penjualans', {
+        eq: { jenis_faktur: 'LAIN' },
+        orderBy: 'tanggal',
+        asc: false,
+      });
+      const mapped = rows.map(mapDbToFakturLain);
+      setFakturLainList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleBaru = () => {
     setEditingId(null);
-    setNewNoBukti(`INV-2608-000${fakturLainList.length + 1}`);
-    setNewTanggal('01-Aug-2026');
+    const todayDisp = toDisplayDMyShort(todayIso());
+    setNewNoBukti(`INV-LAIN-${String(fakturLainList.length + 1).padStart(4, '0')}`);
+    setNewTanggal(todayDisp);
     setNewCustomer('');
     setNewNoSo('');
     setNewPoNo('');
     setNewNoSj('');
     setNewNoFakturPajak('');
     setNewSales('01');
-    setNewJthTmp('01-Aug-2026');
+    setNewJthTmp(todayDisp);
     setNewKeterangan('');
-    setNewPpn('10.');
-    setNewNilaiPenjualan('0.');
+    setNewPpn('11');
+    setNewNilaiPenjualan('0');
     setIsAddOpen(true);
   };
 
@@ -102,84 +178,82 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     setNewSales(item.sales);
     setNewJthTmp(item.jthTmp);
     setNewKeterangan(item.keterangan);
-    setNewPpn(item.ppn);
-    setNewNilaiPenjualan(item.nilaiPenjualan);
+    setNewPpn(String(parseNum(item.ppn)));
+    setNewNilaiPenjualan(String(item.nilaiPenjualanNum));
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setFakturLainList((prev) =>
-        prev.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal.trim(),
-                namaCustomer: newCustomer.trim().toUpperCase(),
-                noSo: newNoSo.trim().toUpperCase(),
-                poNo: newPoNo.trim(),
-                noSj: newNoSj.trim(),
-                noFakturPajak: newNoFakturPajak.trim(),
-                sales: newSales.trim(),
-                jthTmp: newJthTmp.trim(),
-                keterangan: newKeterangan.trim(),
-                ppn: newPpn.trim(),
-                nilaiPenjualan: newNilaiPenjualan.trim(),
-                diUpdateOleh: 'RETNO',
-                tglUpdate: newTanggal.trim(),
-              }
-            : item
-        )
-      );
-      showFeedback('Faktur Lain diperbarui');
-    } else {
-      const newItem: FakturLainItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal.trim(),
-        namaCustomer: newCustomer.trim().toUpperCase(),
-        noSo: newNoSo.trim().toUpperCase(),
-        poNo: newPoNo.trim(),
-        noSj: newNoSj.trim(),
-        noFakturPajak: newNoFakturPajak.trim(),
-        sales: newSales.trim(),
-        jthTmp: newJthTmp.trim(),
+    try {
+      setIsBusy(true);
+      const payload = {
+        jenis_faktur: 'LAIN',
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: toIsoDate(newTanggal) || todayIso(),
+        nama_customer: newCustomer.trim().toUpperCase(),
+        no_so: newNoSo.trim().toUpperCase(),
+        po_no: newPoNo.trim().toUpperCase(),
+        no_sj: newNoSj.trim().toUpperCase(),
+        no_faktur_pajak: newNoFakturPajak.trim(),
+        sales: newSales.trim().toUpperCase(),
+        jth_tmp: toIsoDate(newJthTmp) || toIsoDate(newTanggal) || todayIso(),
         keterangan: newKeterangan.trim(),
-        ppn: newPpn.trim(),
-        nilaiPenjualan: newNilaiPenjualan.trim(),
-        stsLunas: 'Not Yet',
-        tglLunas: '',
-        stsPrint: 'Not Yet',
-        tglPrint: '',
-        stsPost: 'Not Yet',
-        tglPost: '',
-        dibuatOleh: 'RETNO',
-        tglCreated: newTanggal.trim(),
-        diUpdateOleh: '',
-        tglUpdate: '',
+        ppn: parseNum(newPpn),
+        nilai_penjualan: parseNum(newNilaiPenjualan),
       };
 
-      setFakturLainList((prev) => [...prev, newItem]);
-      setSelectedId(newItem.id);
-      showFeedback('Faktur Lain ditambahkan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('faktur_penjualans', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToFakturLain(saved);
+        setFakturLainList((prev) => prev.map((item) => (item.id === editingId ? mapped : item)));
+        showFeedback('Faktur Lain diperbarui');
+      } else {
+        const saved = await erpCreate<any>('faktur_penjualans', {
+          ...payload,
+          sts_lunas: 'Not Yet',
+          sts_print: 'Not Yet',
+          sts_post: 'Not Yet',
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+        });
+        const mapped = mapDbToFakturLain(saved);
+        setFakturLainList((prev) => [mapped, ...prev]);
+        setSelectedId(mapped.id);
+        showFeedback('Faktur Lain ditambahkan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleHapus = () => {
+  const handleHapus = async () => {
     if (!selectedId) {
       showFeedback('Pilih baris yang akan dihapus');
       return;
     }
-    const updated = fakturLainList.filter((item) => item.id !== selectedId);
-    setFakturLainList(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data Faktur Lain dihapus');
+    try {
+      setIsBusy(true);
+      await erpDelete('faktur_penjualans', selectedId);
+      const updated = fakturLainList.filter((item) => item.id !== selectedId);
+      setFakturLainList(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data Faktur Lain dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const uniqueTanggalOptions = Array.from(
@@ -195,19 +269,42 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     if (!searchTerm.trim()) return true;
 
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'No.SO') {
-      return item.noSo.toLowerCase().includes(term);
-    } else if (searchField === 'PO.No') {
-      return item.poNo.toLowerCase().includes(term);
-    } else if (searchField === 'No.Faktur Pajak') {
-      return item.noFakturPajak.toLowerCase().includes(term);
-    } else if (searchField === 'Keterangan') {
-      return item.keterangan.toLowerCase().includes(term);
-    }
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'No.SO') return item.noSo.toLowerCase().includes(term);
+    if (searchField === 'PO.No') return item.poNo.toLowerCase().includes(term);
+    if (searchField === 'No.Faktur Pajak') return item.noFakturPajak.toLowerCase().includes(term);
+    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return item.namaCustomer.toLowerCase().includes(term);
   });
+
+  const totalNilai = filteredList.reduce((acc, f) => acc + f.nilaiPenjualanNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Faktur_Lain',
+      sheetTitle: 'LIST FAKTUR LAIN',
+      subtitle: `Filter Tanggal: ${tanggalFilter || 'Semua'}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Customer', accessor: 'namaCustomer' },
+        { header: 'No.SO', accessor: 'noSo' },
+        { header: 'PO.No', accessor: 'poNo' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'Nilai Penjualan', accessor: 'nilaiPenjualanNum', align: 'right' },
+        { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
 
   return (
     <div
@@ -215,21 +312,25 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Unified Black Top Banner */}
         <FormHeaderBanner
           title="List Faktur Lain"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Sub-toolbar with Action Buttons, Tanggal Filter, and Rp 0 */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={() => showFeedback('Data List Faktur Lain tersimpan')}
+              onSimpan={loadData}
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleHapus}
+              onPrint={() => setIsPrintOpen(true)}
+              onFind={handleFind}
+              isBusy={isBusy}
               feedback={feedback}
             />
 
@@ -238,7 +339,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
               <select
                 value={tanggalFilter}
                 onChange={(e) => setTanggalFilter(e.target.value)}
-                className="w-[74px] h-[22px] px-1 bg-white border border-[#7A7A7A] text-[11px] outline-none cursor-pointer"
+                className="w-[94px] h-[22px] px-1 bg-white border border-[#7A7A7A] text-[11px] outline-none cursor-pointer"
               >
                 <option value=""></option>
                 {uniqueTanggalOptions.map((tgl) => (
@@ -257,174 +358,90 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
             </div>
           </div>
 
-          <div className="font-bold text-[15px] text-black pr-6">Rp 0</div>
+          <div className="font-bold text-[15px] text-black pr-6">{formatRupiah(totalNilai)}</div>
         </div>
 
-        {/* 3. Main Data Grid Table Container with Horizontal & Vertical Scrollbars */}
         <div className="flex-1 overflow-auto bg-[#F0F0F0] border border-[#808080] m-1.5 relative shadow-inner">
           <table className="border-collapse text-left whitespace-nowrap min-w-[1920px] text-[11px]">
             <thead className="sticky top-0 bg-[#ECE9D8] text-black font-normal z-10">
               <tr className="bg-[#ECE9D8] border-b border-[#ACA899]">
                 <th className="w-[22px] px-1 py-0.5 border-r border-[#ACA899] text-center font-normal" />
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[95px]">
-                  No.Bukti
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[85px]">
-                  Tanggal
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[160px]">
-                  Nama Customer
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[105px]">
-                  No.SO
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[155px]">
-                  PO.No
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[180px]">
-                  No.SJ
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[110px]">
-                  No.Faktur Pajak
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[50px]">
-                  Sales
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">
-                  Jth.Tmp
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[110px]">
-                  Keterangan
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[45px]">
-                  PPN
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[95px]">
-                  Nilai Penjualan
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">
-                  Sts.Lunas
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">
-                  Tgl.Lunas
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">
-                  Sts.Print
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">
-                  Tgl.Print
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">
-                  Sts.Post
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">
-                  Tgl.Post
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[80px]">
-                  Dibuat Oleh
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">
-                  Tgl.Created
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[90px]">
-                  DiUpdate Oleh
-                </th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">
-                  Tgl.Update
-                </th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[95px]">No.Bukti</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[85px]">Tanggal</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[160px]">Nama Customer</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[105px]">No.SO</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[155px]">PO.No</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[180px]">No.SJ</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[110px]">No.Faktur Pajak</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[50px]">Sales</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Jth.Tmp</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[110px]">Keterangan</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[45px]">PPN</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[95px]">Nilai Penjualan</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">Sts.Lunas</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Tgl.Lunas</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">Sts.Print</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Tgl.Print</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">Sts.Post</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Tgl.Post</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[80px]">Dibuat Oleh</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Tgl.Created</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[90px]">DiUpdate Oleh</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Tgl.Update</th>
               </tr>
             </thead>
             <tbody>
-              {filteredList.map((item) => {
-                const isSelected = selectedId === item.id;
-                return (
-                  <tr
-                    key={item.id}
-                    onClick={() => setSelectedId(item.id)}
-                    onDoubleClick={handleKoreksi}
-                    className={`cursor-pointer border-b border-[#00B800] text-black ${
-                      isSelected
-                        ? 'bg-[#00FF00] font-medium'
-                        : 'bg-[#00FF00] hover:bg-[#33FF33]'
-                    }`}
-                  >
-                    <td className="px-1 py-0.5 border-r border-[#ACA899] bg-[#ECE9D8] text-center text-[10px] font-bold text-black">
-                      {isSelected ? '▸' : ''}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.noBukti}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.tanggal}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.namaCustomer}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.noSo}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.poNo}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.noSj}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.noFakturPajak}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.sales}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.jthTmp}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.keterangan}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800] text-right">
-                      {item.ppn}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800] text-right">
-                      {item.nilaiPenjualan}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.stsLunas}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.tglLunas}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.stsPrint}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.tglPrint}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.stsPost}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.tglPost}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.dibuatOleh}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.tglCreated}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.diUpdateOleh}
-                    </td>
-                    <td className="px-2 py-0.5 border-r border-[#00B800]">
-                      {item.tglUpdate}
-                    </td>
-                  </tr>
-                );
-              })}
+              {filteredList.length === 0 ? (
+                <tr>
+                  <td colSpan={23} className="text-center py-8 text-gray-500 italic bg-white">
+                    Tidak ada data Faktur Lain
+                  </td>
+                </tr>
+              ) : (
+                filteredList.map((item) => {
+                  const isSelected = selectedId === item.id;
+                  return (
+                    <tr
+                      key={item.id}
+                      onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleKoreksi}
+                      className={`cursor-pointer border-b border-[#00B800] text-black ${
+                        isSelected ? 'bg-[#00FF00] font-medium' : 'bg-[#00FF00] hover:bg-[#33FF33]'
+                      }`}
+                    >
+                      <td className="px-1 py-0.5 border-r border-[#ACA899] bg-[#ECE9D8] text-center text-[10px] font-bold text-black">
+                        {isSelected ? '▸' : ''}
+                      </td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noBukti}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tanggal}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.namaCustomer}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noSo}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.poNo}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noSj}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noFakturPajak}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.sales}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.jthTmp}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.keterangan}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] text-right">{item.ppn}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] text-right">{item.nilaiPenjualan}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.stsLunas}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tglLunas}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.stsPrint}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tglPrint}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.stsPost}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tglPost}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.dibuatOleh}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tglCreated}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.diUpdateOleh}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tglUpdate}</td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* 4. Bottom Footer & Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-4 py-2 border-t border-[#C0C0C0] gap-3 overflow-x-auto">
           <div className="flex items-center space-x-2 shrink-0">
             <span className="font-bold text-black text-[11px]">Search :</span>
@@ -441,6 +458,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
               <option value="Keterangan">Keterangan</option>
             </select>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -451,7 +469,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           <div className="flex items-center space-x-6 shrink-0">
             <input
               type="text"
-              value={yellowNote}
+              value={yellowNote || fakturLainList.find((r) => r.id === selectedId)?.namaCustomer || ''}
               onChange={(e) => setYellowNote(e.target.value)}
               className="w-[260px] h-[22px] px-1.5 bg-[#FFFF99] border border-[#7A7A7A] text-[11px] outline-none"
             />
@@ -462,14 +480,11 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           </div>
         </div>
 
-        {/* Add / Edit Modal Dialog */}
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[480px] overflow-hidden">
               <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
-                <span>
-                  {editingId ? 'Koreksi Faktur Lain' : 'Tambah Faktur Lain Baru'}
-                </span>
+                <span>{editingId ? 'Koreksi Faktur Lain' : 'Tambah Faktur Lain Baru'}</span>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
@@ -486,29 +501,27 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     value={newNoBukti}
                     onChange={(e) => setNewNoBukti(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="font-semibold text-black">Tanggal:</label>
-                  <input
-                    type="text"
-                    value={newTanggal}
-                    onChange={(e) => setNewTanggal(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
-                  />
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTanggal}
+                      onChange={(formatted) => setNewTanggal(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">
-                    Nama Customer:
-                  </label>
+                  <label className="font-semibold text-black">Nama Customer:</label>
                   <input
                     type="text"
                     value={newCustomer}
                     onChange={(e) => setNewCustomer(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -517,7 +530,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     type="text"
                     value={newNoSo}
                     onChange={(e) => setNewNoSo(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -526,13 +539,11 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     type="text"
                     value={newPoNo}
                     onChange={(e) => setNewPoNo(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">
-                    No.Faktur Pajak:
-                  </label>
+                  <label className="font-semibold text-black">No.Faktur Pajak:</label>
                   <input
                     type="text"
                     value={newNoFakturPajak}
@@ -541,9 +552,34 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">
-                    Keterangan:
-                  </label>
+                  <label className="font-semibold text-black">Sales / PPN (%):</label>
+                  <div className="w-72 flex gap-2">
+                    <input
+                      type="text"
+                      value={newSales}
+                      onChange={(e) => setNewSales(e.target.value)}
+                      className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                    />
+                    <input
+                      type="number"
+                      value={newPpn}
+                      onChange={(e) => setNewPpn(e.target.value)}
+                      className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-center"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Jth.Tmp:</label>
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newJthTmp}
+                      onChange={(formatted) => setNewJthTmp(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Keterangan:</label>
                   <input
                     type="text"
                     value={newKeterangan}
@@ -552,14 +588,12 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">
-                    Nilai Penjualan:
-                  </label>
+                  <label className="font-semibold text-black">Nilai Penjualan (Rp):</label>
                   <input
-                    type="text"
+                    type="number"
                     value={newNilaiPenjualan}
                     onChange={(e) => setNewNilaiPenjualan(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
                 </div>
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
@@ -572,6 +606,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                   </button>
                   <button
                     type="submit"
+                    disabled={isBusy}
                     className="px-3 py-1 bg-[#0A246A] text-white border border-black text-xs hover:bg-[#163994] cursor-pointer"
                   >
                     Simpan
@@ -581,6 +616,29 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
             </div>
           </div>
         )}
+
+        <A4PrintPreviewModal
+          isOpen={isPrintOpen}
+          onClose={() => setIsPrintOpen(false)}
+          title="LAPORAN LIST FAKTUR LAIN"
+          subtitle={`Filter Tanggal: ${tanggalFilter || 'Semua'}`}
+          orientation="landscape"
+          columns={[
+            { header: 'No.Bukti', accessor: 'noBukti', width: '105px' },
+            { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
+            { header: 'Nama Customer', accessor: 'namaCustomer' },
+            { header: 'No.SO', accessor: 'noSo', width: '105px' },
+            { header: 'PO.No', accessor: 'poNo', width: '95px' },
+            { header: 'Keterangan', accessor: 'keterangan' },
+            { header: 'Nilai Faktur', accessor: 'nilaiPenjualan', align: 'right', width: '105px' },
+            { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center', width: '70px' },
+          ]}
+          rows={filteredList}
+          summaryItems={[
+            { label: 'Total Faktur Lain', value: `${filteredList.length} Dokumen` },
+            { label: 'Total Nilai', value: formatRupiah(totalNilai) },
+          ]}
+        />
       </div>
     </div>
   );

@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface MerkItem {
   id: string;
@@ -14,77 +17,50 @@ interface MerkListFormProps {
 }
 
 export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) => {
-  // Sample data taken directly from the screenshot (Record 144 items)
-  const [merks, setMerks] = useState<MerkItem[]>([
-    { id: '1', kode: '0130', namaMerk: 'A&D' },
-    { id: '2', kode: '0037', namaMerk: 'ACCUR' },
-    { id: '3', kode: '0129', namaMerk: 'ALTERNATIVE RAYTEK' },
-    { id: '4', kode: '0092', namaMerk: 'AMTEC' },
-    { id: '5', kode: '0077', namaMerk: 'AND' },
-    { id: '6', kode: '0057', namaMerk: 'ANRITSU' },
-    { id: '7', kode: '0029', namaMerk: 'ASAHI' },
-    { id: '8', kode: '0017', namaMerk: 'ASIMETO' },
-    { id: '9', kode: '0036', namaMerk: 'ATAGO' },
-    { id: '10', kode: '0038', namaMerk: 'ATTONIC' },
-    { id: '11', kode: '0116', namaMerk: 'AUTONIC' },
-    { id: '12', kode: '0106', namaMerk: 'BALANZA' },
-    { id: '13', kode: '0138', namaMerk: 'BARCOL' },
-    { id: '14', kode: '0043', namaMerk: 'BEAKER' },
-    { id: '15', kode: '0121', namaMerk: 'BELONA' },
-    { id: '16', kode: '0021', namaMerk: 'BEVS' },
-    { id: '17', kode: '0068', namaMerk: 'BIAYA' },
-    { id: '18', kode: '0112', namaMerk: 'BINDEX 717.10' },
-    { id: '19', kode: '0105', namaMerk: 'BOSCH' },
-    { id: '20', kode: '0082', namaMerk: 'CARMAR' },
-    { id: '21', kode: '0140', namaMerk: 'CARTON' },
-    { id: '22', kode: '0079', namaMerk: 'CASIO' },
-    { id: '23', kode: '0101', namaMerk: 'CITIZEN' },
-    { id: '24', kode: '0039', namaMerk: 'CODE' },
-    { id: '25', kode: '0041', namaMerk: 'CONSTANT' },
-    { id: '26', kode: '0042', namaMerk: 'DEFELSKO' },
-    { id: '27', kode: '0141', namaMerk: 'DIATES' },
-    { id: '28', kode: '0027', namaMerk: 'DINAMEC SYSTEM' },
-    { id: '29', kode: '0015', namaMerk: 'DORMA' },
-    { id: '30', kode: '0088', namaMerk: 'ELCOMETER' },
-    { id: '31', kode: '0063', namaMerk: 'ELECTRO-SENSORS' },
-    { id: '32', kode: '0004', namaMerk: 'ENDRESS+HAUSER' },
-    { id: '33', kode: '0119', namaMerk: 'EXECH' },
-    { id: '34', kode: '0012', namaMerk: 'FLUKE' },
-    { id: '35', kode: '0098', namaMerk: 'FOWLER' },
-    { id: '36', kode: '0073', namaMerk: 'FUJI ELECTRIC' },
-    { id: '37', kode: '0054', namaMerk: 'GARMIN' },
-    { id: '38', kode: '0081', namaMerk: 'GENERAL ELECTRIC' },
-    { id: '39', kode: '0102', namaMerk: 'HANNA INSTRUMENT' },
-    { id: '40', kode: '0031', namaMerk: 'HI-LO WELDING' },
-    { id: '41', kode: '0048', namaMerk: 'HIOKI' },
-    { id: '42', kode: '0085', namaMerk: 'HONEYWELL' },
-    { id: '43', kode: '0122', namaMerk: 'INSIZE' },
-    { id: '44', kode: '0065', namaMerk: 'KANOMAX' },
-    { id: '45', kode: '0023', namaMerk: 'KETT' },
-    { id: '46', kode: '0090', namaMerk: 'KYORITSU' },
-    { id: '47', kode: '0051', namaMerk: 'LUTRON' },
-    { id: '48', kode: '0115', namaMerk: 'MAHR' },
-    { id: '49', kode: '0070', namaMerk: 'MEGGER' },
-    { id: '50', kode: '0033', namaMerk: 'MITUTOYO' },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [merks, setMerks] = useState<MerkItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Description');
 
-  // Modal for Add / Koreksi
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('master_merks', { orderBy: 'nama_merk', asc: true });
+      const mapped: MerkItem[] = rows.map((r) => ({
+        id: r.id,
+        kode: r.kode,
+        namaMerk: r.nama_merk,
+      }));
+      setMerks(mapped);
+      if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     const nextCode = (merks.length + 1).toString().padStart(4, '0');
@@ -96,46 +72,64 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
 
   const handleEdit = () => {
     const item = merks.find((m) => m.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewKode(item.kode);
     setNewNama(item.namaMerk);
     setIsAddOpen(true);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedId) return;
-    const updated = merks.filter((m) => m.id !== selectedId);
-    setMerks(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data dihapus');
+    try {
+      setIsBusy(true);
+      await erpDelete('master_merks', selectedId);
+      const updated = merks.filter((m) => m.id !== selectedId);
+      setMerks(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    if (editingId) {
-      setMerks(
-        merks.map((m) =>
-          m.id === editingId
-            ? { ...m, kode: newKode.trim().toUpperCase(), namaMerk: newNama.trim().toUpperCase() }
-            : m
-        )
-      );
-      showFeedback('Data diperbarui');
-    } else {
-      const newItem: MerkItem = {
-        id: Date.now().toString(),
+    try {
+      setIsBusy(true);
+      const payload = {
         kode: newKode.trim().toUpperCase(),
-        namaMerk: newNama.trim().toUpperCase(),
+        nama_merk: newNama.trim().toUpperCase(),
       };
-      setMerks([newItem, ...merks]);
-      setSelectedId(newItem.id);
-      showFeedback('Data tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('master_merks', editingId, payload);
+        setMerks(
+          merks.map((m) =>
+            m.id === editingId ? { id: saved.id, kode: saved.kode, namaMerk: saved.nama_merk } : m
+          )
+        );
+        showFeedback('Data diperbarui');
+      } else {
+        const saved = await erpCreate<any>('master_merks', payload);
+        const newItem: MerkItem = { id: saved.id, kode: saved.kode, namaMerk: saved.nama_merk };
+        setMerks([newItem, ...merks]);
+        setSelectedId(newItem.id);
+        showFeedback('Data tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
   const filteredMerks = merks.filter((item) => {
@@ -147,37 +141,59 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
     return item.namaMerk.toLowerCase().includes(term);
   });
 
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'Master_Merk',
+      sheetTitle: 'LIST TABEL MERK',
+      companyProfile: company,
+      columns: [
+        { header: 'Kode', accessor: 'kode' },
+        { header: 'Nama Merk', accessor: 'namaMerk' },
+      ],
+      rows: filteredMerks,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
   return (
     <div
       id="merk-list-form-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none"
     >
-      {/* 1. Black Top Banner: List Tabel Merk */}
       <FormHeaderBanner
         id="merk-form-banner"
         title="List Tabel Merk"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action & Search Bar */}
       <div
         id="merk-form-toolbar"
         className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
       >
         <FormActionButtons
-          onSimpan={() => showFeedback('Data Merk tersimpan')}
+          onSimpan={loadData}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
           onHapus={handleDelete}
+          onPrint={() => setIsPrintOpen(true)}
+          onFind={handleFind}
+          isBusy={isBusy}
           feedback={feedback}
         />
 
-        {/* Search controls */}
         <div className="flex items-center space-x-2">
           <span className="font-bold text-[11px] text-black">Search :</span>
 
-          {/* Field selection button / combobox */}
           <div className="relative">
             <select
               value={searchField}
@@ -187,134 +203,90 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
               <option value="Description">Description</option>
               <option value="Kode">Kode</option>
             </select>
-            <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">
-              ▼
-            </div>
+            <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
           </div>
 
-          {/* Search Input Field */}
           <div className="w-[340px]">
             <input
+              ref={searchInputRef}
               id="merk-search-input"
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder=""
+              placeholder="Ketik untuk FIND..."
               className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
             />
           </div>
         </div>
       </div>
 
-      {/* 3. Grid Workspace Section */}
       <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
-        {/* Table Frame Box */}
         <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-white shadow-inner">
-          {/* Header Bar: "List" */}
           <div className="h-[20px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-bold text-black">
             List
           </div>
 
-          {/* Table Data Grid with explicit scroll down (overflow-y-scroll) */}
           <div className="flex-1 overflow-y-scroll overflow-x-hidden bg-[#F0EDE2] custom-scrollbar">
             <table className="w-full border-collapse text-[11px] font-sans select-none">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
-                  {/* Selector column header */}
                   <th className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8] p-1" />
-                  {/* Kode column header */}
-                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">
-                    Kode
-                  </th>
-                  {/* Nama Merk column header */}
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">
-                    Nama Merk
-                  </th>
+                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">Kode</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">Nama Merk</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredMerks.map((item) => {
                   const isSelected = selectedId === item.id;
-
                   return (
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
                       className={`h-[22px] border-b border-[#D6D6D6] cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#0A246A] text-white font-semibold'
-                          : 'bg-white hover:bg-[#EAF2FC] text-black'
+                        isSelected ? 'bg-[#0A246A] text-white font-semibold' : 'bg-white hover:bg-[#EAF2FC] text-black'
                       }`}
                     >
-                      {/* Left pointer column */}
-                      <td
-                        className={`w-[24px] border-r border-[#ACA899] text-center p-0 ${
-                          isSelected ? 'bg-[#ECE9D8] text-black' : 'bg-[#ECE9D8] text-black'
-                        }`}
-                      >
-                        {isSelected ? (
-                          <span className="text-[10px] font-bold leading-none inline-block">
-                            ▶
-                          </span>
-                        ) : null}
+                      <td className="w-[24px] border-r border-[#ACA899] text-center p-0 bg-[#ECE9D8] text-black">
+                        {isSelected ? <span className="text-[10px] font-bold leading-none inline-block">▶</span> : null}
                       </td>
-
-                      {/* Kode */}
-                      <td
-                        className={`px-2 py-0.5 border-r border-[#D6D6D6] font-mono ${
-                          isSelected ? 'border-r-[#3A5FCD]' : ''
-                        }`}
-                      >
+                      <td className={`px-2 py-0.5 border-r border-[#D6D6D6] font-mono ${isSelected ? 'border-r-[#3A5FCD]' : ''}`}>
                         {item.kode}
                       </td>
-
-                      {/* Nama Merk */}
-                      <td className="px-2 py-0.5 uppercase tracking-wide">
-                        {item.namaMerk}
-                      </td>
+                      <td className="px-2 py-0.5 uppercase tracking-wide">{item.namaMerk}</td>
                     </tr>
                   );
                 })}
 
-                {/* Remaining filler lines */}
-                {Array.from({ length: Math.max(0, 10 - filteredMerks.length) }).map(
-                  (_, emptyIdx) => (
-                    <tr key={`empty-${emptyIdx}`} className="h-[22px] bg-white border-b border-[#EBEBEB]">
-                      <td className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8]" />
-                      <td className="border-r border-[#EBEBEB]" />
-                      <td />
-                    </tr>
-                  )
-                )}
+                {Array.from({ length: Math.max(0, 10 - filteredMerks.length) }).map((_, emptyIdx) => (
+                  <tr key={`empty-${emptyIdx}`} className="h-[22px] bg-white border-b border-[#EBEBEB]">
+                    <td className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8]" />
+                    <td className="border-r border-[#EBEBEB]" />
+                    <td />
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* 4. Bottom Information Bar */}
         <div className="flex items-center justify-between mt-2 px-1 text-[11px] font-sans">
-          {/* Status box / Beveled frame */}
           <div className="w-[450px] h-[22px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 flex items-center text-gray-700">
-            {selectedId
-              ? `Merk Terpilih: ${merks.find((m) => m.id === selectedId)?.namaMerk || '-'}`
-              : ''}
+            {selectedId ? `Merk Terpilih: ${merks.find((m) => m.id === selectedId)?.namaMerk || '-'}` : ''}
           </div>
 
-          {/* Record Count Indicator (matching 144 from screenshot) */}
           <div className="flex items-center space-x-6 text-[12px] font-sans font-bold text-black pr-16">
             <span>Record</span>
-            <span className="font-mono text-[13px]">{filteredMerks.length > 28 ? 144 : 144}</span>
+            <span className="font-mono text-[13px]">{filteredMerks.length}</span>
           </div>
         </div>
       </div>
 
-      {/* Add New Dialog Window */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/25 flex items-center justify-center z-50 p-4">
           <div className="w-[360px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans">
-            {/* Title Bar */}
             <div className="flex items-center justify-between h-[24px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold">
-              <span>Input Merk Baru</span>
+              <span>{editingId ? 'Koreksi Merk' : 'Input Merk Baru'}</span>
               <button
                 type="button"
                 onClick={() => setIsAddOpen(false)}
@@ -352,14 +324,15 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold hover:bg-[#F2EFE2] cursor-pointer"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-bold hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Simpan
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Batal
                 </button>
@@ -368,6 +341,18 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
           </div>
         </div>
       )}
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN MASTER TABEL MERK"
+        subtitle={`Total Record: ${filteredMerks.length}`}
+        columns={[
+          { header: 'Kode', accessor: 'kode', width: '120px' },
+          { header: 'Nama Merk', accessor: 'namaMerk' },
+        ]}
+        rows={filteredMerks}
+      />
     </div>
   );
 };

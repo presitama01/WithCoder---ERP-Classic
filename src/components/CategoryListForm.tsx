@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface CategoryItem {
   id: string;
@@ -14,28 +17,50 @@ interface CategoryListFormProps {
 }
 
 export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onClose }) => {
-  const [categories, setCategories] = useState<CategoryItem[]>([
-    { id: '1', kode: '0001', namaKategori: 'PRODUCT' },
-    { id: '2', kode: '0002', namaKategori: 'SERVICES' },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Description');
 
-  // Modal for Add / Koreksi
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('master_categories', { orderBy: 'kode', asc: true });
+      const mapped: CategoryItem[] = rows.map((r) => ({
+        id: r.id,
+        kode: r.kode,
+        namaKategori: r.nama_kategori,
+      }));
+      setCategories(mapped);
+      if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     const nextNum = (categories.length + 1).toString().padStart(4, '0');
@@ -47,46 +72,71 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
 
   const handleEdit = () => {
     const item = categories.find((c) => c.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewKode(item.kode);
     setNewNama(item.namaKategori);
     setIsAddOpen(true);
   };
 
-  const handleDelete = () => {
-    if (!selectedId) return;
-    const updated = categories.filter((c) => c.id !== selectedId);
-    setCategories(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data dihapus');
+  const handleDelete = async () => {
+    if (!selectedId) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      await erpDelete('master_categories', selectedId);
+      const updated = categories.filter((c) => c.id !== selectedId);
+      setCategories(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data dihapus dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    if (editingId) {
-      setCategories(
-        categories.map((c) =>
-          c.id === editingId
-            ? { ...c, kode: newKode.trim().toUpperCase(), namaKategori: newNama.trim().toUpperCase() }
-            : c
-        )
-      );
-      showFeedback('Data diperbarui');
-    } else {
-      const newItem: CategoryItem = {
-        id: Date.now().toString(),
+    try {
+      setIsBusy(true);
+      const payload = {
         kode: newKode.trim().toUpperCase(),
-        namaKategori: newNama.trim().toUpperCase(),
+        nama_kategori: newNama.trim().toUpperCase(),
       };
-      setCategories([...categories, newItem]);
-      setSelectedId(newItem.id);
-      showFeedback('Data tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('master_categories', editingId, payload);
+        setCategories(
+          categories.map((c) =>
+            c.id === editingId ? { id: saved.id, kode: saved.kode, namaKategori: saved.nama_kategori } : c
+          )
+        );
+        showFeedback('Data diperbarui di Supabase');
+      } else {
+        const saved = await erpCreate<any>('master_categories', payload);
+        const newItem: CategoryItem = {
+          id: saved.id,
+          kode: saved.kode,
+          namaKategori: saved.nama_kategori,
+        };
+        setCategories([...categories, newItem]);
+        setSelectedId(newItem.id);
+        showFeedback('Data tersimpan di Supabase');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
   const filteredCategories = categories.filter((item) => {
@@ -98,37 +148,59 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
     return item.namaKategori.toLowerCase().includes(term);
   });
 
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'Master_Category',
+      sheetTitle: 'LIST TABEL CATEGORY',
+      companyProfile: company,
+      columns: [
+        { header: 'Kode', accessor: 'kode' },
+        { header: 'Nama Kategori', accessor: 'namaKategori' },
+      ],
+      rows: filteredCategories,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
   return (
     <div
       id="category-list-form-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden"
     >
-      {/* 1. Black Top Banner: List Tabel Category */}
       <FormHeaderBanner
         id="category-form-banner"
         title="List Tabel Category"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action & Search Bar */}
       <div
         id="category-form-toolbar"
         className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans min-w-max overflow-x-auto"
       >
         <FormActionButtons
-          onSimpan={() => showFeedback('Data Category tersimpan')}
+          onSimpan={isAddOpen ? undefined : () => loadData()}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
           onHapus={handleDelete}
+          onPrint={() => setIsPrintOpen(true)}
+          onFind={handleFind}
+          isBusy={isBusy}
           feedback={feedback}
         />
 
-        {/* Search controls */}
         <div className="flex items-center space-x-2">
           <span className="font-bold text-[11px] text-black">Search :</span>
 
-          {/* Field selection button / combobox */}
           <div className="relative">
             <select
               value={searchField}
@@ -143,41 +215,34 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
             </div>
           </div>
 
-          {/* Search Input Field */}
           <div className="w-[340px]">
             <input
+              ref={searchInputRef}
               id="category-search-input"
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder=""
+              placeholder="Ketik untuk FIND..."
               className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
             />
           </div>
         </div>
       </div>
 
-      {/* 3. Grid Workspace Section */}
       <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8] min-h-[200px]">
-        {/* Table Frame Box */}
         <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-white shadow-inner min-h-0">
-          {/* Header Bar: "List" */}
           <div className="h-[20px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-bold text-black">
             List
           </div>
 
-          {/* Table Data Grid with full 2-directional scroll */}
           <div className="flex-1 overflow-auto bg-[#F0EDE2]">
             <table className="min-w-[500px] w-full border-collapse text-[11px] font-sans select-none">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
-                  {/* Selector column header */}
                   <th className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8] p-1" />
-                  {/* Kode column header */}
                   <th className="w-[100px] border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">
                     Kode
                   </th>
-                  {/* Nama Kategori column header */}
                   <th className="border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">
                     Nama Kategori
                   </th>
@@ -186,74 +251,47 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
               <tbody>
                 {filteredCategories.map((item) => {
                   const isSelected = selectedId === item.id;
-
                   return (
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
                       className={`h-[22px] border-b border-[#D6D6D6] cursor-pointer ${
                         isSelected
                           ? 'bg-[#0A246A] text-white font-semibold'
                           : 'bg-white hover:bg-[#EAF2FC] text-black'
                       }`}
                     >
-                      {/* Left pointer column */}
-                      <td
-                        className={`w-[24px] border-r border-[#ACA899] text-center p-0 ${
-                          isSelected ? 'bg-[#ECE9D8] text-black' : 'bg-[#ECE9D8] text-black'
-                        }`}
-                      >
-                        {isSelected ? (
-                          <span className="text-[10px] font-bold leading-none inline-block">
-                            ▶
-                          </span>
-                        ) : null}
+                      <td className="w-[24px] border-r border-[#ACA899] text-center p-0 bg-[#ECE9D8] text-black">
+                        {isSelected ? <span className="text-[10px] font-bold leading-none inline-block">▶</span> : null}
                       </td>
-
-                      {/* Kode */}
-                      <td
-                        className={`px-2 py-0.5 border-r border-[#D6D6D6] font-mono ${
-                          isSelected ? 'border-r-[#3A5FCD]' : ''
-                        }`}
-                      >
+                      <td className={`px-2 py-0.5 border-r border-[#D6D6D6] font-mono ${isSelected ? 'border-r-[#3A5FCD]' : ''}`}>
                         {item.kode}
                       </td>
-
-                      {/* Nama Kategori */}
-                      <td className="px-2 py-0.5 uppercase tracking-wide">
-                        {item.namaKategori}
-                      </td>
+                      <td className="px-2 py-0.5 uppercase tracking-wide">{item.namaKategori}</td>
                     </tr>
                   );
                 })}
 
-                {/* Fill remaining empty rows for authentic classic VB/Delphi grid look */}
-                {Array.from({ length: Math.max(0, 15 - filteredCategories.length) }).map(
-                  (_, emptyIdx) => (
-                    <tr key={`empty-${emptyIdx}`} className="h-[22px] bg-white border-b border-[#EBEBEB]">
-                      <td className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8]" />
-                      <td className="border-r border-[#EBEBEB]" />
-                      <td />
-                    </tr>
-                  )
-                )}
+                {Array.from({ length: Math.max(0, 15 - filteredCategories.length) }).map((_, emptyIdx) => (
+                  <tr key={`empty-${emptyIdx}`} className="h-[22px] bg-white border-b border-[#EBEBEB]">
+                    <td className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8]" />
+                    <td className="border-r border-[#EBEBEB]" />
+                    <td />
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* 4. Bottom Information Bar */}
         <div className="flex items-center justify-between mt-2 px-1 text-[11px] font-sans">
-          {/* Status box / Beveled frame */}
           <div className="w-[450px] h-[22px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 flex items-center text-gray-700">
             {selectedId
-              ? `Kategori Terpilih: ${
-                  categories.find((c) => c.id === selectedId)?.namaKategori || '-'
-                }`
+              ? `Kategori Terpilih: ${categories.find((c) => c.id === selectedId)?.namaKategori || '-'}`
               : ''}
           </div>
 
-          {/* Record Count Indicator */}
           <div className="flex items-center space-x-6 text-[12px] font-sans font-bold text-black pr-16">
             <span>Record</span>
             <span className="font-mono text-[13px]">{filteredCategories.length}</span>
@@ -261,13 +299,11 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
         </div>
       </div>
 
-      {/* Add New Dialog Window */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/25 flex items-center justify-center z-50 p-4">
           <div className="w-[360px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans">
-            {/* Title Bar */}
             <div className="flex items-center justify-between h-[24px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold">
-              <span>Input Category Baru</span>
+              <span>{editingId ? 'Koreksi Category' : 'Input Category Baru'}</span>
               <button
                 type="button"
                 onClick={() => setIsAddOpen(false)}
@@ -305,14 +341,15 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold hover:bg-[#F2EFE2] cursor-pointer"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-bold hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Simpan
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Batal
                 </button>
@@ -321,6 +358,18 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
           </div>
         </div>
       )}
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN MASTER TABEL CATEGORY"
+        subtitle={`Total Record: ${filteredCategories.length}`}
+        columns={[
+          { header: 'Kode', accessor: 'kode', width: '120px' },
+          { header: 'Nama Kategori', accessor: 'namaKategori' },
+        ]}
+        rows={filteredCategories}
+      />
     </div>
   );
 };

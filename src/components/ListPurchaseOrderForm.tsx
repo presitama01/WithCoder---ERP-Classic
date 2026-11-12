@@ -1,14 +1,32 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface PurchaseOrderItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaSupplier: string;
   keterangan: string;
   nilaiPo: string;
+  nilaiPoNum: number;
   deposit: string;
   tglLunas: string;
   tglKirim: string;
@@ -25,160 +43,188 @@ interface ListPurchaseOrderFormProps {
   onClose: () => void;
 }
 
+function mapDbToPo(r: any): PurchaseOrderItem {
+  const nilaiNum = Number(r.nilai_po || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaSupplier: r.nama_supplier || '',
+    keterangan: r.keterangan || '',
+    nilaiPo: formatMoney(nilaiNum),
+    nilaiPoNum: nilaiNum,
+    deposit: Number(r.deposit || 0) > 0 ? formatMoney(r.deposit) : '-',
+    tglLunas: toDisplayDMyShort(r.tgl_lunas) || '-',
+    tglKirim: toDisplayDMyShort(r.tgl_kirim) || '-',
+    persen: `${Number(r.persen || 0)}%`,
+    poClose: r.po_close || 'Not Yet',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '-',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
+  };
+}
+
 export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [poList, setPoList] = useState<PurchaseOrderItem[]>([
-    {
-      id: '1',
-      noBukti: '2608-PO-IMP-001',
-      tanggal: '06-Aug-2026',
-      namaSupplier: 'DEPO TEKNIK',
-      keterangan: 'Pembelian alat teknik & perkakas',
-      nilaiPo: '1,942,500.',
-      deposit: '-',
-      tglLunas: '-',
-      tglKirim: '06-Aug-2026',
-      persen: '0%',
-      poClose: 'Not Yet',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-    {
-      id: '2',
-      noBukti: '2608-PO-IMP-002',
-      tanggal: '06-Aug-2026',
-      namaSupplier: 'ELECTROMATIC EQUIPMENT CO.,',
-      keterangan: 'Electrical components order',
-      nilaiPo: '569.5',
-      deposit: '-',
-      tglLunas: '-',
-      tglKirim: '06-Aug-2026',
-      persen: '0%',
-      poClose: 'Not Yet',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [poList, setPoList] = useState<PurchaseOrderItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Supplier');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('06-Aug-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
-  const [newNoBukti, setNewNoBukti] = useState<string>('2608-PO-IMP-003');
-  const [newTanggal, setNewTanggal] = useState<string>('06-Aug-2026');
-  const [newSupplier, setNewSupplier] = useState<string>('DEPO TEKNIK');
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newSupplier, setNewSupplier] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
-  const [newNilaiPo, setNewNilaiPo] = useState<string>('1,500,000');
+  const [newNilaiPo, setNewNilaiPo] = useState<string>('0');
+  const [newDeposit, setNewDeposit] = useState<string>('0');
+  const [newTglKirim, setNewTglKirim] = useState<string>('');
+  const [newPoClose, setNewPoClose] = useState<string>('Not Yet');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false });
+      const mapped = rows.map(mapDbToPo);
+      setPoList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-PO-IMP-0${poList.length + 1}`);
-    setNewTanggal('06-Aug-2026');
-    setNewSupplier('DEPO TEKNIK');
+    setNewNoBukti(`2608-PO-IMP-${String(poList.length + 1).padStart(3, '0')}`);
+    const todayDisplay = toDisplayDMyShort(todayIso());
+    setNewTanggal(todayDisplay);
+    setNewSupplier('');
     setNewKeterangan('');
-    setNewNilaiPo('1,500,000');
+    setNewNilaiPo('0');
+    setNewDeposit('0');
+    setNewTglKirim(todayDisplay);
+    setNewPoClose('Not Yet');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = poList.find((p) => p.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewSupplier(item.namaSupplier);
     setNewKeterangan(item.keterangan);
-    setNewNilaiPo(item.nilaiPo);
+    setNewNilaiPo(String(item.nilaiPoNum));
+    setNewDeposit(String(parseNum(item.deposit)));
+    setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
+    setNewPoClose(item.poClose);
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setPoList(
-        poList.map((p) =>
-          p.id === editingId
-            ? {
-                ...p,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal,
-                namaSupplier: newSupplier.trim().toUpperCase(),
-                keterangan: newKeterangan.trim(),
-                nilaiPo: newNilaiPo.trim(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: new Date().toLocaleDateString('id-ID'),
-              }
-            : p
-        )
-      );
-      showFeedback('Purchase Order diperbarui');
-    } else {
-      const newItem: PurchaseOrderItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal,
-        namaSupplier: newSupplier.trim().toUpperCase(),
+    try {
+      setIsBusy(true);
+      const payload = {
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: toIsoDate(newTanggal) || todayIso(),
+        nama_supplier: newSupplier.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
-        nilaiPo: newNilaiPo.trim(),
-        deposit: '-',
-        tglLunas: '-',
-        tglKirim: newTanggal,
-        persen: '0%',
-        poClose: 'Not Yet',
-        dibuatOleh: 'RETNO',
-        tglCreated: '06-Aug-2026',
-        diupdateOleh: '-',
-        tglUpdate: '-',
+        nilai_po: parseNum(newNilaiPo),
+        deposit: parseNum(newDeposit),
+        tgl_kirim: toIsoDate(newTglKirim),
+        po_close: newPoClose,
       };
 
-      setPoList([newItem, ...poList]);
-      setSelectedId(newItem.id);
-      showFeedback('Purchase Order tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('purchase_orders', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToPo(saved);
+        setPoList(poList.map((p) => (p.id === editingId ? mapped : p)));
+        showFeedback('Purchase Order diperbarui');
+      } else {
+        const saved = await erpCreate<any>('purchase_orders', {
+          ...payload,
+          persen: 0,
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+          diupdate_oleh: '-',
+        });
+        const mapped = mapDbToPo(saved);
+        setPoList([mapped, ...poList]);
+        setSelectedId(mapped.id);
+        showFeedback('Purchase Order tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = poList.filter((item) => item.id !== id);
-    setPoList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('purchase_orders', id);
+      const updated = poList.filter((item) => item.id !== id);
+      setPoList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Purchase Order dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Purchase Order dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredPoList = poList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Supplier') {
-      return item.namaSupplier.toLowerCase().includes(term);
-    } else if (searchField === 'Keterangan') {
-      return item.keterangan.toLowerCase().includes(term);
-    }
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaSupplier.toLowerCase().includes(term) ||
@@ -186,36 +232,69 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     );
   });
 
+  const totalNilaiPo = filteredPoList.reduce((acc, r) => acc + r.nilaiPoNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Purchase_Order',
+      sheetTitle: 'LIST PURCHASE ORDER',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Supplier', accessor: 'namaSupplier' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'Nilai PO', accessor: 'nilaiPoNum', align: 'right' },
+        { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center' },
+        { header: 'PO.Close', accessor: 'poClose', align: 'center' },
+        { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
+      ],
+      rows: filteredPoList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-purchase-order-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="List Purchase Order"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={() => showFeedback('Data Purchase Order tersimpan')}
+              onSimpan={loadData}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
               onHapus={() => selectedId && handleDelete(selectedId)}
+              onPrint={() => setIsPrintOpen(true)}
+              onFind={handleFind}
+              isBusy={isBusy}
               feedback={feedback}
             />
             <div className="flex items-center space-x-1">
               <span className="text-gray-800 font-medium">Tanggal :</span>
-              <input
-                type="text"
-                value={tanggalFilter}
-                onChange={(e) => setTanggalFilter(e.target.value)}
-                className="w-24 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
+              <DatePickerInput
+                value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+                onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+                format="dMyShort"
+                placeholder="Semua"
               />
               <button
                 type="button"
@@ -227,12 +306,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
             </div>
           </div>
 
-          <div className="font-bold text-sm text-gray-900 pr-2">
-            Rp 1,943,069.5
-          </div>
+          <div className="font-bold text-sm text-gray-900 pr-2">{formatRupiah(totalNilaiPo)}</div>
         </div>
 
-        {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
         <div className="flex-1 overflow-auto bg-white border border-[#999999] m-1.5 relative shadow-inner">
           <table className="w-full border-collapse text-left min-w-[1400px]">
             <thead className="sticky top-0 bg-[#F0F0F0] text-gray-800 font-semibold border-b border-[#C0C0C0] z-10">
@@ -269,6 +345,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
                       className={`cursor-pointer border-b border-[#E0E0E0] ${
                         isSelected
                           ? 'bg-[#316AC5] text-white'
@@ -299,7 +376,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                             e.stopPropagation();
                             handleDelete(item.id);
                           }}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
                             isSelected
                               ? 'bg-red-700 text-white hover:bg-red-800'
                               : 'bg-red-100 text-red-700 hover:bg-red-200'
@@ -316,7 +393,6 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           </table>
         </div>
 
-        {/* 4. Footer & Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-gray-800">Search :</span>
@@ -330,6 +406,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
               <option value="Keterangan">Keterangan</option>
             </select>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -339,15 +416,16 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           </div>
 
           <div className="flex items-center space-x-4">
-            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs" />
+            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
+              {poList.find((r) => r.id === selectedId)?.namaSupplier || ''}
+            </div>
             <div className="text-gray-800 font-medium">Record : {filteredPoList.length}</div>
           </div>
         </div>
 
-        {/* Add New Modal Dialog */}
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[440px] overflow-hidden">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[460px] overflow-hidden">
               <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
                 <span>{editingId ? 'Koreksi Purchase Order' : 'Tambah Purchase Order Baru'}</span>
                 <button
@@ -358,7 +436,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-3">
+              <form onSubmit={handleSaveNew} className="p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">No.Bukti:</label>
                   <input
@@ -366,18 +444,18 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     value={newNoBukti}
                     onChange={(e) => setNewNoBukti(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Tanggal:</label>
-                  <input
-                    type="text"
-                    value={newTanggal}
-                    onChange={(e) => setNewTanggal(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                  />
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTanggal}
+                      onChange={(formatted) => setNewTanggal(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Nama Supplier:</label>
@@ -386,7 +464,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     value={newSupplier}
                     onChange={(e) => setNewSupplier(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -399,14 +477,35 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Nilai PO:</label>
+                  <label className="text-xs font-semibold text-gray-700">Nilai PO (Rp):</label>
                   <input
-                    type="text"
+                    type="number"
                     value={newNilaiPo}
                     onChange={(e) => setNewNilaiPo(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-right"
                   />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Tgl.Kirim:</label>
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTglKirim}
+                      onChange={(formatted) => setNewTglKirim(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Status PO:</label>
+                  <select
+                    value={newPoClose}
+                    onChange={(e) => setNewPoClose(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Closed">Closed</option>
+                  </select>
                 </div>
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#D0D0D0]">
                   <button
@@ -418,6 +517,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   </button>
                   <button
                     type="submit"
+                    disabled={isBusy}
                     className="px-3 py-1 bg-[#0055EA] text-white border border-blue-800 rounded text-xs hover:bg-blue-700 cursor-pointer"
                   >
                     Simpan
@@ -428,6 +528,27 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           </div>
         )}
 
+        <A4PrintPreviewModal
+          isOpen={isPrintOpen}
+          onClose={() => setIsPrintOpen(false)}
+          title="LAPORAN LIST PURCHASE ORDER"
+          subtitle={`Filter Tanggal: ${tanggalFilter}`}
+          orientation="landscape"
+          columns={[
+            { header: 'No.Bukti', accessor: 'noBukti', width: '115px' },
+            { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '85px' },
+            { header: 'Nama Supplier', accessor: 'namaSupplier' },
+            { header: 'Keterangan', accessor: 'keterangan' },
+            { header: 'Nilai PO', accessor: 'nilaiPo', align: 'right', width: '100px' },
+            { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '85px' },
+            { header: 'PO.Close', accessor: 'poClose', align: 'center', width: '70px' },
+          ]}
+          rows={filteredPoList}
+          summaryItems={[
+            { label: 'Total Record', value: `${filteredPoList.length} Dokumen` },
+            { label: 'Total Nilai PO', value: formatRupiah(totalNilaiPo) },
+          ]}
+        />
       </div>
     </div>
   );

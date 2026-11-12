@@ -5,6 +5,8 @@ interface FormHeaderBannerProps {
   onClose: () => void;
   onTableView?: () => void;
   onExportExcel?: () => void;
+  onPrint?: () => void;
+  onFind?: () => void;
   extraTools?: React.ReactNode;
   id?: string;
 }
@@ -14,6 +16,8 @@ export const FormHeaderBanner: React.FC<FormHeaderBannerProps> = ({
   onClose,
   onTableView,
   onExportExcel,
+  onPrint,
+  onFind,
   extraTools,
   id,
 }) => {
@@ -29,10 +33,44 @@ export const FormHeaderBanner: React.FC<FormHeaderBannerProps> = ({
       <div className="flex items-center space-x-1.5 shrink-0">
         {extraTools}
 
+        {/* FIND / Search Focus Icon Button */}
+        {onFind && (
+          <button
+            type="button"
+            title="Find / Cari Data"
+            onClick={onFind}
+            className="h-[22px] px-1.5 bg-[#2B579A] border border-white/80 rounded-[1px] flex items-center space-x-1 hover:brightness-110 cursor-pointer text-[10px] font-bold text-white"
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+              <circle cx="6.5" cy="6.5" r="4.5" stroke="#FFFFFF" strokeWidth="1.8" />
+              <path d="M10 10L14 14" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <span>FIND</span>
+          </button>
+        )}
+
+        {/* Print / Preview A4 Icon Button */}
+        {onPrint && (
+          <button
+            type="button"
+            title="Print / Preview A4"
+            onClick={onPrint}
+            className="w-[24px] h-[22px] bg-[#3B4A6B] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="4" y="1.5" width="8" height="4" fill="#FFFFFF" stroke="#111" strokeWidth="0.8" />
+              <rect x="1.5" y="5" width="13" height="6" rx="1" fill="#D1D5DB" stroke="#111" strokeWidth="0.8" />
+              <rect x="4" y="8.5" width="8" height="6" fill="#FFFFFF" stroke="#111" strokeWidth="0.8" />
+              <line x1="5.5" y1="10.5" x2="10.5" y2="10.5" stroke="#111" strokeWidth="0.9" />
+              <line x1="5.5" y1="12.5" x2="9.5" y2="12.5" stroke="#111" strokeWidth="0.9" />
+            </svg>
+          </button>
+        )}
+
         {/* Table View Icon Button */}
         <button
           type="button"
-          title="Tampilan Tabel"
+          title="Refresh / Tampilan Tabel"
           onClick={onTableView}
           className="w-[24px] h-[22px] bg-[#1F4E79] border border-white/80 rounded-[1px] flex items-center justify-center p-[2px] hover:brightness-110 cursor-pointer"
         >
@@ -46,7 +84,7 @@ export const FormHeaderBanner: React.FC<FormHeaderBannerProps> = ({
         {/* Excel Export Icon Button */}
         <button
           type="button"
-          title="Export Excel"
+          title="Export to Excel"
           onClick={onExportExcel}
           className="w-[24px] h-[22px] bg-[#1E7145] border border-white/80 rounded-[1px] flex items-center justify-center hover:brightness-110 cursor-pointer"
         >

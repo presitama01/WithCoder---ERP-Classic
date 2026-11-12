@@ -1,6 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface SupplierItem {
   id: string;
@@ -18,49 +28,30 @@ interface MasterSupplierListFormProps {
   onClose: () => void;
 }
 
+function mapDbToItem(r: any): SupplierItem {
+  return {
+    id: r.id,
+    kodeSupplier: r.kode_supplier || '',
+    namaSupplier: r.nama_supplier || '',
+    hutang: Number(r.hutang || 0),
+    hutangGiro: Number(r.hutang_giro || 0),
+    alamat: r.alamat || '',
+    kota: r.kota || '',
+    telepon: r.telepon || '',
+  };
+}
+
 export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [supplierList, setSupplierList] = useState<SupplierItem[]>([
-    {
-      id: '1',
-      kodeSupplier: 'SUP01',
-      namaSupplier: 'PT. GLOBAL JAYA ABADI',
-      hutang: 25000000,
-      hutangGiro: 10000000,
-      alamat: 'Jl. Industri Raya Blok C No. 8',
-      kota: 'JAKARTA UTARA',
-      telepon: '021-6543210',
-    },
-    {
-      id: '2',
-      kodeSupplier: 'SUP02',
-      namaSupplier: 'CV. MAKMUR SEJAHTERA',
-      hutang: 12000000,
-      hutangGiro: 0,
-      alamat: 'Jl. Hayam Wuruk No. 15',
-      kota: 'JAKARTA PUSAT',
-      telepon: '021-3456789',
-    },
-    {
-      id: '3',
-      kodeSupplier: 'SUP03',
-      namaSupplier: 'PT. NUSANTARA DISTRIBUSI',
-      hutang: 45000000,
-      hutangGiro: 15000000,
-      alamat: 'Jl. Rungkut Industri No. 22',
-      kota: 'SURABAYA',
-      telepon: '031-8765432',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [supplierList, setSupplierList] = useState<SupplierItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Supplier');
 
-  // Modal Add New
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [newHutang, setNewHutang] = useState('0');
@@ -69,15 +60,37 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   const [newKota, setNewKota] = useState('');
   const [newTelepon, setNewTelepon] = useState('');
 
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('master_suppliers', { orderBy: 'kode_supplier', asc: true });
+      const mapped = rows.map(mapDbToItem);
+      setSupplierList(mapped);
+      if (mapped.length > 0 && !mapped.some((s) => s.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
@@ -93,7 +106,10 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
 
   const handleEdit = () => {
     const item = supplierList.find((s) => s.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewKode(item.kodeSupplier);
     setNewNama(item.namaSupplier);
@@ -105,50 +121,90 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
     setIsAddOpen(true);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedId) return;
-    const updated = supplierList.filter((s) => s.id !== selectedId);
-    setSupplierList(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data dihapus');
+    try {
+      setIsBusy(true);
+      await erpDelete('master_suppliers', selectedId);
+      const updated = supplierList.filter((s) => s.id !== selectedId);
+      setSupplierList(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const payload: SupplierItem = {
-      id: editingId || Date.now().toString(),
-      kodeSupplier: newKode.trim().toUpperCase(),
-      namaSupplier: newNama.trim().toUpperCase(),
-      hutang: parseFloat(newHutang) || 0,
-      hutangGiro: parseFloat(newHutangGiro) || 0,
-      alamat: newAlamat.trim(),
-      kota: newKota.trim().toUpperCase(),
-      telepon: newTelepon.trim(),
-    };
-    if (editingId) {
-      setSupplierList(supplierList.map((s) => (s.id === editingId ? payload : s)));
-      showFeedback('Data diperbarui');
-    } else {
-      setSupplierList([payload, ...supplierList]);
-      setSelectedId(payload.id);
-      showFeedback('Data tersimpan');
+    try {
+      setIsBusy(true);
+      const dbPayload = {
+        kode_supplier: newKode.trim().toUpperCase(),
+        nama_supplier: newNama.trim().toUpperCase(),
+        hutang: parseFloat(newHutang) || 0,
+        hutang_giro: parseFloat(newHutangGiro) || 0,
+        alamat: newAlamat.trim(),
+        kota: newKota.trim().toUpperCase(),
+        telepon: newTelepon.trim(),
+      };
+      if (editingId) {
+        const saved = await erpUpdate<any>('master_suppliers', editingId, dbPayload);
+        const mapped = mapDbToItem(saved);
+        setSupplierList(supplierList.map((s) => (s.id === editingId ? mapped : s)));
+        showFeedback('Data diperbarui');
+      } else {
+        const saved = await erpCreate<any>('master_suppliers', dbPayload);
+        const mapped = mapDbToItem(saved);
+        setSupplierList([mapped, ...supplierList]);
+        setSelectedId(mapped.id);
+        showFeedback('Data tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
   const filteredSupplier = supplierList.filter((item) => {
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'Kode') {
-      return item.kodeSupplier.toLowerCase().includes(term);
-    } else if (searchField === 'Kota') {
-      return item.kota.toLowerCase().includes(term);
-    }
+    if (searchField === 'Kode') return item.kodeSupplier.toLowerCase().includes(term);
+    if (searchField === 'Kota') return item.kota.toLowerCase().includes(term);
     return item.namaSupplier.toLowerCase().includes(term);
   });
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'Master_Supplier',
+      sheetTitle: 'LIST MASTER SUPPLIER',
+      companyProfile: company,
+      columns: [
+        { header: 'Kode', accessor: 'kodeSupplier' },
+        { header: 'Nama Supplier', accessor: 'namaSupplier' },
+        { header: 'Hutang', accessor: 'hutang', align: 'right' },
+        { header: 'Hutang Giro', accessor: 'hutangGiro', align: 'right' },
+        { header: 'Alamat', accessor: 'alamat' },
+        { header: 'Kota', accessor: 'kota' },
+        { header: 'Telepon', accessor: 'telepon' },
+      ],
+      rows: filteredSupplier,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
 
   return (
     <div
@@ -156,26 +212,30 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="List Master Supplier"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Toolbar / Action Ribbon */}
         <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Master Supplier tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
           <div className="h-[22px] w-[1px] bg-[#ACA899] mx-1" />
           <button
             type="button"
-            onClick={() => showFeedback('Data direfresh')}
+            onClick={loadData}
             className="h-[28px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] cursor-pointer text-[11px] font-semibold text-black"
           >
             Refresh
@@ -193,6 +253,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
               <option value="Kota">Kota</option>
             </select>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -202,13 +263,12 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
           </div>
         </div>
 
-        {/* 3. Data Table Grid */}
         <div className="flex-1 overflow-auto bg-white m-2 border border-[#ACA899] shadow-inner">
           <div className="min-w-max">
             <table className="w-full text-left text-[11px] border-collapse select-none">
               <thead className="sticky top-0 bg-[#ECE9D8] text-black font-semibold border-b border-[#ACA899]">
                 <tr className="h-[24px]">
-                  <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0"></th>
+                  <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0" />
                   <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
                   <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Supplier</th>
                   <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang</th>
@@ -225,22 +285,21 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
-                      className="h-[22px] border-b border-[#ACA899] bg-white cursor-pointer hover:bg-[#E8EEF8]"
+                      onDoubleClick={handleEdit}
+                      className={`h-[22px] border-b border-[#ACA899] cursor-pointer ${
+                        isSelected ? 'bg-[#0A246A] text-white' : 'bg-white hover:bg-[#E8EEF8]'
+                      }`}
                     >
                       <td className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
                         {isSelected ? <span className="text-[10px] font-bold text-black">▶</span> : null}
                       </td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold text-black">{item.kodeSupplier}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-black font-semibold">{item.namaSupplier}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right text-black font-mono">
-                        {item.hutang.toLocaleString('id-ID')}
-                      </td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right text-black font-mono">
-                        {item.hutangGiro.toLocaleString('id-ID')}
-                      </td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.alamat}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.kota}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.telepon}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold">{item.kodeSupplier}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] font-semibold">{item.namaSupplier}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{item.hutang.toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{item.hutangGiro.toLocaleString('id-ID')}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.alamat}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.kota}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon}</td>
                     </tr>
                   );
                 })}
@@ -250,7 +309,6 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
         </div>
       </div>
 
-      {/* Add New Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
@@ -279,7 +337,6 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                     value={newNama}
                     onChange={(e) => setNewNama(e.target.value)}
                     className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                    placeholder="PT. GLOBAL JAYA"
                   />
                 </div>
               </div>
@@ -339,14 +396,15 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
               <div className="flex justify-end space-x-2 pt-2">
                 <button
                   type="submit"
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold active:border-t-[#707070] active:border-b-white cursor-pointer"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold cursor-pointer"
                 >
                   Simpan
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-b-white cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
                 >
                   Batal
                 </button>
@@ -355,6 +413,34 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
           </div>
         </div>
       )}
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN MASTER SUPPLIER"
+        subtitle={`Total Record: ${filteredSupplier.length}`}
+        orientation="landscape"
+        columns={[
+          { header: 'Kode', accessor: 'kodeSupplier', width: '75px' },
+          { header: 'Nama Supplier', accessor: 'namaSupplier' },
+          { header: 'Hutang', accessor: (r) => formatMoney(r.hutang), align: 'right', width: '110px' },
+          { header: 'Hutang Giro', accessor: (r) => formatMoney(r.hutangGiro), align: 'right', width: '110px' },
+          { header: 'Alamat', accessor: 'alamat' },
+          { header: 'Kota', accessor: 'kota', width: '100px' },
+          { header: 'Telepon', accessor: 'telepon', width: '100px' },
+        ]}
+        rows={filteredSupplier}
+        summaryItems={[
+          {
+            label: 'Total Hutang',
+            value: formatMoney(filteredSupplier.reduce((a, b) => a + b.hutang, 0)),
+          },
+          {
+            label: 'Total Hutang Giro',
+            value: formatMoney(filteredSupplier.reduce((a, b) => a + b.hutangGiro, 0)),
+          },
+        ]}
+      />
     </div>
   );
 };

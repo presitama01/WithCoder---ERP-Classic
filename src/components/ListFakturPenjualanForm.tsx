@@ -1,11 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface FakturPenjualanItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaCustomer: string;
   noSo: string;
   poNo: string;
@@ -16,6 +33,7 @@ export interface FakturPenjualanItem {
   keterangan: string;
   ppn: string;
   nilaiPenjualan: string;
+  nilaiPenjualanNum: number;
   stsLunas: string;
   tglLunas: string;
   stsPrint: string;
@@ -33,212 +51,122 @@ interface ListFakturPenjualanFormProps {
   onClose: () => void;
 }
 
+function mapDbToFaktur(r: any): FakturPenjualanItem {
+  const nilaiNum = Number(r.nilai_penjualan || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaCustomer: r.nama_customer || '',
+    noSo: r.no_so || '',
+    poNo: r.po_no || '',
+    noSj: r.no_sj || '',
+    noFakturPajak: r.no_faktur_pajak || '',
+    sales: r.sales || '',
+    jthTmp: toDisplayDMyShort(r.jth_tmp),
+    keterangan: r.keterangan || '',
+    ppn: `${Number(r.ppn ?? 11)}.`,
+    nilaiPenjualan: formatMoney(nilaiNum, true),
+    nilaiPenjualanNum: nilaiNum,
+    stsLunas: r.sts_lunas || 'Not Yet',
+    tglLunas: toDisplayDMyShort(r.tgl_lunas) || '',
+    stsPrint: r.sts_print || 'Not Yet',
+    tglPrint: toDisplayDMyShort(r.tgl_print) || '',
+    stsPost: r.sts_post || 'Not Yet',
+    tglPost: toDisplayDMyShort(r.tgl_post) || '',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '',
+  };
+}
+
 export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [fakturList, setFakturList] = useState<FakturPenjualanItem[]>([
-    {
-      id: '1',
-      noBukti: 'INJ-1808-0124',
-      tanggal: '08-Aug-2018',
-      namaCustomer: 'PT.Panca Mulia Sejahtera',
-      noSo: '1808-SO-INJ-001',
-      poNo: '03/PMS-PO/VIII/18',
-      noSj: '003',
-      noFakturPajak: '010.002.18-36287017',
-      sales: '05',
-      jthTmp: '08-Aug-2018',
-      keterangan: '',
-      ppn: '10.',
-      nilaiPenjualan: '1,650,000.',
-      stsLunas: 'Not Yet',
-      tglLunas: '',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Not Yet',
-      tglPost: '',
-      dibuatOleh: 'RETNO',
-      tglCreated: '08-Aug-2018',
-      diupdateOleh: '',
-      tglUpdate: '',
-    },
-    {
-      id: '2',
-      noBukti: 'INJ-1808-0125',
-      tanggal: '09-Aug-2018',
-      namaCustomer: 'PT. NANDYA KARYA PERKASA',
-      noSo: '1807-SO-INJ-003',
-      poNo: '500201802481',
-      noSj: '002',
-      noFakturPajak: '010.005.18-20780410',
-      sales: '01',
-      jthTmp: '09-Aug-2018',
-      keterangan: '',
-      ppn: '10.',
-      nilaiPenjualan: '3,542,550.',
-      stsLunas: 'Not Yet',
-      tglLunas: '',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Not Yet',
-      tglPost: '',
-      dibuatOleh: 'RETNO',
-      tglCreated: '13-Aug-2018',
-      diupdateOleh: 'RETNO',
-      tglUpdate: '13-Aug-2018',
-    },
-    {
-      id: '3',
-      noBukti: 'INJ-1808-0126',
-      tanggal: '09-Aug-2018',
-      namaCustomer: 'PT. NANDYA KARYA PERKASA',
-      noSo: '1807-SO-INJ-002',
-      poNo: '500201802486',
-      noSj: '001',
-      noFakturPajak: '010.005.18-20780410',
-      sales: '01',
-      jthTmp: '09-Aug-2018',
-      keterangan: '',
-      ppn: '10.',
-      nilaiPenjualan: '8,056,950.',
-      stsLunas: 'Not Yet',
-      tglLunas: '',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Not Yet',
-      tglPost: '',
-      dibuatOleh: 'RETNO',
-      tglCreated: '13-Aug-2018',
-      diupdateOleh: '',
-      tglUpdate: '',
-    },
-    {
-      id: '4',
-      noBukti: 'INJ-1808-0127',
-      tanggal: '14-Aug-2018',
-      namaCustomer: 'PT. FEDERAL NITTAN',
-      noSo: '1805-SO-INJ-003',
-      poNo: 'UMU2018040001',
-      noSj: '004',
-      noFakturPajak: '010.005.18-20780419',
-      sales: '05',
-      jthTmp: '13-Sep-2018',
-      keterangan: '',
-      ppn: '10.',
-      nilaiPenjualan: '15,400,000.',
-      stsLunas: 'Not Yet',
-      tglLunas: '',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Not Yet',
-      tglPost: '',
-      dibuatOleh: 'RETNO',
-      tglCreated: '13-Aug-2018',
-      diupdateOleh: 'RETNO',
-      tglUpdate: '27-Aug-2018',
-    },
-    {
-      id: '5',
-      noBukti: 'INJ-1808-0137',
-      tanggal: '28-Aug-2018',
-      namaCustomer: 'PT. BANGUNPERKASA',
-      noSo: '1808-SO-INJ-003',
-      poNo: 'KI1808-04813',
-      noSj: '005',
-      noFakturPajak: '010.005.18-20780416',
-      sales: '05',
-      jthTmp: '11-Sep-2018',
-      keterangan: '',
-      ppn: '10.',
-      nilaiPenjualan: '5,390,000.',
-      stsLunas: 'Not Yet',
-      tglLunas: '',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Not Yet',
-      tglPost: '',
-      dibuatOleh: 'RETNO',
-      tglCreated: '27-Aug-2018',
-      diupdateOleh: '',
-      tglUpdate: '',
-    },
-    {
-      id: '6',
-      noBukti: 'INJ-1811-0185',
-      tanggal: '15-Nov-2018',
-      namaCustomer: 'PT. NANDYA KARYA PERKASA',
-      noSo: '1810-SO-INJ-001',
-      poNo: '500201803616',
-      noSj: '001',
-      noFakturPajak: '010.005.18-20780473',
-      sales: '031',
-      jthTmp: '15-Dec-2018',
-      keterangan: '',
-      ppn: '10.',
-      nilaiPenjualan: '4,827,900.',
-      stsLunas: 'Not Yet',
-      tglLunas: '',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Not Yet',
-      tglPost: '',
-      dibuatOleh: 'RETNO',
-      tglCreated: '15-Nov-2018',
-      diupdateOleh: '',
-      tglUpdate: '',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [fakturList, setFakturList] = useState<FakturPenjualanItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [newNoBukti, setNewNoBukti] = useState<string>('INJ-1811-0186');
-  const [newTanggal, setNewTanggal] = useState<string>('15-Nov-2018');
-  const [newCustomer, setNewCustomer] = useState<string>('PT. NANDYA KARYA PERKASA');
-  const [newNoSo, setNewNoSo] = useState<string>('1811-SO-INJ-002');
-  const [newPoNo, setNewPoNo] = useState<string>('500201803620');
-  const [newNoSj, setNewNoSj] = useState<string>('006');
-  const [newNoFakturPajak, setNewNoFakturPajak] = useState<string>('010.005.18-20780480');
-  const [newSales, setNewSales] = useState<string>('05');
-  const [newJthTmp, setNewJthTmp] = useState<string>('15-Dec-2018');
-  const [newKeterangan, setNewKeterangan] = useState<string>('');
-  const [newPpn, setNewPpn] = useState<string>('10.');
-  const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('2,500,000.');
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newCustomer, setNewCustomer] = useState<string>('');
+  const [newNoSo, setNewNoSo] = useState<string>('');
+  const [newPoNo, setNewPoNo] = useState<string>('');
+  const [newNoSj, setNewNoSj] = useState<string>('');
+  const [newNoFakturPajak, setNewNoFakturPajak] = useState<string>('');
+  const [newSales, setNewSales] = useState<string>('05');
+  const [newJthTmp, setNewJthTmp] = useState<string>('');
+  const [newKeterangan, setNewKeterangan] = useState<string>('');
+  const [newPpn, setNewPpn] = useState<string>('11');
+  const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('0');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('faktur_penjualans', {
+        eq: { jenis_faktur: 'REGULAR' },
+        orderBy: 'tanggal',
+        asc: false,
+      });
+      const mapped = rows.map(mapDbToFaktur);
+      setFakturList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`INJ-1811-018${fakturList.length + 1}`);
-    setNewTanggal('15-Nov-2018');
-    setNewCustomer('PT. NANDYA KARYA PERKASA');
-    setNewNoSo('1811-SO-INJ-002');
-    setNewPoNo('500201803620');
-    setNewNoSj(`00${fakturList.length + 1}`);
-    setNewNoFakturPajak(`010.005.18-2078048${fakturList.length + 1}`);
+    const todayDisp = toDisplayDMyShort(todayIso());
+    setNewNoBukti(`INJ-2608-${String(fakturList.length + 1).padStart(4, '0')}`);
+    setNewTanggal(todayDisp);
+    setNewCustomer('');
+    setNewNoSo('');
+    setNewPoNo('');
+    setNewNoSj('');
+    setNewNoFakturPajak('');
     setNewSales('05');
-    setNewJthTmp('15-Dec-2018');
+    setNewJthTmp(todayDisp);
     setNewKeterangan('');
-    setNewPpn('10.');
-    setNewNilaiPenjualan('2,500,000.');
+    setNewPpn('11');
+    setNewNilaiPenjualan('0');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = fakturList.find((f) => f.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris data terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
@@ -250,100 +178,94 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     setNewSales(item.sales);
     setNewJthTmp(item.jthTmp);
     setNewKeterangan(item.keterangan);
-    setNewPpn(item.ppn);
-    setNewNilaiPenjualan(item.nilaiPenjualan);
+    setNewPpn(String(parseNum(item.ppn)));
+    setNewNilaiPenjualan(String(item.nilaiPenjualanNum));
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setFakturList(
-        fakturList.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal,
-                namaCustomer: newCustomer.trim().toUpperCase(),
-                noSo: newNoSo.trim().toUpperCase(),
-                poNo: newPoNo.trim(),
-                noSj: newNoSj.trim(),
-                noFakturPajak: newNoFakturPajak.trim(),
-                sales: newSales.trim(),
-                jthTmp: newJthTmp.trim(),
-                keterangan: newKeterangan.trim(),
-                ppn: newPpn.trim(),
-                nilaiPenjualan: newNilaiPenjualan.trim(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: newTanggal,
-              }
-            : item
-        )
-      );
-      showFeedback('Faktur Penjualan diperbarui');
-    } else {
-      const newItem: FakturPenjualanItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal,
-        namaCustomer: newCustomer.trim().toUpperCase(),
-        noSo: newNoSo.trim().toUpperCase(),
-        poNo: newPoNo.trim(),
-        noSj: newNoSj.trim(),
-        noFakturPajak: newNoFakturPajak.trim(),
-        sales: newSales.trim(),
-        jthTmp: newJthTmp.trim(),
+    try {
+      setIsBusy(true);
+      const payload = {
+        jenis_faktur: 'REGULAR',
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: toIsoDate(newTanggal) || todayIso(),
+        nama_customer: newCustomer.trim().toUpperCase(),
+        no_so: newNoSo.trim().toUpperCase(),
+        po_no: newPoNo.trim().toUpperCase(),
+        no_sj: newNoSj.trim().toUpperCase(),
+        no_faktur_pajak: newNoFakturPajak.trim(),
+        sales: newSales.trim().toUpperCase(),
+        jth_tmp: toIsoDate(newJthTmp) || toIsoDate(newTanggal) || todayIso(),
         keterangan: newKeterangan.trim(),
-        ppn: newPpn.trim(),
-        nilaiPenjualan: newNilaiPenjualan.trim(),
-        stsLunas: 'Not Yet',
-        tglLunas: '',
-        stsPrint: 'Not Yet',
-        tglPrint: '',
-        stsPost: 'Not Yet',
-        tglPost: '',
-        dibuatOleh: 'RETNO',
-        tglCreated: newTanggal,
-        diupdateOleh: '',
-        tglUpdate: '',
+        ppn: parseNum(newPpn),
+        nilai_penjualan: parseNum(newNilaiPenjualan),
       };
 
-      setFakturList([newItem, ...fakturList]);
-      setSelectedId(newItem.id);
-      showFeedback('Faktur Penjualan tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('faktur_penjualans', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToFaktur(saved);
+        setFakturList(fakturList.map((item) => (item.id === editingId ? mapped : item)));
+        showFeedback('Faktur Penjualan diperbarui');
+      } else {
+        const saved = await erpCreate<any>('faktur_penjualans', {
+          ...payload,
+          sts_lunas: 'Not Yet',
+          sts_print: 'Not Yet',
+          sts_post: 'Not Yet',
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+        });
+        const mapped = mapDbToFaktur(saved);
+        setFakturList([mapped, ...fakturList]);
+        setSelectedId(mapped.id);
+        showFeedback('Faktur Penjualan tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = fakturList.filter((item) => item.id !== id);
-    setFakturList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('faktur_penjualans', id);
+      const updated = fakturList.filter((item) => item.id !== id);
+      setFakturList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Faktur Penjualan dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Faktur Penjualan dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = fakturList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'Nama Pelanggan') {
-      return item.namaCustomer.toLowerCase().includes(term);
-    } else if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'No.SO') {
-      return item.noSo.toLowerCase().includes(term);
-    } else if (searchField === 'PO.No') {
-      return item.poNo.toLowerCase().includes(term);
-    } else if (searchField === 'No.SJ') {
-      return item.noSj.toLowerCase().includes(term);
-    } else if (searchField === 'No.Faktur Pajak') {
-      return item.noFakturPajak.toLowerCase().includes(term);
-    }
+    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'No.SO') return item.noSo.toLowerCase().includes(term);
+    if (searchField === 'PO.No') return item.poNo.toLowerCase().includes(term);
+    if (searchField === 'No.SJ') return item.noSj.toLowerCase().includes(term);
+    if (searchField === 'No.Faktur Pajak') return item.noFakturPajak.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaCustomer.toLowerCase().includes(term) ||
@@ -351,26 +273,62 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     );
   });
 
+  const totalNilai = filteredList.reduce((acc, f) => acc + f.nilaiPenjualanNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Faktur_Penjualan',
+      sheetTitle: 'LIST FAKTUR PENJUALAN',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Customer', accessor: 'namaCustomer' },
+        { header: 'No.SO', accessor: 'noSo' },
+        { header: 'PO.No', accessor: 'poNo' },
+        { header: 'No.SJ', accessor: 'noSj' },
+        { header: 'No.Faktur Pajak', accessor: 'noFakturPajak' },
+        { header: 'Sales', accessor: 'sales', align: 'center' },
+        { header: 'Jth.Tmp', accessor: 'jthTmp', align: 'center' },
+        { header: 'Nilai Penjualan', accessor: 'nilaiPenjualanNum', align: 'right' },
+        { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-faktur-penjualan-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
-      {/* 1. Black Window Header Banner */}
       <FormHeaderBanner
         title="List Faktur Penjualan"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action Toolbar & Filter Header */}
-      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
+      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm overflow-x-auto">
         <div className="flex items-center space-x-2">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Faktur Penjualan tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={() => selectedId && handleDelete(selectedId)}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
         </div>
@@ -378,29 +336,26 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-1">
             <span className="font-semibold">Tanggal :</span>
-            <input
-              type="text"
-              value={tanggalFilter}
-              onChange={(e) => setTanggalFilter(e.target.value)}
-              className="px-2 py-0.5 w-24 bg-white border border-[#7A7A7A] text-xs font-mono"
+            <DatePickerInput
+              value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+              onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+              format="dMyShort"
+              placeholder="Semua"
             />
-            <button className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]">
-              ▼
-            </button>
             <button
-              onClick={() => setTanggalFilter('')}
-              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]"
+              type="button"
+              onClick={() => setTanggalFilter('Semua')}
+              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8] cursor-pointer"
             >
               Semua
             </button>
           </div>
           <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[120px] shadow-inner">
-            Rp 12,276,600
+            {formatRupiah(totalNilai)}
           </div>
         </div>
       </div>
 
-      {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
       <div className="flex-1 overflow-auto bg-white border border-[#7A7A7A] m-2 relative">
         <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1900px]">
           <thead>
@@ -437,12 +392,14 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 <tr
                   key={item.id}
                   onClick={() => setSelectedId(item.id)}
+                  onDoubleClick={handleEdit}
                   className={`border-b border-[#00C000] cursor-pointer text-xs font-mono ${
-                    isSelected
-                      ? 'bg-[#00FF00] text-black font-semibold'
-                      : 'bg-[#00E000] text-black hover:bg-[#00FF00]'
+                    isSelected ? 'font-semibold' : ''
                   }`}
-                  style={{ backgroundColor: '#00E800', color: '#000' }}
+                  style={{
+                    backgroundColor: isSelected ? '#00FF00' : '#00E800',
+                    color: '#000',
+                  }}
                 >
                   <td className="border-r border-[#00B000] px-2 py-1 text-center font-bold">
                     {isSelected ? '▶' : ''}
@@ -483,7 +440,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         </table>
       </div>
 
-      {/* 4. Bottom Search Bar & Record Status */}
       <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
         <div className="flex items-center space-x-2">
           <span className="font-semibold">Search :</span>
@@ -500,6 +456,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             <option value="No.Faktur Pajak">No.Faktur Pajak</option>
           </select>
           <input
+            ref={searchInputRef}
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -508,22 +465,24 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
           />
         </div>
         <div className="flex items-center space-x-4">
-          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner"></div>
+          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
+            {fakturList.find((r) => r.id === selectedId)?.namaCustomer || ''}
+          </div>
           <div className="font-semibold px-2 py-0.5 bg-[#ECE9D8] border border-[#919191]">
-            Record 1018
+            Record {filteredList.length}
           </div>
         </div>
       </div>
 
-      {/* Add New Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[550px] flex flex-col overflow-hidden max-h-[90vh]">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
               <span>{editingId ? 'Koreksi Faktur Penjualan' : 'Tambah Faktur Penjualan Baru'}</span>
               <button
+                type="button"
                 onClick={() => setIsAddOpen(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
+                className="text-white hover:text-red-300 font-bold px-1.5 cursor-pointer"
               >
                 ✕
               </button>
@@ -535,18 +494,19 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   type="text"
                   value={newNoBukti}
                   onChange={(e) => setNewNoBukti(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Tanggal:</label>
-                <input
-                  type="text"
-                  value={newTanggal}
-                  onChange={(e) => setNewTanggal(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTanggal}
+                    onChange={(formatted) => setNewTanggal(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Nama Customer:</label>
@@ -554,7 +514,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   type="text"
                   value={newCustomer}
                   onChange={(e) => setNewCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
@@ -564,7 +524,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   type="text"
                   value={newNoSo}
                   onChange={(e) => setNewNoSo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -573,7 +533,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   type="text"
                   value={newPoNo}
                   onChange={(e) => setNewPoNo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -582,7 +542,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   type="text"
                   value={newNoSj}
                   onChange={(e) => setNewNoSj(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -595,30 +555,41 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Sales:</label>
-                <input
-                  type="text"
-                  value={newSales}
-                  onChange={(e) => setNewSales(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <label className="font-semibold">Sales / PPN (%):</label>
+                <div className="col-span-2 flex gap-2">
+                  <input
+                    type="text"
+                    value={newSales}
+                    onChange={(e) => setNewSales(e.target.value)}
+                    className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                    placeholder="Kode Sales"
+                  />
+                  <input
+                    type="number"
+                    value={newPpn}
+                    onChange={(e) => setNewPpn(e.target.value)}
+                    className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
+                    placeholder="PPN"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Jth.Tmp:</label>
-                <input
-                  type="text"
-                  value={newJthTmp}
-                  onChange={(e) => setNewJthTmp(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newJthTmp}
+                    onChange={(formatted) => setNewJthTmp(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Nilai Penjualan:</label>
+                <label className="font-semibold">Nilai Penjualan (Rp):</label>
                 <input
-                  type="text"
+                  type="number"
                   value={newNilaiPenjualan}
                   onChange={(e) => setNewNilaiPenjualan(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -634,13 +605,14 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8]"
+                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8] cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0]"
+                  disabled={isBusy}
+                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0] cursor-pointer"
                 >
                   Simpan
                 </button>
@@ -650,6 +622,29 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         </div>
       )}
 
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN LIST FAKTUR PENJUALAN"
+        subtitle={`Filter Tanggal: ${tanggalFilter}`}
+        orientation="landscape"
+        columns={[
+          { header: 'No.Bukti', accessor: 'noBukti', width: '105px' },
+          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
+          { header: 'Nama Customer', accessor: 'namaCustomer' },
+          { header: 'No.SO', accessor: 'noSo', width: '105px' },
+          { header: 'PO.No', accessor: 'poNo', width: '95px' },
+          { header: 'No.SJ', accessor: 'noSj', align: 'center', width: '65px' },
+          { header: 'Jth.Tmp', accessor: 'jthTmp', align: 'center', width: '80px' },
+          { header: 'Nilai Penjualan', accessor: 'nilaiPenjualan', align: 'right', width: '105px' },
+          { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center', width: '70px' },
+        ]}
+        rows={filteredList}
+        summaryItems={[
+          { label: 'Total Faktur Penjualan', value: `${filteredList.length} Dokumen` },
+          { label: 'Total Nilai Penjualan', value: formatRupiah(totalNilai) },
+        ]}
+      />
     </div>
   );
 };

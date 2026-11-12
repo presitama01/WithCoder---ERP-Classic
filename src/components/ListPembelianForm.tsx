@@ -1,16 +1,34 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface PembelianItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaSupplier: string;
   noPo: string;
   noFaktur: string;
   keterangan: string;
   nilaiPembelian: string;
+  nilaiPembelianNum: number;
   jthTmp: string;
   stsLunas: string;
   tglLunas: string;
@@ -27,91 +45,106 @@ interface ListPembelianFormProps {
   onClose: () => void;
 }
 
+function mapDbToPembelian(r: any): PembelianItem {
+  const valNum = Number(r.nilai_pembelian || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaSupplier: r.nama_supplier || '',
+    noPo: r.no_po || '-',
+    noFaktur: r.no_faktur || '-',
+    keterangan: r.keterangan || '',
+    nilaiPembelian: formatMoney(valNum),
+    nilaiPembelianNum: valNum,
+    jthTmp: toDisplayDMyShort(r.jth_tmp) || '-',
+    stsLunas: r.sts_lunas || 'Belum',
+    tglLunas: toDisplayDMyShort(r.tgl_lunas) || '-',
+    stsPost: r.sts_post || 'Posted',
+    tglPost: toDisplayDMyShort(r.tgl_post) || '-',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '-',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
+  };
+}
+
 export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [pembelianList, setPembelianList] = useState<PembelianItem[]>([
-    {
-      id: '1',
-      noBukti: '2608-PB-IMP-001',
-      tanggal: '06-Aug-2026',
-      namaSupplier: 'DEPO TEKNIK',
-      noPo: '2608-PO-IMP-001',
-      noFaktur: 'INV/2026/08/881',
-      keterangan: 'Pembelian barang & perkakas teknik',
-      nilaiPembelian: '1,942,500.',
-      jthTmp: '05-Sep-2026',
-      stsLunas: 'Belum',
-      tglLunas: '-',
-      stsPost: 'Posted',
-      tglPost: '06-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-    {
-      id: '2',
-      noBukti: '2608-PB-IMP-002',
-      tanggal: '06-Aug-2026',
-      namaSupplier: 'ELECTROMATIC EQUIPMENT CO.,',
-      noPo: '2608-PO-IMP-002',
-      noFaktur: 'INV-ELC-9921',
-      keterangan: 'Electrical testing instruments',
-      nilaiPembelian: '569.5',
-      jthTmp: '06-Sep-2026',
-      stsLunas: 'Lunas',
-      tglLunas: '06-Aug-2026',
-      stsPost: 'Posted',
-      tglPost: '06-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [pembelianList, setPembelianList] = useState<PembelianItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Supplier');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('06-Aug-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
-  const [newNoBukti, setNewNoBukti] = useState<string>('2608-PB-IMP-003');
-  const [newTanggal, setNewTanggal] = useState<string>('06-Aug-2026');
-  const [newSupplier, setNewSupplier] = useState<string>('DEPO TEKNIK');
-  const [newNoPo, setNewNoPo] = useState<string>('2608-PO-IMP-003');
-  const [newNoFaktur, setNewNoFaktur] = useState<string>('INV/2026/08/999');
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newSupplier, setNewSupplier] = useState<string>('');
+  const [newNoPo, setNewNoPo] = useState<string>('');
+  const [newNoFaktur, setNewNoFaktur] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
-  const [newNilai, setNewNilai] = useState<string>('1,500,000');
+  const [newNilai, setNewNilai] = useState<string>('0');
+  const [newJthTmp, setNewJthTmp] = useState<string>('');
+  const [newStsLunas, setNewStsLunas] = useState<string>('Belum');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('pembelian_barangs', { orderBy: 'tanggal', asc: false });
+      const mapped = rows.map(mapDbToPembelian);
+      setPembelianList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-PB-IMP-0${pembelianList.length + 1}`);
-    setNewTanggal('06-Aug-2026');
-    setNewSupplier('DEPO TEKNIK');
-    setNewNoPo('2608-PO-IMP-003');
-    setNewNoFaktur('INV/2026/08/999');
+    const todayDisp = toDisplayDMyShort(todayIso());
+    setNewNoBukti(`2608-PB-IMP-${String(pembelianList.length + 1).padStart(3, '0')}`);
+    setNewTanggal(todayDisp);
+    setNewSupplier('');
+    setNewNoPo('');
+    setNewNoFaktur('');
     setNewKeterangan('');
-    setNewNilai('1,500,000');
+    setNewNilai('0');
+    setNewJthTmp(todayDisp);
+    setNewStsLunas('Belum');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = pembelianList.find((p) => p.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
@@ -119,84 +152,91 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setNewNoPo(item.noPo);
     setNewNoFaktur(item.noFaktur);
     setNewKeterangan(item.keterangan);
-    setNewNilai(item.nilaiPembelian);
+    setNewNilai(String(item.nilaiPembelianNum));
+    setNewJthTmp(item.jthTmp === '-' ? '' : item.jthTmp);
+    setNewStsLunas(item.stsLunas);
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setPembelianList(
-        pembelianList.map((p) =>
-          p.id === editingId
-            ? {
-                ...p,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal,
-                namaSupplier: newSupplier.trim().toUpperCase(),
-                noPo: newNoPo.trim().toUpperCase(),
-                noFaktur: newNoFaktur.trim().toUpperCase(),
-                keterangan: newKeterangan.trim(),
-                nilaiPembelian: newNilai.trim(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: new Date().toLocaleDateString('id-ID'),
-              }
-            : p
-        )
-      );
-      showFeedback('Pembelian diperbarui');
-    } else {
-      const newItem: PembelianItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal,
-        namaSupplier: newSupplier.trim().toUpperCase(),
-        noPo: newNoPo.trim().toUpperCase(),
-        noFaktur: newNoFaktur.trim().toUpperCase(),
+    try {
+      setIsBusy(true);
+      const tglIso = toIsoDate(newTanggal) || todayIso();
+      const payload = {
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: tglIso,
+        nama_supplier: newSupplier.trim().toUpperCase(),
+        no_po: newNoPo.trim().toUpperCase() || '-',
+        no_faktur: newNoFaktur.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
-        nilaiPembelian: newNilai.trim(),
-        jthTmp: '06-Sep-2026',
-        stsLunas: 'Belum',
-        tglLunas: '-',
-        stsPost: 'Posted',
-        tglPost: newTanggal,
-        dibuatOleh: 'RETNO',
-        tglCreated: '06-Aug-2026',
-        diupdateOleh: '-',
-        tglUpdate: '-',
+        nilai_pembelian: parseNum(newNilai),
+        jth_tmp: toIsoDate(newJthTmp),
+        sts_lunas: newStsLunas,
+        tgl_lunas: newStsLunas === 'Lunas' ? todayIso() : null,
       };
 
-      setPembelianList([newItem, ...pembelianList]);
-      setSelectedId(newItem.id);
-      showFeedback('Pembelian tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('pembelian_barangs', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToPembelian(saved);
+        setPembelianList(pembelianList.map((p) => (p.id === editingId ? mapped : p)));
+        showFeedback('Pembelian diperbarui');
+      } else {
+        const saved = await erpCreate<any>('pembelian_barangs', {
+          ...payload,
+          sts_post: 'Posted',
+          tgl_post: tglIso,
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+          diupdate_oleh: '-',
+        });
+        const mapped = mapDbToPembelian(saved);
+        setPembelianList([mapped, ...pembelianList]);
+        setSelectedId(mapped.id);
+        showFeedback('Pembelian tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = pembelianList.filter((item) => item.id !== id);
-    setPembelianList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('pembelian_barangs', id);
+      const updated = pembelianList.filter((item) => item.id !== id);
+      setPembelianList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Data Pembelian dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Data Pembelian dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = pembelianList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Supplier') {
-      return item.namaSupplier.toLowerCase().includes(term);
-    } else if (searchField === 'No.Faktur Pembelian') {
-      return item.noFaktur.toLowerCase().includes(term);
-    } else if (searchField === 'Keterangan') {
-      return item.keterangan.toLowerCase().includes(term);
-    }
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'No.Faktur Pembelian') return item.noFaktur.toLowerCase().includes(term);
+    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaSupplier.toLowerCase().includes(term) ||
@@ -205,36 +245,70 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     );
   });
 
+  const totalNilai = filteredList.reduce((acc, r) => acc + r.nilaiPembelianNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Pembelian_Barang',
+      sheetTitle: 'LIST PEMBELIAN BARANG',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Supplier', accessor: 'namaSupplier' },
+        { header: 'No.PO', accessor: 'noPo' },
+        { header: 'No.Faktur Pembelian', accessor: 'noFaktur' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'Nilai Pembelian', accessor: 'nilaiPembelianNum', align: 'right' },
+        { header: 'Jth.Tmp', accessor: 'jthTmp', align: 'center' },
+        { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-pembelian-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="List Pembelian Barang"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={() => showFeedback('Data Pembelian tersimpan')}
+              onSimpan={loadData}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
               onHapus={() => selectedId && handleDelete(selectedId)}
+              onPrint={() => setIsPrintOpen(true)}
+              onFind={handleFind}
+              isBusy={isBusy}
               feedback={feedback}
             />
             <div className="flex items-center space-x-1">
               <span className="text-gray-800 font-medium">Tanggal :</span>
-              <input
-                type="text"
-                value={tanggalFilter}
-                onChange={(e) => setTanggalFilter(e.target.value)}
-                className="w-24 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
+              <DatePickerInput
+                value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+                onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+                format="dMyShort"
+                placeholder="Semua"
               />
               <button
                 type="button"
@@ -246,12 +320,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
             </div>
           </div>
 
-          <div className="font-bold text-sm text-gray-900 pr-2">
-            Rp 2,512,069.5
-          </div>
+          <div className="font-bold text-sm text-gray-900 pr-2">{formatRupiah(totalNilai)}</div>
         </div>
 
-        {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
         <div className="flex-1 overflow-auto bg-white border border-[#999999] m-1.5 relative shadow-inner">
           <table className="w-full border-collapse text-left min-w-[1600px]">
             <thead className="sticky top-0 bg-[#F0F0F0] text-gray-800 font-semibold border-b border-[#C0C0C0] z-10">
@@ -290,6 +361,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
                       className={`cursor-pointer border-b border-[#E0E0E0] ${
                         isSelected
                           ? 'bg-[#316AC5] text-white'
@@ -322,7 +394,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                             e.stopPropagation();
                             handleDelete(item.id);
                           }}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
                             isSelected
                               ? 'bg-red-700 text-white hover:bg-red-800'
                               : 'bg-red-100 text-red-700 hover:bg-red-200'
@@ -339,7 +411,6 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
           </table>
         </div>
 
-        {/* 4. Footer & Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-gray-800">Search :</span>
@@ -354,6 +425,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
               <option value="Keterangan">Keterangan</option>
             </select>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -363,12 +435,13 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
           </div>
 
           <div className="flex items-center space-x-4">
-            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs" />
+            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
+              {pembelianList.find((r) => r.id === selectedId)?.namaSupplier || ''}
+            </div>
             <div className="text-gray-800 font-medium">Record : {filteredList.length}</div>
           </div>
         </div>
 
-        {/* Add New Modal Dialog */}
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[460px] overflow-hidden">
@@ -382,7 +455,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-3">
+              <form onSubmit={handleSaveNew} className="p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">No.Bukti:</label>
                   <input
@@ -390,18 +463,18 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     value={newNoBukti}
                     onChange={(e) => setNewNoBukti(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Tanggal:</label>
-                  <input
-                    type="text"
-                    value={newTanggal}
-                    onChange={(e) => setNewTanggal(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                  />
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTanggal}
+                      onChange={(formatted) => setNewTanggal(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Nama Supplier:</label>
@@ -410,7 +483,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     value={newSupplier}
                     onChange={(e) => setNewSupplier(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -419,7 +492,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     type="text"
                     value={newNoPo}
                     onChange={(e) => setNewNoPo(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -429,7 +502,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     value={newNoFaktur}
                     onChange={(e) => setNewNoFaktur(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -444,12 +517,30 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Nilai Pembelian:</label>
                   <input
-                    type="text"
+                    type="number"
                     value={newNilai}
                     onChange={(e) => setNewNilai(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-right"
                   />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Jth.Tmp / Status:</label>
+                  <div className="w-72 flex items-center space-x-2">
+                    <DatePickerInput
+                      value={newJthTmp}
+                      onChange={(formatted) => setNewJthTmp(formatted)}
+                      format="dMyShort"
+                    />
+                    <select
+                      value={newStsLunas}
+                      onChange={(e) => setNewStsLunas(e.target.value)}
+                      className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    >
+                      <option value="Belum">Belum</option>
+                      <option value="Lunas">Lunas</option>
+                    </select>
+                  </div>
                 </div>
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#D0D0D0]">
                   <button
@@ -461,6 +552,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                   </button>
                   <button
                     type="submit"
+                    disabled={isBusy}
                     className="px-3 py-1 bg-[#0055EA] text-white border border-blue-800 rounded text-xs hover:bg-blue-700 cursor-pointer"
                   >
                     Simpan
@@ -471,6 +563,27 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
           </div>
         )}
 
+        <A4PrintPreviewModal
+          isOpen={isPrintOpen}
+          onClose={() => setIsPrintOpen(false)}
+          title="LAPORAN LIST PEMBELIAN BARANG"
+          subtitle={`Filter Tanggal: ${tanggalFilter}`}
+          orientation="landscape"
+          columns={[
+            { header: 'No.Bukti', accessor: 'noBukti', width: '110px' },
+            { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
+            { header: 'Nama Supplier', accessor: 'namaSupplier' },
+            { header: 'No.Faktur', accessor: 'noFaktur', width: '105px' },
+            { header: 'Keterangan', accessor: 'keterangan' },
+            { header: 'Nilai', accessor: 'nilaiPembelian', align: 'right', width: '95px' },
+            { header: 'Lunas', accessor: 'stsLunas', align: 'center', width: '60px' },
+          ]}
+          rows={filteredList}
+          summaryItems={[
+            { label: 'Total Record', value: `${filteredList.length} Transaksi` },
+            { label: 'Total Pembelian', value: formatRupiah(totalNilai) },
+          ]}
+        />
       </div>
     </div>
   );

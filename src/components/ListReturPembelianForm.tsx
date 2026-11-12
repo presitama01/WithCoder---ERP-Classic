@@ -1,13 +1,31 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface ReturPembelianItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaSupplier: string;
   nilaiRetur: string;
+  nilaiReturNum: number;
   keterangan: string;
   mataUang: string;
   disc: string;
@@ -27,178 +45,192 @@ interface ListReturPembelianFormProps {
   onClose: () => void;
 }
 
+function mapDbToReturPembelian(r: any): ReturPembelianItem {
+  const valNum = Number(r.nilai_retur || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaSupplier: r.nama_supplier || '',
+    nilaiRetur: formatMoney(valNum),
+    nilaiReturNum: valNum,
+    keterangan: r.keterangan || '',
+    mataUang: r.mata_uang || 'IDR',
+    disc: `${Number(r.disc || 0)}%`,
+    ppn: `${Number(r.ppn || 0)}%`,
+    stsPrint: r.sts_print || 'Not Yet',
+    tglPrint: toDisplayDMyShort(r.tgl_print) || '-',
+    stsPost: r.sts_post || 'Posted',
+    tglPost: toDisplayDMyShort(r.tgl_post) || '-',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '-',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
+  };
+}
+
 export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [returList, setReturList] = useState<ReturPembelianItem[]>([
-    {
-      id: '1',
-      noBukti: '2608-RP-IMP-001',
-      tanggal: '06-Aug-2026',
-      namaSupplier: 'DEPO TEKNIK',
-      nilaiRetur: '250,000',
-      keterangan: 'Retur barang rusak sebagian',
-      mataUang: 'IDR',
-      disc: '0%',
-      ppn: '11%',
-      stsPrint: 'Printed',
-      tglPrint: '06-Aug-2026',
-      stsPost: 'Posted',
-      tglPost: '06-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-    {
-      id: '2',
-      noBukti: '2608-RP-IMP-002',
-      tanggal: '06-Aug-2026',
-      namaSupplier: 'ELECTROMATIC EQUIPMENT CO.,',
-      nilaiRetur: '45.0',
-      keterangan: 'Defective testing gauge return',
-      mataUang: 'USD',
-      disc: '0%',
-      ppn: '11%',
-      stsPrint: 'Not Yet',
-      tglPrint: '-',
-      stsPost: 'Posted',
-      tglPost: '06-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [returList, setReturList] = useState<ReturPembelianItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Supplier');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('06-Aug-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
-  const [newNoBukti, setNewNoBukti] = useState<string>('2608-RP-IMP-003');
-  const [newTanggal, setNewTanggal] = useState<string>('06-Aug-2026');
-  const [newSupplier, setNewSupplier] = useState<string>('DEPO TEKNIK');
-  const [newNilaiRetur, setNewNilaiRetur] = useState<string>('150,000');
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newSupplier, setNewSupplier] = useState<string>('');
+  const [newNilaiRetur, setNewNilaiRetur] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newMataUang, setNewMataUang] = useState<string>('IDR');
-  const [newDisc, setNewDisc] = useState<string>('0%');
-  const [newPpn, setNewPpn] = useState<string>('11%');
+  const [newDisc, setNewDisc] = useState<string>('0');
+  const [newPpn, setNewPpn] = useState<string>('11');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('retur_pembelians', { orderBy: 'tanggal', asc: false });
+      const mapped = rows.map(mapDbToReturPembelian);
+      setReturList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-RP-IMP-0${returList.length + 1}`);
-    setNewTanggal('06-Aug-2026');
-    setNewSupplier('DEPO TEKNIK');
-    setNewNilaiRetur('150,000');
+    setNewNoBukti(`2608-RP-IMP-${String(returList.length + 1).padStart(3, '0')}`);
+    setNewTanggal(toDisplayDMyShort(todayIso()));
+    setNewSupplier('');
+    setNewNilaiRetur('0');
     setNewKeterangan('');
     setNewMataUang('IDR');
-    setNewDisc('0%');
-    setNewPpn('11%');
+    setNewDisc('0');
+    setNewPpn('11');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = returList.find((r) => r.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewSupplier(item.namaSupplier);
-    setNewNilaiRetur(item.nilaiRetur);
+    setNewNilaiRetur(String(item.nilaiReturNum));
     setNewKeterangan(item.keterangan);
     setNewMataUang(item.mataUang);
-    setNewDisc(item.disc);
-    setNewPpn(item.ppn);
+    setNewDisc(String(parseNum(item.disc)));
+    setNewPpn(String(parseNum(item.ppn)));
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setReturList(
-        returList.map((r) =>
-          r.id === editingId
-            ? {
-                ...r,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal,
-                namaSupplier: newSupplier.trim().toUpperCase(),
-                nilaiRetur: newNilaiRetur.trim(),
-                keterangan: newKeterangan.trim(),
-                mataUang: newMataUang.trim(),
-                disc: newDisc.trim(),
-                ppn: newPpn.trim(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: new Date().toLocaleDateString('id-ID'),
-              }
-            : r
-        )
-      );
-      showFeedback('Retur Pembelian diperbarui');
-    } else {
-      const newItem: ReturPembelianItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal,
-        namaSupplier: newSupplier.trim().toUpperCase(),
-        nilaiRetur: newNilaiRetur.trim(),
+    try {
+      setIsBusy(true);
+      const tglIso = toIsoDate(newTanggal) || todayIso();
+      const payload = {
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: tglIso,
+        nama_supplier: newSupplier.trim().toUpperCase(),
+        nilai_retur: parseNum(newNilaiRetur),
         keterangan: newKeterangan.trim(),
-        mataUang: newMataUang.trim(),
-        disc: newDisc.trim(),
-        ppn: newPpn.trim(),
-        stsPrint: 'Not Yet',
-        tglPrint: '-',
-        stsPost: 'Posted',
-        tglPost: newTanggal,
-        dibuatOleh: 'RETNO',
-        tglCreated: '06-Aug-2026',
-        diupdateOleh: '-',
-        tglUpdate: '-',
+        mata_uang: newMataUang.trim().toUpperCase(),
+        disc: parseNum(newDisc),
+        ppn: parseNum(newPpn),
       };
 
-      setReturList([newItem, ...returList]);
-      setSelectedId(newItem.id);
-      showFeedback('Retur Pembelian tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('retur_pembelians', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToReturPembelian(saved);
+        setReturList(returList.map((r) => (r.id === editingId ? mapped : r)));
+        showFeedback('Retur Pembelian diperbarui');
+      } else {
+        const saved = await erpCreate<any>('retur_pembelians', {
+          ...payload,
+          sts_print: 'Not Yet',
+          sts_post: 'Posted',
+          tgl_post: tglIso,
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+          diupdate_oleh: '-',
+        });
+        const mapped = mapDbToReturPembelian(saved);
+        setReturList([mapped, ...returList]);
+        setSelectedId(mapped.id);
+        showFeedback('Retur Pembelian tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = returList.filter((item) => item.id !== id);
-    setReturList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('retur_pembelians', id);
+      const updated = returList.filter((item) => item.id !== id);
+      setReturList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Retur Pembelian dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Retur Pembelian dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = returList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Supplier') {
-      return item.namaSupplier.toLowerCase().includes(term);
-    } else if (searchField === 'Keterangan') {
-      return item.keterangan.toLowerCase().includes(term);
-    }
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaSupplier.toLowerCase().includes(term) ||
@@ -206,52 +238,83 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     );
   });
 
+  const totalNilaiRetur = filteredList.reduce((acc, r) => acc + r.nilaiReturNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Retur_Pembelian',
+      sheetTitle: 'LIST RETUR PEMBELIAN BARANG',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Supplier', accessor: 'namaSupplier' },
+        { header: 'Nilai Retur', accessor: 'nilaiReturNum', align: 'right' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'Mata Uang', accessor: 'mataUang', align: 'center' },
+        { header: 'PPN', accessor: 'ppn', align: 'center' },
+        { header: 'Sts.Post', accessor: 'stsPost', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-retur-pembelian-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="List Retur Pembelian Barang"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={() => showFeedback('Data Retur Pembelian tersimpan')}
+              onSimpan={loadData}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
               onHapus={() => selectedId && handleDelete(selectedId)}
+              onPrint={() => setIsPrintOpen(true)}
+              onFind={handleFind}
+              isBusy={isBusy}
               feedback={feedback}
             />
             <div className="flex items-center space-x-1">
               <span className="text-gray-800 font-medium">Tanggal :</span>
-              <input
-                type="text"
-                value={tanggalFilter}
-                onChange={(e) => setTanggalFilter(e.target.value)}
-                className="w-[95px] px-1.5 py-0.5 bg-white border border-[#7F9DB9] rounded-[2px] text-black text-center font-mono"
+              <DatePickerInput
+                value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+                onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+                format="dMyShort"
+                placeholder="Semua"
               />
+              <button
+                type="button"
+                onClick={() => setTanggalFilter('Semua')}
+                className="px-2 py-0.5 bg-[#E1DFDD] hover:bg-[#F3F2F1] border border-[#ADABA1] text-xs rounded-xs cursor-pointer"
+              >
+                Semua
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <span className="text-gray-700 font-medium">Active Month:</span>
-            <input
-              type="text"
-              readOnly
-              value="August 2026"
-              className="w-[90px] px-1.5 py-0.5 bg-[#EFEBE7] border border-[#7F9DB9] rounded-[2px] text-center font-medium text-gray-800"
-            />
-          </div>
+          <div className="font-bold text-sm text-gray-900 pr-2">{formatRupiah(totalNilaiRetur)}</div>
         </div>
 
-        {/* 3. Table Container with Horizontal and Vertical Scrollbars */}
         <div className="flex-1 overflow-auto bg-white border border-[#7F9DB9] m-2 shadow-inner relative">
           <table className="w-full border-collapse text-xs whitespace-nowrap">
             <thead>
@@ -283,6 +346,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                   <tr
                     key={item.id}
                     onClick={() => setSelectedId(item.id)}
+                    onDoubleClick={handleEdit}
                     className={`cursor-pointer border-b border-[#E0E0E0] ${
                       isSelected
                         ? 'bg-[#316AC5] text-white'
@@ -291,33 +355,15 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                         : 'bg-[#F9F9F8] hover:bg-[#F0F4F8]'
                     }`}
                   >
-                    <td className="px-2 py-1 text-center border-r border-[#E0E0E0] font-mono">
-                      {index + 1}
-                    </td>
-                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-mono font-medium">
-                      {item.noBukti}
-                    </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.tanggal}
-                    </td>
-                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-medium">
-                      {item.namaSupplier}
-                    </td>
-                    <td className="px-2.5 py-1 text-right border-r border-[#E0E0E0] font-mono">
-                      {item.nilaiRetur}
-                    </td>
-                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">
-                      {item.keterangan}
-                    </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.mataUang}
-                    </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.disc}
-                    </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.ppn}
-                    </td>
+                    <td className="px-2 py-1 text-center border-r border-[#E0E0E0] font-mono">{index + 1}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-mono font-medium">{item.noBukti}</td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.tanggal}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-medium">{item.namaSupplier}</td>
+                    <td className="px-2.5 py-1 text-right border-r border-[#E0E0E0] font-mono">{item.nilaiRetur}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">{item.keterangan}</td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.mataUang}</td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.disc}</td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.ppn}</td>
                     <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] ${
@@ -329,29 +375,17 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                         {item.stsPrint}
                       </span>
                     </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.tglPrint}
-                    </td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.tglPrint}</td>
                     <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
                       <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-800">
                         {item.stsPost}
                       </span>
                     </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.tglPost}
-                    </td>
-                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">
-                      {item.dibuatOleh}
-                    </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.tglCreated}
-                    </td>
-                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">
-                      {item.diupdateOleh}
-                    </td>
-                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
-                      {item.tglUpdate}
-                    </td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.tglPost}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">{item.dibuatOleh}</td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.tglCreated}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">{item.diupdateOleh}</td>
+                    <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.tglUpdate}</td>
                     <td className="px-2 py-1 text-center">
                       <button
                         type="button"
@@ -378,7 +412,6 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
           </table>
         </div>
 
-        {/* 4. Bottom Search Bar & Record Counter */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
           <div className="flex items-center space-x-2">
             <span className="font-medium text-gray-800">Cari Berdasarkan:</span>
@@ -392,6 +425,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
               <option>Keterangan</option>
             </select>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -406,11 +440,9 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
         </div>
       </div>
 
-      {/* Add New Modal Dialog */}
       {isAddOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-[#0055EA] rounded-[3px] shadow-[4px_4px_12px_rgba(0,0,0,0.4)] flex flex-col font-sans text-xs">
-            {/* Modal Header */}
             <div className="flex items-center justify-between h-[28px] bg-gradient-to-r from-[#0055EA] to-[#1E90FF] text-white px-2 font-bold">
               <span>{editingId ? 'Koreksi Retur Pembelian Barang' : 'Form Input Retur Pembelian Barang'}</span>
               <button
@@ -422,7 +454,6 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
               </button>
             </div>
 
-            {/* Modal Body */}
             <form onSubmit={handleSaveNew} className="p-4 space-y-3 bg-[#ECE9D8]">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -431,18 +462,16 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                     type="text"
                     value={newNoBukti}
                     onChange={(e) => setNewNoBukti(e.target.value)}
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] font-mono"
+                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] font-mono uppercase"
                     required
                   />
                 </div>
                 <div>
                   <label className="block font-medium text-gray-800 mb-1">Tanggal:</label>
-                  <input
-                    type="text"
+                  <DatePickerInput
                     value={newTanggal}
-                    onChange={(e) => setNewTanggal(e.target.value)}
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
-                    required
+                    onChange={(formatted) => setNewTanggal(formatted)}
+                    format="dMyShort"
                   />
                 </div>
               </div>
@@ -453,7 +482,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                   type="text"
                   value={newSupplier}
                   onChange={(e) => setNewSupplier(e.target.value)}
-                  className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                  className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] uppercase"
                   required
                 />
               </div>
@@ -462,7 +491,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                 <div>
                   <label className="block font-medium text-gray-800 mb-1">Nilai Retur:</label>
                   <input
-                    type="text"
+                    type="number"
                     value={newNilaiRetur}
                     onChange={(e) => setNewNilaiRetur(e.target.value)}
                     className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] font-mono text-right"
@@ -482,16 +511,16 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="block font-medium text-gray-800 mb-1">Disc / PPN:</label>
+                  <label className="block font-medium text-gray-800 mb-1">Disc (%) / PPN (%):</label>
                   <div className="flex gap-1">
                     <input
-                      type="text"
+                      type="number"
                       value={newDisc}
                       onChange={(e) => setNewDisc(e.target.value)}
                       className="w-1/2 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
                     />
                     <input
-                      type="text"
+                      type="number"
                       value={newPpn}
                       onChange={(e) => setNewPpn(e.target.value)}
                       className="w-1/2 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
@@ -511,10 +540,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                 />
               </div>
 
-              {/* Modal Footer Buttons */}
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#D4D0C8]">
                 <button
                   type="submit"
+                  disabled={isBusy}
                   className="px-4 py-1.5 bg-[#E1DFDD] hover:bg-[#F3F2F1] active:bg-[#C8C6C4] border border-[#ADABA1] text-black font-semibold rounded-[2px] shadow-xs cursor-pointer"
                 >
                   Simpan
@@ -532,6 +561,27 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
         </div>
       )}
 
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN RETUR PEMBELIAN BARANG"
+        subtitle={`Filter Tanggal: ${tanggalFilter}`}
+        orientation="landscape"
+        columns={[
+          { header: 'No.Bukti', accessor: 'noBukti', width: '115px' },
+          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '85px' },
+          { header: 'Nama Supplier', accessor: 'namaSupplier' },
+          { header: 'Nilai Retur', accessor: 'nilaiRetur', align: 'right', width: '100px' },
+          { header: 'Mata Uang', accessor: 'mataUang', align: 'center', width: '65px' },
+          { header: 'Keterangan', accessor: 'keterangan' },
+          { header: 'Sts.Post', accessor: 'stsPost', align: 'center', width: '70px' },
+        ]}
+        rows={filteredList}
+        summaryItems={[
+          { label: 'Total Record', value: `${filteredList.length} Transaksi` },
+          { label: 'Total Nilai Retur', value: formatRupiah(totalNilaiRetur) },
+        ]}
+      />
     </div>
   );
 };

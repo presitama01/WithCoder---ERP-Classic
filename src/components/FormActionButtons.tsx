@@ -5,7 +5,10 @@ interface FormActionButtonsProps {
   onBaru?: () => void;
   onKoreksi?: () => void;
   onHapus?: () => void;
+  onPrint?: () => void;
+  onFind?: () => void;
   compact?: boolean;
+  isBusy?: boolean;
   feedback?: string | null;
 }
 
@@ -14,22 +17,37 @@ export const FormActionButtons: React.FC<FormActionButtonsProps> = ({
   onBaru,
   onKoreksi,
   onHapus,
+  onPrint,
+  onFind,
   compact = false,
+  isBusy = false,
   feedback,
 }) => {
   const btnClass = compact
-    ? 'h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1.5 text-[11px] font-sans text-black cursor-pointer select-none whitespace-nowrap'
-    : 'h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1.5 text-[11px] font-sans text-black cursor-pointer select-none whitespace-nowrap';
+    ? 'h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1.5 text-[11px] font-sans text-black cursor-pointer select-none whitespace-nowrap disabled:opacity-50'
+    : 'h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1.5 text-[11px] font-sans text-black cursor-pointer select-none whitespace-nowrap disabled:opacity-50';
 
   return (
     <div className="flex items-center space-x-1.5">
       {/* 1. Simpan */}
-      <button type="button" onClick={onSimpan} className={btnClass} title="Simpan Data">
+      <button
+        type="button"
+        onClick={onSimpan}
+        disabled={isBusy}
+        className={btnClass}
+        title="Simpan Data"
+      >
         <span>Simpan</span>
       </button>
 
       {/* 2. + Baru */}
-      <button type="button" onClick={onBaru} className={btnClass} title="Tambah Data Baru">
+      <button
+        type="button"
+        onClick={onBaru}
+        disabled={isBusy}
+        className={btnClass}
+        title="Tambah Data Baru"
+      >
         <svg
           width="12"
           height="12"
@@ -49,7 +67,13 @@ export const FormActionButtons: React.FC<FormActionButtonsProps> = ({
       </button>
 
       {/* 3. Pencil Koreksi */}
-      <button type="button" onClick={onKoreksi} className={btnClass} title="Koreksi / Edit Data">
+      <button
+        type="button"
+        onClick={onKoreksi}
+        disabled={isBusy}
+        className={btnClass}
+        title="Koreksi / Edit Data"
+      >
         <svg
           width="13"
           height="13"
@@ -77,7 +101,13 @@ export const FormActionButtons: React.FC<FormActionButtonsProps> = ({
       </button>
 
       {/* 4. Trash Hapus */}
-      <button type="button" onClick={onHapus} className={btnClass} title="Hapus Data">
+      <button
+        type="button"
+        onClick={onHapus}
+        disabled={isBusy}
+        className={btnClass}
+        title="Hapus Data"
+      >
         <svg
           width="13"
           height="13"
@@ -97,6 +127,41 @@ export const FormActionButtons: React.FC<FormActionButtonsProps> = ({
         </svg>
         <span>Hapus</span>
       </button>
+
+      {/* Optional 5. Print */}
+      {onPrint && (
+        <button
+          type="button"
+          onClick={onPrint}
+          disabled={isBusy}
+          className={btnClass}
+          title="Print / Preview A4"
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="shrink-0">
+            <rect x="4" y="1.5" width="8" height="4" fill="#FFFFFF" stroke="#333" strokeWidth="1" />
+            <rect x="1.5" y="5" width="13" height="6" rx="1" fill="#D1D5DB" stroke="#333" strokeWidth="1" />
+            <rect x="4" y="8.5" width="8" height="6" fill="#FFFFFF" stroke="#333" strokeWidth="1" />
+          </svg>
+          <span>Print</span>
+        </button>
+      )}
+
+      {/* Optional 6. FIND */}
+      {onFind && (
+        <button
+          type="button"
+          onClick={onFind}
+          disabled={isBusy}
+          className={btnClass}
+          title="Find / Cari Data"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="shrink-0">
+            <circle cx="6.5" cy="6.5" r="4.5" stroke="#0055EA" strokeWidth="1.8" />
+            <path d="M10 10L14 14" stroke="#0055EA" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <span>Find</span>
+        </button>
+      )}
 
       {feedback && (
         <span className="ml-2 px-2 py-0.5 bg-[#FFFFCC] border border-[#ACA899] text-[10px] font-semibold text-black rounded-[1px]">

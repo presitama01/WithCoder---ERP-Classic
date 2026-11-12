@@ -1,6 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface BankItem {
   id: string;
@@ -16,18 +19,11 @@ interface MasterBankListFormProps {
 }
 
 export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, onClose }) => {
-  const [banks, setBanks] = useState<BankItem[]>([
-    { id: '1', accNumber: '120-00-81697', accName: 'PT. UNIMETRIKA UTAMA', namaBank: 'BANK MANDIRI', cabang: 'KK JAKARTA ROYAL' },
-    { id: '2', accNumber: '6590313171', accName: 'PT. UNIMETRIKA UTAMA', namaBank: 'BCA', cabang: 'PRIMA SUNTER' },
-    { id: '3', accNumber: '6590400694', accName: 'PT. UNIMETRIKA UTAMA', namaBank: 'BCA', cabang: 'PRIMA SUNTER' },
-    { id: '4', accNumber: '2-138-100072', accName: 'PT. UNIMETRIKA UTAMA', namaBank: 'BII MAYBANK - JPY', cabang: 'JUANDA' },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [banks, setBanks] = useState<BankItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Bank');
 
-  // Modal for Add New
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [newAccNumber, setNewAccNumber] = useState('');
   const [newAccName, setNewAccName] = useState('PT. UNIMETRIKA UTAMA');
@@ -36,20 +32,50 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
-
-  if (!isOpen) return null;
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
 
-  const handleAddNew = () => {
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('master_banks', { orderBy: 'nama_bank', asc: true });
+      const mapped: BankItem[] = rows.map((r) => ({
+        id: r.id,
+        accNumber: r.acc_number,
+        accName: r.acc_name,
+        namaBank: r.nama_bank,
+        cabang: r.cabang || '',
+      }));
+      setBanks(mapped);
+      if (mapped.length > 0 && !mapped.some((b) => b.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleAddNew = async () => {
     setEditingId(null);
     setNewAccNumber('');
-    setNewAccName('PT. UNIMETRIKA UTAMA');
+    const company = await fetchActiveCompanyProfile();
+    setNewAccName(company.company_name || 'PT. UNIMETRIKA UTAMA');
     setNewNamaBank('');
     setNewCabang('');
     setIsAddOpen(true);
@@ -57,7 +83,10 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
 
   const handleEdit = () => {
     const item = banks.find((b) => b.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewAccNumber(item.accNumber);
     setNewAccName(item.accName);
@@ -66,49 +95,97 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
     setIsAddOpen(true);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedId) return;
-    const updated = banks.filter((b) => b.id !== selectedId);
-    setBanks(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data dihapus');
+    try {
+      setIsBusy(true);
+      await erpDelete('master_banks', selectedId);
+      const updated = banks.filter((b) => b.id !== selectedId);
+      setBanks(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAccNumber.trim() || !newNamaBank.trim()) return;
 
-    const payload: BankItem = {
-      id: editingId || Date.now().toString(),
-      accNumber: newAccNumber.trim(),
-      accName: newAccName.trim().toUpperCase(),
-      namaBank: newNamaBank.trim().toUpperCase(),
-      cabang: newCabang.trim().toUpperCase(),
-    };
-    if (editingId) {
-      setBanks(banks.map((b) => (b.id === editingId ? payload : b)));
-      showFeedback('Data diperbarui');
-    } else {
-      setBanks([payload, ...banks]);
-      setSelectedId(payload.id);
-      showFeedback('Data tersimpan');
+    try {
+      setIsBusy(true);
+      const dbPayload = {
+        acc_number: newAccNumber.trim(),
+        acc_name: newAccName.trim().toUpperCase(),
+        nama_bank: newNamaBank.trim().toUpperCase(),
+        cabang: newCabang.trim().toUpperCase(),
+      };
+      if (editingId) {
+        const saved = await erpUpdate<any>('master_banks', editingId, dbPayload);
+        const mapped: BankItem = {
+          id: saved.id,
+          accNumber: saved.acc_number,
+          accName: saved.acc_name,
+          namaBank: saved.nama_bank,
+          cabang: saved.cabang || '',
+        };
+        setBanks(banks.map((b) => (b.id === editingId ? mapped : b)));
+        showFeedback('Data diperbarui');
+      } else {
+        const saved = await erpCreate<any>('master_banks', dbPayload);
+        const mapped: BankItem = {
+          id: saved.id,
+          accNumber: saved.acc_number,
+          accName: saved.acc_name,
+          namaBank: saved.nama_bank,
+          cabang: saved.cabang || '',
+        };
+        setBanks([mapped, ...banks]);
+        setSelectedId(mapped.id);
+        showFeedback('Data tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
   const filteredBanks = banks.filter((item) => {
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'Acc Number') {
-      return item.accNumber.toLowerCase().includes(term);
-    } else if (searchField === 'Acc Name') {
-      return item.accName.toLowerCase().includes(term);
-    } else if (searchField === 'Cabang') {
-      return item.cabang.toLowerCase().includes(term);
-    }
+    if (searchField === 'Acc Number') return item.accNumber.toLowerCase().includes(term);
+    if (searchField === 'Acc Name') return item.accName.toLowerCase().includes(term);
+    if (searchField === 'Cabang') return item.cabang.toLowerCase().includes(term);
     return item.namaBank.toLowerCase().includes(term);
   });
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'Master_Bank',
+      sheetTitle: 'LIST MASTER REKENING BANK',
+      companyProfile: company,
+      columns: [
+        { header: 'Acc Number', accessor: 'accNumber' },
+        { header: 'Acc Name', accessor: 'accName' },
+        { header: 'Nama Bank', accessor: 'namaBank' },
+        { header: 'Cabang', accessor: 'cabang' },
+      ],
+      rows: filteredBanks,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
 
   return (
     <div
@@ -116,20 +193,24 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner: List Master Bank */}
         <FormHeaderBanner
           title="List Master Bank"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Action & Search Toolbar */}
         <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Rekening Bank tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
 
@@ -147,27 +228,24 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
             </select>
             <div className="w-[260px]">
               <input
+                ref={searchInputRef}
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder=""
+                placeholder="Ketik untuk FIND..."
                 className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
               />
             </div>
           </div>
         </div>
 
-        {/* 3. Grid Workspace Section */}
         <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
           <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-[#ECE9D8] overflow-hidden shadow-inner">
             <div className="shrink-0 h-[20px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-sans font-normal text-black select-none">
               List
             </div>
 
-            <div
-              ref={tableContainerRef}
-              className="flex-1 overflow-auto bg-white border border-[#7F9DB9] relative select-none"
-            >
+            <div ref={tableContainerRef} className="flex-1 overflow-auto bg-white border border-[#7F9DB9] relative select-none">
               <table className="w-full min-w-[750px] border-collapse text-[11px] font-sans">
                 <thead className="bg-[#ECE9D8] sticky top-0 z-10">
                   <tr className="h-[22px] text-left border-b border-[#ACA899]">
@@ -184,6 +262,7 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
                       <tr
                         key={item.id}
                         onClick={() => setSelectedId(item.id)}
+                        onDoubleClick={handleEdit}
                         className={`cursor-pointer h-[22px] ${
                           isSelected
                             ? 'bg-[#316AC5] text-white'
@@ -218,7 +297,6 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
           </div>
         </div>
 
-        {/* 4. Status Bar */}
         <div className="h-[24px] bg-[#ECE9D8] border-t border-[#999999] px-3 flex items-center justify-between text-[11px] font-sans text-[#333333]">
           <div className="flex items-center space-x-2">
             <span className="border border-[#7F9DB9] px-2 py-0.5 bg-white/60">
@@ -228,13 +306,12 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
           <div className="text-gray-600">MASTER -&gt; Rekening Bank</div>
         </div>
 
-        {/* Add New Modal Dialog */}
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-[#ECE9D8] w-[420px] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl flex flex-col font-sans">
               <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white px-3 py-1.5 flex justify-between items-center text-xs font-bold">
-                <span>Tambah Master Bank Baru</span>
-                <button onClick={() => setIsAddOpen(false)} className="text-white hover:text-red-200">✕</button>
+                <span>{editingId ? 'Koreksi Rekening Bank' : 'Tambah Master Bank Baru'}</span>
+                <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:text-red-200 cursor-pointer">✕</button>
               </div>
               <form onSubmit={handleSaveNew} className="p-4 flex flex-col gap-3 text-xs">
                 <div className="flex flex-col gap-1">
@@ -282,16 +359,17 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
                 <div className="flex justify-end gap-2 mt-3 pt-2 border-t border-gray-300">
                   <button
                     type="submit"
+                    disabled={isBusy}
                     className="px-4 py-1 bg-[#E1DFD7] hover:bg-[#D0CEBF] border border-[#7F9DB9] font-semibold rounded shadow-sm cursor-pointer"
                   >
-                    Save
+                    Simpan
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsAddOpen(false)}
                     className="px-4 py-1 bg-[#E1DFD7] hover:bg-[#D0CEBF] border border-[#7F9DB9] rounded shadow-sm cursor-pointer"
                   >
-                    Cancel
+                    Batal
                   </button>
                 </div>
               </form>
@@ -299,6 +377,20 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
           </div>
         )}
       </div>
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN MASTER REKENING BANK"
+        subtitle={`Total Record: ${filteredBanks.length}`}
+        columns={[
+          { header: 'No. Rekening', accessor: 'accNumber', width: '130px' },
+          { header: 'Nama Rekening', accessor: 'accName' },
+          { header: 'Nama Bank', accessor: 'namaBank', width: '140px' },
+          { header: 'Cabang', accessor: 'cabang', width: '130px' },
+        ]}
+        rows={filteredBanks}
+      />
     </div>
   );
 };

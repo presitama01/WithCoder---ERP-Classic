@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { WindowPosition } from '../types';
+import { erpList } from '../lib/erpApi';
 
 interface LoginWindowProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginMessage, setLoginMessage] = useState<string | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
 
   const windowRef = useRef<HTMLDivElement>(null);
   const usernameInputRef = useRef<HTMLInputElement>(null);
@@ -34,9 +36,7 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
   }, [isOpen]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Only drag from titlebar
     if ((e.target as HTMLElement).closest('button')) return;
-
     setIsDragging(true);
     setDragOffset({
       x: e.clientX - position.x,
@@ -52,9 +52,7 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
       setPosition({ x: newX, y: newY });
     };
 
-    const handleMouseUp = () => {
-      setIsDragging(false);
-    };
+    const handleMouseUp = () => setIsDragging(false);
 
     if (isDragging) {
       window.addEventListener('mousemove', handleMouseMove);
@@ -67,17 +65,32 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
     };
   }, [isDragging, dragOffset]);
 
-  const handleOk = (e?: React.FormEvent) => {
+  const handleOk = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!username.trim()) {
+    const cleanUser = username.trim().toUpperCase();
+    if (!cleanUser) {
       setLoginMessage('Silakan masukkan User ID.');
       return;
     }
-    setLoginMessage(`Login berhasil sebagai: ${username}`);
-    onLoginSuccess?.(username);
-    setTimeout(() => {
-      setLoginMessage(null);
-    }, 3000);
+    try {
+      setIsChecking(true);
+      const users = await erpList<any>('app_users', { eq: { username: cleanUser } });
+      if (users.length > 0 && users[0].is_active === false) {
+        setLoginMessage(`User ${cleanUser} berstatus non-aktif.`);
+        return;
+      }
+      const displayName = users[0]?.username || cleanUser;
+      setLoginMessage(`Login berhasil sebagai: ${displayName}`);
+      onLoginSuccess?.(displayName);
+      setTimeout(() => {
+        setLoginMessage(null);
+      }, 2000);
+    } catch {
+      setLoginMessage(`Login berhasil sebagai: ${cleanUser}`);
+      onLoginSuccess?.(cleanUser);
+    } finally {
+      setIsChecking(false);
+    }
   };
 
   const handleCancel = () => {
@@ -99,14 +112,12 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
       }}
       className="absolute z-40 w-[310px] bg-[#ECE9D8] rounded-t-md shadow-[3px_3px_10px_rgba(0,0,0,0.4)] border border-[#0055EA] select-none font-sans"
     >
-      {/* Window Title Bar */}
       <div
         id="login-titlebar"
         onMouseDown={handleMouseDown}
         className="flex items-center justify-between h-[28px] px-2 rounded-t-[5px] bg-gradient-to-r from-[#9CBFEF] via-[#ABC8F3] to-[#88B0EB] border-b border-[#7095D3] cursor-move select-none"
       >
         <div className="flex items-center space-x-1.5">
-          {/* Small application key/logo icon */}
           <div className="w-[16px] h-[16px] flex items-center justify-center">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
               <circle cx="8" cy="8" r="6.5" fill="#4B77BE" stroke="#2C3E50" strokeWidth="1" />
@@ -118,7 +129,6 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
           </span>
         </div>
 
-        {/* Windows XP / Classic style close button */}
         <button
           id="login-close-btn"
           type="button"
@@ -127,24 +137,16 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
           title="Tutup"
         >
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-            <path
-              d="M1 1L7 7M7 1L1 7"
-              stroke="white"
-              strokeWidth="1.8"
-              strokeLinecap="square"
-            />
+            <path d="M1 1L7 7M7 1L1 7" stroke="white" strokeWidth="1.8" strokeLinecap="square" />
           </svg>
         </button>
       </div>
 
-      {/* Window Body */}
       <div className="p-2 space-y-2 bg-[#ECE9D8]">
-        {/* Upper Blank / Header Banner Area (as seen in screenshot) */}
         <div
           id="login-banner-box"
           className="w-full h-[105px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner flex flex-col items-center justify-center overflow-hidden"
         >
-          {/* Subtle watermark or clean area matching screenshot */}
           <div className="text-center opacity-70">
             <div className="text-[14px] font-serif font-bold text-[#1A4588] tracking-widest">
               W I T H C O D E R
@@ -155,23 +157,17 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
           </div>
         </div>
 
-        {/* Thin divider line */}
         <div className="h-[2px] bg-[#A0A0A0] border-b border-white" />
 
-        {/* Lower GroupBox: Authorization */}
         <form onSubmit={handleOk}>
           <fieldset
             id="login-authorization-fieldset"
             className="border border-[#7F9DB9] px-2 pb-2.5 pt-1 rounded-none"
           >
-            <legend className="px-1 text-[11px] font-bold text-[#CC0000]">
-              Authorization
-            </legend>
+            <legend className="px-1 text-[11px] font-bold text-[#CC0000]">Authorization</legend>
 
             <div className="flex items-start justify-between mt-1 pt-1">
-              {/* Input Fields on the left */}
               <div className="space-y-1.5 flex-1 pr-3">
-                {/* Username Input */}
                 <div>
                   <input
                     ref={usernameInputRef}
@@ -179,30 +175,29 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder=""
+                    placeholder="User ID (cth: RETNO)"
                     className="w-full h-[21px] px-1.5 text-[11px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner outline-none font-sans focus:bg-[#FFFFF0]"
                   />
                 </div>
 
-                {/* Password Input */}
                 <div>
                   <input
                     id="login-password-input"
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder=""
+                    placeholder="Password"
                     className="w-full h-[21px] px-1.5 text-[11px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-[#FFFFFF] border-r-[#FFFFFF] shadow-inner outline-none font-sans focus:bg-[#FFFFF0]"
                   />
                 </div>
               </div>
 
-              {/* Action Buttons on the right (stacked OK and Cancel) */}
               <div className="flex flex-col space-y-2">
                 <button
                   id="login-ok-btn"
                   type="submit"
-                  className="w-[66px] h-[22px] bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#707070] border-r-[#707070] shadow-[1px_1px_0px_#333333] active:border-t-[#707070] active:border-l-[#707070] active:border-b-[#FFFFFF] active:border-r-[#FFFFFF] active:shadow-inner text-[11px] font-sans text-black cursor-pointer flex items-center justify-center font-normal"
+                  disabled={isChecking}
+                  className="w-[66px] h-[22px] bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#707070] border-r-[#707070] shadow-[1px_1px_0px_#333333] text-[11px] font-sans text-black cursor-pointer flex items-center justify-center font-normal"
                 >
                   OK
                 </button>
@@ -210,14 +205,13 @@ export const LoginWindow: React.FC<LoginWindowProps> = ({
                   id="login-cancel-btn"
                   type="button"
                   onClick={handleCancel}
-                  className="w-[66px] h-[22px] bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#707070] border-r-[#707070] shadow-[1px_1px_0px_#333333] active:border-t-[#707070] active:border-l-[#707070] active:border-b-[#FFFFFF] active:border-r-[#FFFFFF] active:shadow-inner text-[11px] font-sans text-black cursor-pointer flex items-center justify-center font-normal"
+                  className="w-[66px] h-[22px] bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#707070] border-r-[#707070] shadow-[1px_1px_0px_#333333] text-[11px] font-sans text-black cursor-pointer flex items-center justify-center font-normal"
                 >
                   Cancel
                 </button>
               </div>
             </div>
 
-            {/* Status / feedback line */}
             {loginMessage && (
               <div
                 id="login-feedback-message"

@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface ExpedisiItem {
   id: string;
@@ -17,55 +20,29 @@ interface MasterExpedisiListFormProps {
   onClose: () => void;
 }
 
+function mapDbToItem(r: any): ExpedisiItem {
+  return {
+    id: r.id,
+    kodeExpedisi: r.kode_expedisi || '',
+    namaExpedisi: r.nama_expedisi || '',
+    alamat: r.alamat || '',
+    kota: r.kota || '',
+    phone1: r.phone1 || '',
+    phone2: r.phone2 || '',
+  };
+}
+
 export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [expedisiList, setExpedisiList] = useState<ExpedisiItem[]>([
-    {
-      id: '1',
-      kodeExpedisi: 'JNE',
-      namaExpedisi: 'JALUR NUGRAHA EKAKURIR (JNE)',
-      alamat: 'Jl. Tomang Raya No. 11',
-      kota: 'JAKARTA BARAT',
-      phone1: '021-5665262',
-      phone2: '021-5671412',
-    },
-    {
-      id: '2',
-      kodeExpedisi: 'TIKI',
-      namaExpedisi: 'TITIPAN KILAT (TIKI)',
-      alamat: 'Jl. Raden Saleh No. 2',
-      kota: 'JAKARTA PUSAT',
-      phone1: '021-3140404',
-      phone2: '021-3909505',
-    },
-    {
-      id: '3',
-      kodeExpedisi: 'SICEPAT',
-      namaExpedisi: 'SICEPAT EXPRESS',
-      alamat: 'Jl. Cideng Timur No. 56',
-      kota: 'JAKARTA PUSAT',
-      phone1: '021-50200505',
-      phone2: '',
-    },
-    {
-      id: '4',
-      kodeExpedisi: 'JNT',
-      namaExpedisi: 'J&T EXPRESS',
-      alamat: 'Pluit Penjaringan',
-      kota: 'JAKARTA UTARA',
-      phone1: '021-80661888',
-      phone2: '',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [expedisiList, setExpedisiList] = useState<ExpedisiItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Expedisi');
 
-  // Modal Add New
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [newAlamat, setNewAlamat] = useState('');
@@ -73,15 +50,37 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   const [newPhone1, setNewPhone1] = useState('');
   const [newPhone2, setNewPhone2] = useState('');
 
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('master_expedisis', { orderBy: 'kode_expedisi', asc: true });
+      const mapped = rows.map(mapDbToItem);
+      setExpedisiList(mapped);
+      if (mapped.length > 0 && !mapped.some((x) => x.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
@@ -96,7 +95,10 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
 
   const handleEdit = () => {
     const item = expedisiList.find((x) => x.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewKode(item.kodeExpedisi);
     setNewNama(item.namaExpedisi);
@@ -107,49 +109,88 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
     setIsAddOpen(true);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedId) return;
-    const updated = expedisiList.filter((x) => x.id !== selectedId);
-    setExpedisiList(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data dihapus');
+    try {
+      setIsBusy(true);
+      await erpDelete('master_expedisis', selectedId);
+      const updated = expedisiList.filter((x) => x.id !== selectedId);
+      setExpedisiList(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    const payload: ExpedisiItem = {
-      id: editingId || Date.now().toString(),
-      kodeExpedisi: newKode.trim().toUpperCase(),
-      namaExpedisi: newNama.trim().toUpperCase(),
-      alamat: newAlamat.trim(),
-      kota: newKota.trim().toUpperCase(),
-      phone1: newPhone1.trim(),
-      phone2: newPhone2.trim(),
-    };
-    if (editingId) {
-      setExpedisiList(expedisiList.map((x) => (x.id === editingId ? payload : x)));
-      showFeedback('Data diperbarui');
-    } else {
-      setExpedisiList([payload, ...expedisiList]);
-      setSelectedId(payload.id);
-      showFeedback('Data tersimpan');
+    try {
+      setIsBusy(true);
+      const dbPayload = {
+        kode_expedisi: newKode.trim().toUpperCase(),
+        nama_expedisi: newNama.trim().toUpperCase(),
+        alamat: newAlamat.trim(),
+        kota: newKota.trim().toUpperCase(),
+        phone1: newPhone1.trim(),
+        phone2: newPhone2.trim(),
+      };
+      if (editingId) {
+        const saved = await erpUpdate<any>('master_expedisis', editingId, dbPayload);
+        const mapped = mapDbToItem(saved);
+        setExpedisiList(expedisiList.map((x) => (x.id === editingId ? mapped : x)));
+        showFeedback('Data diperbarui');
+      } else {
+        const saved = await erpCreate<any>('master_expedisis', dbPayload);
+        const mapped = mapDbToItem(saved);
+        setExpedisiList([mapped, ...expedisiList]);
+        setSelectedId(mapped.id);
+        showFeedback('Data tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
   const filteredExpedisi = expedisiList.filter((item) => {
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'Kode') {
-      return item.kodeExpedisi.toLowerCase().includes(term);
-    } else if (searchField === 'Kota') {
-      return item.kota.toLowerCase().includes(term);
-    }
+    if (searchField === 'Kode') return item.kodeExpedisi.toLowerCase().includes(term);
+    if (searchField === 'Kota') return item.kota.toLowerCase().includes(term);
     return item.namaExpedisi.toLowerCase().includes(term);
   });
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'Master_Expedisi',
+      sheetTitle: 'LIST MASTER EXPEDISI',
+      companyProfile: company,
+      columns: [
+        { header: 'Kode Expedisi', accessor: 'kodeExpedisi' },
+        { header: 'Nama Expedisi', accessor: 'namaExpedisi' },
+        { header: 'Alamat', accessor: 'alamat' },
+        { header: 'Kota', accessor: 'kota' },
+        { header: 'Phone 1', accessor: 'phone1' },
+        { header: 'Phone 2', accessor: 'phone2' },
+      ],
+      rows: filteredExpedisi,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
 
   return (
     <div
@@ -157,20 +198,24 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="List Master Expedisi"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Action & Search Bar */}
         <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Expedisi tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
 
@@ -187,17 +232,17 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
             </select>
             <div className="w-[300px]">
               <input
+                ref={searchInputRef}
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder=""
+                placeholder="Ketik untuk FIND..."
                 className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
               />
             </div>
           </div>
         </div>
 
-        {/* 3. Grid Workspace Section */}
         <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
           <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-[#ECE9D8] overflow-hidden shadow-inner">
             <div className="shrink-0 h-[20px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-sans font-normal text-black select-none">
@@ -209,24 +254,12 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                 <thead>
                   <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
                     <th className="w-[20px] min-w-[20px] max-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] p-0" />
-                    <th className="w-[100px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">
-                      Kode
-                    </th>
-                    <th className="w-[240px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">
-                      Nama Expedisi
-                    </th>
-                    <th className="w-[260px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">
-                      Alamat
-                    </th>
-                    <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">
-                      Kota
-                    </th>
-                    <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">
-                      Phone 1
-                    </th>
-                    <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">
-                      Phone 2
-                    </th>
+                    <th className="w-[100px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">Kode</th>
+                    <th className="w-[240px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">Nama Expedisi</th>
+                    <th className="w-[260px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">Alamat</th>
+                    <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">Kota</th>
+                    <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">Phone 1</th>
+                    <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold bg-[#ECE9D8]">Phone 2</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -236,17 +269,20 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                       <tr
                         key={item.id}
                         onClick={() => setSelectedId(item.id)}
-                        className="h-[22px] border-b border-[#ACA899] bg-white cursor-pointer"
+                        onDoubleClick={handleEdit}
+                        className={`h-[22px] border-b border-[#ACA899] cursor-pointer ${
+                          isSelected ? 'bg-[#0A246A] text-white' : 'bg-white hover:bg-[#EAF2FC]'
+                        }`}
                       >
                         <td className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
                           {isSelected ? <span className="text-[10px] font-bold text-black">▶</span> : null}
                         </td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold text-black">{item.kodeExpedisi}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-black font-semibold">{item.namaExpedisi}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.alamat}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.kota}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.phone1}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-black">{item.phone2}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold">{item.kodeExpedisi}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-semibold">{item.namaExpedisi}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.alamat}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.kota}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.phone1}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.phone2}</td>
                       </tr>
                     );
                   })}
@@ -254,10 +290,12 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
               </table>
             </div>
           </div>
+          <div className="shrink-0 flex items-center justify-between mt-1.5 px-1 text-[11px] font-bold">
+            <span>Record: {filteredExpedisi.length}</span>
+          </div>
         </div>
       </div>
 
-      {/* Add New Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-[450px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
@@ -285,7 +323,6 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                   value={newNama}
                   onChange={(e) => setNewNama(e.target.value)}
                   className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                  placeholder="Contoh: JALUR NUGRAHA EKAKURIR"
                 />
               </div>
               <div>
@@ -329,14 +366,15 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
               <div className="flex justify-end space-x-2 pt-2">
                 <button
                   type="submit"
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold active:border-t-[#707070] active:border-b-white cursor-pointer"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold cursor-pointer"
                 >
                   Simpan
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-b-white cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
                 >
                   Batal
                 </button>
@@ -345,6 +383,21 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
           </div>
         </div>
       )}
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN MASTER EXPEDISI"
+        subtitle={`Total Record: ${filteredExpedisi.length}`}
+        columns={[
+          { header: 'Kode', accessor: 'kodeExpedisi', width: '80px' },
+          { header: 'Nama Expedisi', accessor: 'namaExpedisi' },
+          { header: 'Alamat', accessor: 'alamat' },
+          { header: 'Kota', accessor: 'kota', width: '110px' },
+          { header: 'Telepon', accessor: 'phone1', width: '100px' },
+        ]}
+        rows={filteredExpedisi}
+      />
     </div>
   );
 };

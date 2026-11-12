@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface TypeItem {
   id: string;
@@ -14,32 +17,50 @@ interface TypeListFormProps {
 }
 
 export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) => {
-  // Data taken directly from screenshot
-  const [types, setTypes] = useState<TypeItem[]>([
-    { id: '1', kode: '0001', namaTipe: 'CONTACT POINT' },
-    { id: '2', kode: '0002', namaTipe: 'LIMIT SEAL' },
-    { id: '3', kode: '0003', namaTipe: 'UTM-1000D' },
-    { id: '4', kode: '0005', namaTipe: 'UTM-1000E' },
-    { id: '5', kode: '0004', namaTipe: 'UTM-1000E' },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [types, setTypes] = useState<TypeItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Description');
 
-  // Modal for Add / Koreksi
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('master_types', { orderBy: 'kode', asc: true });
+      const mapped: TypeItem[] = rows.map((r) => ({
+        id: r.id,
+        kode: r.kode,
+        namaTipe: r.nama_tipe,
+      }));
+      setTypes(mapped);
+      if (mapped.length > 0 && !mapped.some((t) => t.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     const nextCode = (types.length + 1).toString().padStart(4, '0');
@@ -51,46 +72,64 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
 
   const handleEdit = () => {
     const item = types.find((t) => t.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewKode(item.kode);
     setNewNama(item.namaTipe);
     setIsAddOpen(true);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!selectedId) return;
-    const updated = types.filter((t) => t.id !== selectedId);
-    setTypes(updated);
-    setSelectedId(updated[0]?.id || '');
-    showFeedback('Data dihapus');
+    try {
+      setIsBusy(true);
+      await erpDelete('master_types', selectedId);
+      const updated = types.filter((t) => t.id !== selectedId);
+      setTypes(updated);
+      setSelectedId(updated[0]?.id || '');
+      showFeedback('Data dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKode.trim() || !newNama.trim()) return;
 
-    if (editingId) {
-      setTypes(
-        types.map((t) =>
-          t.id === editingId
-            ? { ...t, kode: newKode.trim().toUpperCase(), namaTipe: newNama.trim().toUpperCase() }
-            : t
-        )
-      );
-      showFeedback('Data diperbarui');
-    } else {
-      const newItem: TypeItem = {
-        id: Date.now().toString(),
+    try {
+      setIsBusy(true);
+      const payload = {
         kode: newKode.trim().toUpperCase(),
-        namaTipe: newNama.trim().toUpperCase(),
+        nama_tipe: newNama.trim().toUpperCase(),
       };
-      setTypes([...types, newItem]);
-      setSelectedId(newItem.id);
-      showFeedback('Data tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('master_types', editingId, payload);
+        setTypes(
+          types.map((t) =>
+            t.id === editingId ? { id: saved.id, kode: saved.kode, namaTipe: saved.nama_tipe } : t
+          )
+        );
+        showFeedback('Data diperbarui');
+      } else {
+        const saved = await erpCreate<any>('master_types', payload);
+        const newItem: TypeItem = { id: saved.id, kode: saved.kode, namaTipe: saved.nama_tipe };
+        setTypes([...types, newItem]);
+        setSelectedId(newItem.id);
+        showFeedback('Data tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
   const filteredTypes = types.filter((item) => {
@@ -102,37 +141,59 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
     return item.namaTipe.toLowerCase().includes(term);
   });
 
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'Master_Type',
+      sheetTitle: 'LIST TABEL TYPE',
+      companyProfile: company,
+      columns: [
+        { header: 'Kode', accessor: 'kode' },
+        { header: 'Nama Tipe', accessor: 'namaTipe' },
+      ],
+      rows: filteredTypes,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
   return (
     <div
       id="type-list-form-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden"
     >
-      {/* 1. Black Top Banner: List Tabel Type */}
       <FormHeaderBanner
         id="type-form-banner"
         title="List Tabel Type"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action & Search Bar */}
       <div
         id="type-form-toolbar"
         className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans min-w-max overflow-x-auto"
       >
         <FormActionButtons
-          onSimpan={() => showFeedback('Data Type tersimpan')}
+          onSimpan={loadData}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
           onHapus={handleDelete}
+          onPrint={() => setIsPrintOpen(true)}
+          onFind={handleFind}
+          isBusy={isBusy}
           feedback={feedback}
         />
 
-        {/* Search controls */}
         <div className="flex items-center space-x-2">
           <span className="font-bold text-[11px] text-black">Search :</span>
 
-          {/* Field selection button / combobox */}
           <div className="relative">
             <select
               value={searchField}
@@ -142,120 +203,78 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
               <option value="Description">Description</option>
               <option value="Kode">Kode</option>
             </select>
-            <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">
-              ▼
-            </div>
+            <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
           </div>
 
-          {/* Search Input Field */}
           <div className="w-[340px]">
             <input
+              ref={searchInputRef}
               id="type-search-input"
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder=""
+              placeholder="Ketik untuk FIND..."
               className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
             />
           </div>
         </div>
       </div>
 
-      {/* 3. Grid Workspace Section */}
       <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8] min-h-[200px]">
-        {/* Table Frame Box */}
         <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-white shadow-inner min-h-0">
-          {/* Header Bar: "List" */}
           <div className="h-[20px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-bold text-black">
             List
           </div>
 
-          {/* Table Data Grid with full 2-directional scroll */}
           <div className="flex-1 overflow-auto bg-[#F0EDE2]">
             <table className="min-w-[500px] w-full border-collapse text-[11px] font-sans select-none">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
-                  {/* Selector column header */}
                   <th className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8] p-1" />
-                  {/* Kode column header */}
-                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">
-                    Kode
-                  </th>
-                  {/* Nama Tipe column header */}
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">
-                    Nama Tipe
-                  </th>
+                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">Kode</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left font-bold text-[11px]">Nama Tipe</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTypes.map((item) => {
                   const isSelected = selectedId === item.id;
-
                   return (
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
                       className={`h-[22px] border-b border-[#D6D6D6] cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#0A246A] text-white font-semibold'
-                          : 'bg-white hover:bg-[#EAF2FC] text-black'
+                        isSelected ? 'bg-[#0A246A] text-white font-semibold' : 'bg-white hover:bg-[#EAF2FC] text-black'
                       }`}
                     >
-                      {/* Left pointer column */}
-                      <td
-                        className={`w-[24px] border-r border-[#ACA899] text-center p-0 ${
-                          isSelected ? 'bg-[#ECE9D8] text-black' : 'bg-[#ECE9D8] text-black'
-                        }`}
-                      >
-                        {isSelected ? (
-                          <span className="text-[10px] font-bold leading-none inline-block">
-                            ▶
-                          </span>
-                        ) : null}
+                      <td className="w-[24px] border-r border-[#ACA899] text-center p-0 bg-[#ECE9D8] text-black">
+                        {isSelected ? <span className="text-[10px] font-bold leading-none inline-block">▶</span> : null}
                       </td>
-
-                      {/* Kode */}
-                      <td
-                        className={`px-2 py-0.5 border-r border-[#D6D6D6] font-mono ${
-                          isSelected ? 'border-r-[#3A5FCD]' : ''
-                        }`}
-                      >
+                      <td className={`px-2 py-0.5 border-r border-[#D6D6D6] font-mono ${isSelected ? 'border-r-[#3A5FCD]' : ''}`}>
                         {item.kode}
                       </td>
-
-                      {/* Nama Tipe */}
-                      <td className="px-2 py-0.5 uppercase tracking-wide">
-                        {item.namaTipe}
-                      </td>
+                      <td className="px-2 py-0.5 uppercase tracking-wide">{item.namaTipe}</td>
                     </tr>
                   );
                 })}
 
-                {/* Fill empty rows for authentic VB/Delphi grid look */}
-                {Array.from({ length: Math.max(0, 15 - filteredTypes.length) }).map(
-                  (_, emptyIdx) => (
-                    <tr key={`empty-${emptyIdx}`} className="h-[22px] bg-white border-b border-[#EBEBEB]">
-                      <td className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8]" />
-                      <td className="border-r border-[#EBEBEB]" />
-                      <td />
-                    </tr>
-                  )
-                )}
+                {Array.from({ length: Math.max(0, 15 - filteredTypes.length) }).map((_, emptyIdx) => (
+                  <tr key={`empty-${emptyIdx}`} className="h-[22px] bg-white border-b border-[#EBEBEB]">
+                    <td className="w-[24px] border-r border-[#ACA899] bg-[#ECE9D8]" />
+                    <td className="border-r border-[#EBEBEB]" />
+                    <td />
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* 4. Bottom Information Bar */}
         <div className="flex items-center justify-between mt-2 px-1 text-[11px] font-sans">
-          {/* Status box / Beveled frame */}
           <div className="w-[450px] h-[22px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 flex items-center text-gray-700">
-            {selectedId
-              ? `Tipe Terpilih: ${types.find((t) => t.id === selectedId)?.namaTipe || '-'}`
-              : ''}
+            {selectedId ? `Tipe Terpilih: ${types.find((t) => t.id === selectedId)?.namaTipe || '-'}` : ''}
           </div>
 
-          {/* Record Count Indicator (matching 5 from screenshot) */}
           <div className="flex items-center space-x-6 text-[12px] font-sans font-bold text-black pr-16">
             <span>Record</span>
             <span className="font-mono text-[13px]">{filteredTypes.length}</span>
@@ -263,13 +282,11 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
         </div>
       </div>
 
-      {/* Add New Dialog Window */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/25 flex items-center justify-center z-50 p-4">
           <div className="w-[360px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans">
-            {/* Title Bar */}
             <div className="flex items-center justify-between h-[24px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold">
-              <span>Input Type Baru</span>
+              <span>{editingId ? 'Koreksi Type' : 'Input Type Baru'}</span>
               <button
                 type="button"
                 onClick={() => setIsAddOpen(false)}
@@ -307,14 +324,15 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] font-bold hover:bg-[#F2EFE2] cursor-pointer"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-bold hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Simpan
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-l-[#707070] active:border-b-white active:border-r-white text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Batal
                 </button>
@@ -323,6 +341,18 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
           </div>
         </div>
       )}
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN MASTER TABEL TYPE"
+        subtitle={`Total Record: ${filteredTypes.length}`}
+        columns={[
+          { header: 'Kode', accessor: 'kode', width: '120px' },
+          { header: 'Nama Tipe', accessor: 'namaTipe' },
+        ]}
+        rows={filteredTypes}
+      />
     </div>
   );
 };

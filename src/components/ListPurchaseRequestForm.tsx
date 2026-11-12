@@ -1,11 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  toDisplayDmy,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface PurchaseRequestItem {
   id: string;
   noPr: string;
   tanggal: string;
+  tanggalIso: string;
   deliveryTo: string;
   delivery: string;
   noPo: string;
@@ -20,64 +34,76 @@ interface ListPurchaseRequestFormProps {
   onClose: () => void;
 }
 
+function mapDbToPr(r: any): PurchaseRequestItem {
+  return {
+    id: r.id,
+    noPr: r.no_pr || '',
+    tanggal: toDisplayDmy(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    deliveryTo: r.delivery_to || '',
+    delivery: r.delivery || '',
+    noPo: r.no_po || '-',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDmy(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '-',
+    tglUpdate: toDisplayDmy(r.tgl_update) || '-',
+  };
+}
+
 export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [prList, setPrList] = useState<PurchaseRequestItem[]>([
-    {
-      id: '1',
-      noPr: 'PR/2026/08/001',
-      tanggal: '01-08-2026',
-      deliveryTo: 'Gudang Utama Jakarta',
-      delivery: 'Darat',
-      noPo: 'PO/2026/08/010',
-      dibuatOleh: 'RETNO',
-      tglCreated: '01-08-2026 09:30',
-      diupdateOleh: 'RETNO',
-      tglUpdate: '01-08-2026 10:15',
-    },
-    {
-      id: '2',
-      noPr: 'PR/2026/08/002',
-      tanggal: '05-08-2026',
-      deliveryTo: 'Cabang Surabaya',
-      delivery: 'Laut',
-      noPo: '-',
-      dibuatOleh: 'ADMIN',
-      tglCreated: '05-08-2026 14:20',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [prList, setPrList] = useState<PurchaseRequestItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('No.PR');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('01-08-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New Modal
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
-  const [newNoPr, setNewNoPr] = useState<string>('PR/2026/08/003');
-  const [newTanggal, setNewTanggal] = useState<string>('2026-08-10');
+  const [newNoPr, setNewNoPr] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
   const [newDeliveryTo, setNewDeliveryTo] = useState<string>('');
   const [newDelivery, setNewDelivery] = useState<string>('Darat');
   const [newNoPo, setNewNoPo] = useState<string>('-');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!isOpen) return null;
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('purchase_requests', { orderBy: 'tanggal', asc: false });
+      const mapped = rows.map(mapDbToPr);
+      setPrList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoPr(`PR/2026/08/${String(prList.length + 3).padStart(3, '0')}`);
-    setNewTanggal(new Date().toISOString().split('T')[0]);
+    setNewNoPr(`PR/2026/08/${String(prList.length + 1).padStart(3, '0')}`);
+    setNewTanggal(toDisplayDmy(todayIso()));
     setNewDeliveryTo('');
     setNewDelivery('Darat');
     setNewNoPo('-');
@@ -86,81 +112,118 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
 
   const handleEdit = () => {
     const item = prList.find((p) => p.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoPr(item.noPr);
-    setNewTanggal(item.tanggal);
+    setNewTanggal(item.tanggal || toDisplayDmy(todayIso()));
     setNewDeliveryTo(item.deliveryTo);
     setNewDelivery(item.delivery);
     setNewNoPo(item.noPo);
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoPr.trim()) return;
 
-    if (editingId) {
-      setPrList(
-        prList.map((p) =>
-          p.id === editingId
-            ? {
-                ...p,
-                noPr: newNoPr.trim().toUpperCase(),
-                tanggal: newTanggal,
-                deliveryTo: newDeliveryTo.trim().toUpperCase(),
-                delivery: newDelivery.trim(),
-                noPo: newNoPo.trim().toUpperCase(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: new Date().toLocaleDateString('id-ID'),
-              }
-            : p
-        )
-      );
-      showFeedback('Purchase Request diperbarui');
-    } else {
-      const newItem: PurchaseRequestItem = {
-        id: Date.now().toString(),
-        noPr: newNoPr.trim().toUpperCase(),
-        tanggal: newTanggal,
-        deliveryTo: newDeliveryTo.trim().toUpperCase(),
-        delivery: newDelivery.trim(),
-        noPo: newNoPo.trim().toUpperCase(),
-        dibuatOleh: 'RETNO',
-        tglCreated: new Date().toLocaleString(),
-        diupdateOleh: '-',
-        tglUpdate: '-',
-      };
-
-      setPrList([newItem, ...prList]);
-      setSelectedId(newItem.id);
-      showFeedback('Purchase Request tersimpan');
+    try {
+      setIsBusy(true);
+      if (editingId) {
+        const saved = await erpUpdate<any>('purchase_requests', editingId, {
+          no_pr: newNoPr.trim().toUpperCase(),
+          tanggal: toIsoDate(newTanggal) || todayIso(),
+          delivery_to: newDeliveryTo.trim().toUpperCase(),
+          delivery: newDelivery.trim(),
+          no_po: newNoPo.trim().toUpperCase(),
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToPr(saved);
+        setPrList(prList.map((p) => (p.id === editingId ? mapped : p)));
+        showFeedback('Purchase Request diperbarui');
+      } else {
+        const saved = await erpCreate<any>('purchase_requests', {
+          no_pr: newNoPr.trim().toUpperCase(),
+          tanggal: toIsoDate(newTanggal) || todayIso(),
+          delivery_to: newDeliveryTo.trim().toUpperCase(),
+          delivery: newDelivery.trim(),
+          no_po: newNoPo.trim().toUpperCase(),
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+          diupdate_oleh: '-',
+          tgl_update: null,
+        });
+        const mapped = mapDbToPr(saved);
+        setPrList([mapped, ...prList]);
+        setSelectedId(mapped.id);
+        showFeedback('Purchase Request tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = prList.filter((item) => item.id !== id);
-    setPrList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('purchase_requests', id);
+      const updated = prList.filter((item) => item.id !== id);
+      setPrList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Purchase Request dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Purchase Request dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredPrList = prList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.PR') {
-      return item.noPr.toLowerCase().includes(term);
-    } else if (searchField === 'Delivery To') {
-      return item.deliveryTo.toLowerCase().includes(term);
-    } else if (searchField === 'No. PO') {
-      return item.noPo.toLowerCase().includes(term);
-    }
+    if (searchField === 'No.PR') return item.noPr.toLowerCase().includes(term);
+    if (searchField === 'Delivery To') return item.deliveryTo.toLowerCase().includes(term);
+    if (searchField === 'No. PO') return item.noPo.toLowerCase().includes(term);
     return item.noPr.toLowerCase().includes(term) || item.deliveryTo.toLowerCase().includes(term);
   });
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Purchase_Request',
+      sheetTitle: 'LIST PURCHASE REQUEST',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.PR', accessor: 'noPr' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Delivery To', accessor: 'deliveryTo' },
+        { header: 'Delivery', accessor: 'delivery' },
+        { header: 'No. PO', accessor: 'noPo' },
+        { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
+        { header: 'Tgl Created', accessor: 'tglCreated', align: 'center' },
+      ],
+      rows: filteredPrList,
+    });
+    showFeedback('Export Excel selesai');
+  };
 
   return (
     <div
@@ -168,30 +231,34 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="List Purchase Request"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Sub-toolbar with FormActionButtons & Tanggal Filter */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={() => showFeedback('Data Purchase Request tersimpan')}
+              onSimpan={loadData}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
               onHapus={() => selectedId && handleDelete(selectedId)}
+              onPrint={() => setIsPrintOpen(true)}
+              onFind={handleFind}
+              isBusy={isBusy}
               feedback={feedback}
             />
             <div className="flex items-center space-x-1">
               <span className="text-gray-800 font-medium">Tanggal :</span>
-              <input
-                type="text"
-                value={tanggalFilter}
-                onChange={(e) => setTanggalFilter(e.target.value)}
-                className="w-24 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
+              <DatePickerInput
+                value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+                onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+                format="dmy"
+                placeholder="Semua"
               />
               <button
                 type="button"
@@ -204,11 +271,10 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           </div>
 
           <div className="font-bold text-sm text-gray-900 pr-2">
-            Rp {prList.length > 0 ? '0' : '0'}
+            Total PR : {filteredPrList.length}
           </div>
         </div>
 
-        {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
         <div className="flex-1 overflow-auto bg-white border border-[#999999] m-1.5 relative shadow-inner">
           <table className="w-full border-collapse text-left min-w-[1000px]">
             <thead className="sticky top-0 bg-[#F0F0F0] text-gray-800 font-semibold border-b border-[#C0C0C0] z-10">
@@ -240,8 +306,13 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
+                      onDoubleClick={handleEdit}
                       className={`cursor-pointer border-b border-[#E0E0E0] ${
-                        isSelected ? 'bg-[#316AC5] text-white' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5F5F5]' : 'bg-[#FAFAFA] hover:bg-[#F5F5F5]'
+                        isSelected
+                          ? 'bg-[#316AC5] text-white'
+                          : idx % 2 === 0
+                          ? 'bg-white hover:bg-[#F5F5F5]'
+                          : 'bg-[#FAFAFA] hover:bg-[#F5F5F5]'
                       }`}
                     >
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{idx + 1}</td>
@@ -261,7 +332,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                             e.stopPropagation();
                             handleDelete(item.id);
                           }}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
                             isSelected ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-100 text-red-700 hover:bg-red-200'
                           }`}
                         >
@@ -276,7 +347,6 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           </table>
         </div>
 
-        {/* 4. Footer & Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-gray-800">Search :</span>
@@ -290,6 +360,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
               <option value="No. PO">No. PO</option>
             </select>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -299,15 +370,16 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           </div>
 
           <div className="flex items-center space-x-4">
-            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs" />
+            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
+              {prList.find((r) => r.id === selectedId)?.deliveryTo || ''}
+            </div>
             <div className="text-gray-800 font-medium">Record : {filteredPrList.length}</div>
           </div>
         </div>
 
-        {/* Add New Modal Dialog */}
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[420px] overflow-hidden">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[440px] overflow-hidden">
               <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
                 <span>{editingId ? 'Koreksi Purchase Request' : 'Tambah Purchase Request Baru'}</span>
                 <button
@@ -326,18 +398,18 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                     value={newNoPr}
                     onChange={(e) => setNewNoPr(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
                   />
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Tanggal:</label>
-                  <input
-                    type="date"
-                    value={newTanggal}
-                    onChange={(e) => setNewTanggal(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                  />
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTanggal}
+                      onChange={(formatted) => setNewTanggal(formatted)}
+                      format="dmy"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Delivery To:</label>
@@ -371,13 +443,14 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                   <button
                     type="button"
                     onClick={() => setIsAddOpen(false)}
-                    className="px-3 py-1 bg-[#E1DFDD] border border-[#ADABA1] rounded text-xs hover:bg-[#F3F2F1]"
+                    className="px-3 py-1 bg-[#E1DFDD] border border-[#ADABA1] rounded text-xs hover:bg-[#F3F2F1] cursor-pointer"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
-                    className="px-3 py-1 bg-[#0055EA] text-white border border-blue-800 rounded text-xs hover:bg-blue-700"
+                    disabled={isBusy}
+                    className="px-3 py-1 bg-[#0055EA] text-white border border-blue-800 rounded text-xs hover:bg-blue-700 cursor-pointer"
                   >
                     Simpan
                   </button>
@@ -387,6 +460,23 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           </div>
         )}
 
+        <A4PrintPreviewModal
+          isOpen={isPrintOpen}
+          onClose={() => setIsPrintOpen(false)}
+          title="LAPORAN PURCHASE REQUEST"
+          subtitle={`Filter Tanggal: ${tanggalFilter}`}
+          orientation="landscape"
+          columns={[
+            { header: 'No.PR', accessor: 'noPr', width: '120px' },
+            { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '85px' },
+            { header: 'Delivery To', accessor: 'deliveryTo' },
+            { header: 'Delivery', accessor: 'delivery', width: '85px' },
+            { header: 'No. PO', accessor: 'noPo', width: '110px' },
+            { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '85px' },
+          ]}
+          rows={filteredPrList}
+          summaryItems={[{ label: 'Total Record', value: `${filteredPrList.length} Dokumen` }]}
+        />
       </div>
     </div>
   );

@@ -1,6 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCompositeSave,
+  erpDelete,
+  erpList,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDmy,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface GiroDetailRow {
   id: string;
@@ -13,6 +28,14 @@ export interface GiroDetailRow {
   amountPaid: string;
   keterangan: string;
   markedDelete: boolean;
+}
+
+interface GiroHeaderRecord {
+  id: string;
+  no_bukti: string;
+  tanggal: string;
+  total_amount: number;
+  dibuat_oleh: string;
 }
 
 interface InputDaftarGiroFormProps {
@@ -34,54 +57,209 @@ const createEmptyRow = (index?: number): GiroDetailRow => ({
 });
 
 export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen, onClose }) => {
+  const [headerId, setHeaderId] = useState<string>('');
   const [noBukti, setNoBukti] = useState<string>('');
-  const [tanggal, setTanggal] = useState<string>('');
-  const datePickerRef = useRef<HTMLInputElement>(null);
+  const [tanggal, setTanggal] = useState<string>(() => toDisplayDmy(todayIso()));
 
-  const [rows, setRows] = useState<GiroDetailRow[]>([createEmptyRow()]);
+  const [rows, setRows] = useState<GiroDetailRow[]>([createEmptyRow(1)]);
   const [selectedId, setSelectedId] = useState<string>(() => rows[0]?.id || '');
 
-  // Optional modal for + Baru / Koreksi button workflow
+  const [savedHeaders, setSavedHeaders] = useState<GiroHeaderRecord[]>([]);
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
+  const [findQuery, setFindQuery] = useState<string>('');
+  const findInputRef = useRef<HTMLInputElement>(null);
+
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formRow, setFormRow] = useState<GiroDetailRow>(createEmptyRow(1));
-  const [feedback, setFeedback] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadHeaderDetails = async (hdr: GiroHeaderRecord) => {
+    try {
+      setIsBusy(true);
+      const dets = await erpList<any>('giro_pembelian_details', {
+        eq: { header_id: hdr.id },
+        orderBy: 'no_urut',
+        asc: true,
+      });
+      setHeaderId(hdr.id);
+      setNoBukti(hdr.no_bukti);
+      setTanggal(toDisplayDmy(hdr.tanggal) || toDisplayDmy(todayIso()));
+      if (dets.length > 0) {
+        const mapped: GiroDetailRow[] = dets.map((d, idx) => ({
+          id: d.id || `${Date.now()}-${idx}`,
+          no: String(d.no_urut ?? idx + 1),
+          idSupplier: d.id_supplier || '',
+          supplier: d.supplier || '',
+          noCekGiro: d.no_cek_giro || '',
+          bank: d.bank || '',
+          due: toDisplayDmy(d.due),
+          amountPaid: d.amount_paid ? String(d.amount_paid) : '',
+          keterangan: d.keterangan || '',
+          markedDelete: Boolean(d.marked_delete),
+        }));
+        setRows(mapped);
+        setSelectedId(mapped[0].id);
+      } else {
+        const blank = createEmptyRow(1);
+        setRows([blank]);
+        setSelectedId(blank.id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal memuat detail: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const loadInitialData = async () => {
+    try {
+      setIsBusy(true);
+      const headers = await erpList<GiroHeaderRecord>('giro_pembelian_headers', {
+        orderBy: 'created_at',
+        asc: false,
+        limit: 100,
+      });
+      setSavedHeaders(headers);
+      if (headers.length > 0) {
+        await loadHeaderDetails(headers[0]);
+      } else {
+        const defaultNo = `GP/${new Date().getFullYear()}/001`;
+        setHeaderId('');
+        setNoBukti(defaultNo);
+        setTanggal(toDisplayDmy(todayIso()));
+        const blank = createEmptyRow(1);
+        setRows([blank]);
+        setSelectedId(blank.id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      loadInitialData();
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleCellChange = (id: string, field: keyof GiroDetailRow, value: string | boolean) => {
-    setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  };
+
+  const totalAmountPaid = rows.reduce(
+    (sum, item) => sum + (item.markedDelete ? 0 : parseNum(item.amountPaid)),
+    0
+  );
+
+  const handleSimpan = async () => {
+    const cleanNoBukti = noBukti.trim().toUpperCase();
+    if (!cleanNoBukti) {
+      showFeedback('No.Bukti wajib diisi');
+      return;
+    }
+
+    const activeRows = rows.filter(
+      (r) =>
+        !r.markedDelete &&
+        (r.idSupplier.trim() ||
+          r.supplier.trim() ||
+          r.noCekGiro.trim() ||
+          parseNum(r.amountPaid) > 0)
     );
-  };
 
-  const handleTanggalMaskInput = (raw: string) => {
-    const cleaned = raw.replace(/[^0-9-]/g, '').slice(0, 10);
-    setTanggal(cleaned);
-  };
+    const computedTotal = activeRows.reduce((s, r) => s + parseNum(r.amountPaid), 0);
 
-  const handleDatePickerChange = (isoDate: string) => {
-    if (!isoDate) return;
-    const [yyyy, mm, dd] = isoDate.split('-');
-    if (yyyy && mm && dd) {
-      setTanggal(`${dd}-${mm}-${yyyy}`);
+    try {
+      setIsBusy(true);
+      const headerPayload: Record<string, any> = {
+        no_bukti: cleanNoBukti,
+        tanggal: toIsoDate(tanggal) || todayIso(),
+        total_amount: computedTotal,
+        dibuat_oleh: 'RETNO',
+      };
+      if (headerId) headerPayload.id = headerId;
+
+      const detailPayloads = activeRows.map((r, idx) => ({
+        no_urut: parseInt(r.no, 10) || idx + 1,
+        id_supplier: r.idSupplier.trim().toUpperCase(),
+        supplier: r.supplier.trim().toUpperCase(),
+        no_cek_giro: r.noCekGiro.trim().toUpperCase(),
+        bank: r.bank.trim().toUpperCase(),
+        due: toIsoDate(r.due),
+        amount_paid: parseNum(r.amountPaid),
+        keterangan: r.keterangan.trim(),
+        marked_delete: false,
+      }));
+
+      const res = await erpCompositeSave<{ header: GiroHeaderRecord; details: any[] }>(
+        'giro-pembelian',
+        headerPayload,
+        detailPayloads
+      );
+
+      if (res.header) {
+        setHeaderId(res.header.id);
+        setNoBukti(res.header.no_bukti);
+        setTanggal(toDisplayDmy(res.header.tanggal));
+      }
+
+      if (res.details && res.details.length > 0) {
+        const mapped: GiroDetailRow[] = res.details.map((d, idx) => ({
+          id: d.id,
+          no: String(d.no_urut ?? idx + 1),
+          idSupplier: d.id_supplier || '',
+          supplier: d.supplier || '',
+          noCekGiro: d.no_cek_giro || '',
+          bank: d.bank || '',
+          due: toDisplayDmy(d.due),
+          amountPaid: d.amount_paid ? String(d.amount_paid) : '',
+          keterangan: d.keterangan || '',
+          markedDelete: false,
+        }));
+        setRows(mapped);
+        setSelectedId(mapped[0].id);
+      } else {
+        const blank = createEmptyRow(1);
+        setRows([blank]);
+        setSelectedId(blank.id);
+      }
+
+      const headers = await erpList<GiroHeaderRecord>('giro_pembelian_headers', {
+        orderBy: 'created_at',
+        asc: false,
+        limit: 100,
+      });
+      setSavedHeaders(headers);
+      showFeedback('Data Daftar Giro tersimpan ke Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
   };
 
-  const handleSimpan = () => {
-    const hasDeletedChecked = rows.some((r) => r.markedDelete);
-    if (hasDeletedChecked) {
-      const remaining = rows.filter((r) => !r.markedDelete);
-      const nextRows = remaining.length > 0 ? remaining : [createEmptyRow()];
-      setRows(nextRows);
-      setSelectedId(nextRows[0].id);
-    }
-    showFeedback('Data Daftar Giro tersimpan');
+  const handleNewDocument = () => {
+    const nextNum = savedHeaders.length + 1;
+    setHeaderId('');
+    setNoBukti(`GP/${new Date().getFullYear()}/${String(nextNum).padStart(3, '0')}`);
+    setTanggal(toDisplayDmy(todayIso()));
+    const blank = createEmptyRow(1);
+    setRows([blank]);
+    setSelectedId(blank.id);
+    showFeedback('Form Dokumen Giro Baru siap diisi');
   };
 
   const handleAddNew = () => {
@@ -107,11 +285,10 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
       setRows((prev) =>
         prev.map((r) => (r.id === editingId ? { ...formRow, id: editingId } : r))
       );
-      showFeedback('Baris giro diperbarui');
+      showFeedback('Baris giro diperbarui (Klik Simpan untuk commit DB)');
     } else {
       const isFirstBlank =
         rows.length === 1 &&
-        !rows[0].no &&
         !rows[0].idSupplier &&
         !rows[0].supplier &&
         !rows[0].noCekGiro &&
@@ -129,39 +306,90 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
         setRows((prev) => [...prev, newEntry]);
       }
       setSelectedId(newEntry.id);
-      showFeedback('Baris giro ditambahkan');
+      showFeedback('Baris ditambahkan (Klik Simpan untuk commit DB)');
     }
     setIsModalOpen(false);
     setEditingId(null);
   };
 
-  const handleHapus = () => {
+  const handleHapus = async () => {
     const hasMarked = rows.some((r) => r.markedDelete);
+    if (!hasMarked && rows.length <= 1 && headerId && !rows[0]?.supplier && !rows[0]?.noCekGiro) {
+      // Delete whole voucher header when deleting empty header
+      try {
+        setIsBusy(true);
+        await erpDelete('giro_pembelian_headers', headerId);
+        showFeedback('Dokumen Giro dihapus dari database');
+        await loadInitialData();
+      } catch (err: any) {
+        showFeedback(`Gagal hapus: ${err.message}`);
+      } finally {
+        setIsBusy(false);
+      }
+      return;
+    }
+
     const remaining = hasMarked
       ? rows.filter((r) => !r.markedDelete)
       : rows.filter((r) => r.id !== selectedId);
 
     if (remaining.length === 0) {
-      const blank = createEmptyRow();
+      const blank = createEmptyRow(1);
       setRows([blank]);
       setSelectedId(blank.id);
     } else {
       setRows(remaining);
       setSelectedId(remaining[0].id);
     }
-    showFeedback('Baris giro dihapus');
+    showFeedback('Baris giro dihapus (Klik Simpan untuk sinkron DB)');
   };
 
-  const parseNumericAmount = (val: string): number => {
-    const normalized = val.replace(/[^0-9.-]/g, '');
-    const parsed = parseFloat(normalized);
-    return Number.isNaN(parsed) ? 0 : parsed;
+  const handleOpenFind = async () => {
+    setIsFindOpen(true);
+    try {
+      const headers = await erpList<GiroHeaderRecord>('giro_pembelian_headers', {
+        orderBy: 'created_at',
+        asc: false,
+        limit: 100,
+      });
+      setSavedHeaders(headers);
+    } catch {
+      // keep existing
+    }
+    setTimeout(() => findInputRef.current?.focus(), 60);
   };
 
-  const totalAmountPaid = rows.reduce(
-    (sum, item) => sum + (item.markedDelete ? 0 : parseNumericAmount(item.amountPaid)),
-    0
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: `Daftar_Giro_Pembelian_${noBukti || 'Baru'}`,
+      sheetTitle: 'INPUT DAFTAR GIRO (PEMBELIAN)',
+      subtitle: `No. Bukti: ${noBukti || '-'} | Tanggal: ${tanggal || '-'}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.', accessor: 'no', align: 'center' },
+        { header: 'ID Supplier', accessor: 'idSupplier' },
+        { header: 'Supplier', accessor: 'supplier' },
+        { header: 'No. Cek / Giro', accessor: 'noCekGiro' },
+        { header: 'Bank', accessor: 'bank' },
+        { header: 'Due', accessor: 'due', align: 'center' },
+        { header: 'Amount Paid', accessor: (r) => parseNum(r.amountPaid), align: 'right' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+      ],
+      rows: rows.filter((r) => !r.markedDelete && (r.supplier || r.noCekGiro || r.amountPaid)),
+    });
+    showFeedback('Export Excel selesai');
+  };
+
+  const printableRows = rows.filter(
+    (r) => !r.markedDelete && (r.idSupplier || r.supplier || r.noCekGiro || r.amountPaid)
   );
+
+  const filteredHeaders = savedHeaders.filter((h) => {
+    if (!findQuery.trim()) return true;
+    const q = findQuery.toLowerCase();
+    return h.no_bukti.toLowerCase().includes(q) || (h.tanggal || '').toLowerCase().includes(q);
+  });
 
   return (
     <div
@@ -169,14 +397,15 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <div className="w-full h-full flex flex-col min-w-0">
-        {/* 1. Black Top Banner */}
         <FormHeaderBanner
           title="Input Daftar Giro (Pendaftaran Penerimaan Giro)"
           onClose={onClose}
-          onExportExcel={() => showFeedback('Export Excel selesai')}
+          onFind={handleOpenFind}
+          onPrint={() => setIsPrintOpen(true)}
+          onTableView={loadInitialData}
+          onExportExcel={handleExportExcel}
         />
 
-        {/* 2. Toolbar Aksi (Simpan, + Baru, Koreksi, Hapus) */}
         <div className="shrink-0 h-[40px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
           <FormActionButtons
             compact
@@ -184,13 +413,22 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleHapus}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleOpenFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
+          <div className="h-[20px] w-[1px] bg-[#ACA899] mx-1" />
+          <button
+            type="button"
+            onClick={handleNewDocument}
+            className="h-[26px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] cursor-pointer text-[11px] font-semibold text-black whitespace-nowrap"
+          >
+            No.Bukti Baru
+          </button>
         </div>
 
-        {/* 3. Classic Desktop Form Body */}
         <div className="flex-1 flex flex-col overflow-auto bg-[#ECE9D8] p-2.5">
-          {/* Header Input Box (No.Bukti & Tanggal) */}
           <div className="shrink-0 max-w-[920px] w-full bg-[#EFEFEF] border border-[#ACA899] shadow-[inset_1px_1px_0_#FFFFFF] px-4 py-2.5 mb-2 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center space-x-2">
               <label
@@ -203,9 +441,17 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                 id="giro-no-bukti"
                 type="text"
                 value={noBukti}
-                onChange={(e) => setNoBukti(e.target.value)}
-                className="w-[100px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-1.5 text-[11px] font-mono text-black outline-none focus:border-[#316AC5]"
+                onChange={(e) => setNoBukti(e.target.value.toUpperCase())}
+                className="w-[140px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-1.5 text-[11px] font-mono text-black outline-none focus:border-[#316AC5]"
               />
+              <button
+                type="button"
+                onClick={handleOpenFind}
+                className="h-[22px] px-2 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7F9DB9] text-[10px] font-bold cursor-pointer"
+                title="Cari Dokumen Giro tersimpan"
+              >
+                Pilih...
+              </button>
             </div>
 
             <div className="flex items-center space-x-2 pr-4">
@@ -215,46 +461,18 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
               >
                 Tanggal :
               </label>
-              <div className="relative flex items-center">
-                <input
-                  id="giro-tanggal"
-                  type="text"
-                  value={tanggal}
-                  onChange={(e) => handleTanggalMaskInput(e.target.value)}
-                  placeholder="__-__-____"
-                  className="w-[84px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-1.5 text-[11px] font-mono text-black outline-none focus:border-[#316AC5]"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (datePickerRef.current?.showPicker) {
-                      datePickerRef.current.showPicker();
-                    } else {
-                      datePickerRef.current?.click();
-                    }
-                  }}
-                  title="Pilih Tanggal"
-                  className="w-[18px] h-[22px] bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-l-0 border-[#7F9DB9] flex items-center justify-center text-[8px] text-black cursor-pointer"
-                >
-                  ▼
-                </button>
-                <input
-                  ref={datePickerRef}
-                  type="date"
-                  onChange={(e) => handleDatePickerChange(e.target.value)}
-                  className="sr-only"
-                  tabIndex={-1}
-                />
-              </div>
+              <DatePickerInput
+                id="giro-tanggal"
+                value={tanggal}
+                onChange={(formatted) => setTanggal(formatted)}
+                format="dmy"
+              />
             </div>
           </div>
 
-          {/* Grid Panel Container with Scrollbars */}
           <div className="flex-1 min-h-[260px] max-w-[1040px] w-full bg-[#EFEFEF] border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white flex flex-col overflow-hidden">
-            {/* Scrollable Table Container */}
             <div className="flex-1 overflow-auto bg-[#EFEFEF]">
               <div className="min-w-[920px] flex flex-col">
-                {/* Centered Group Title Header */}
                 <div className="h-[22px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-normal text-black tracking-wide">
                   GIRO / CEK / CASH DETAIL
                 </div>
@@ -263,33 +481,15 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                   <thead className="sticky top-0 z-10 bg-[#ECE9D8] text-black">
                     <tr className="h-[22px] border-b border-[#808080]">
                       <th className="w-[22px] min-w-[22px] border-r border-[#ACA899] bg-[#ECE9D8] p-0" />
-                      <th className="w-[40px] min-w-[40px] border-r border-[#ACA899] px-1.5 font-normal text-center bg-[#ECE9D8]">
-                        No.
-                      </th>
-                      <th className="w-[82px] min-w-[82px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        ID Supplier
-                      </th>
-                      <th className="w-[190px] min-w-[190px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        Supplier
-                      </th>
-                      <th className="w-[115px] min-w-[115px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        No. Cek / Giro
-                      </th>
-                      <th className="w-[95px] min-w-[95px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        Bank
-                      </th>
-                      <th className="w-[95px] min-w-[95px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        Due
-                      </th>
-                      <th className="w-[110px] min-w-[110px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        Amount Paid
-                      </th>
-                      <th className="min-w-[175px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        Keterangan
-                      </th>
-                      <th className="w-[56px] min-w-[56px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">
-                        Delete
-                      </th>
+                      <th className="w-[40px] min-w-[40px] border-r border-[#ACA899] px-1.5 font-normal text-center bg-[#ECE9D8]">No.</th>
+                      <th className="w-[82px] min-w-[82px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">ID Supplier</th>
+                      <th className="w-[190px] min-w-[190px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">Supplier</th>
+                      <th className="w-[115px] min-w-[115px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">No. Cek / Giro</th>
+                      <th className="w-[95px] min-w-[95px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">Bank</th>
+                      <th className="w-[95px] min-w-[95px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">Due</th>
+                      <th className="w-[110px] min-w-[110px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">Amount Paid</th>
+                      <th className="min-w-[175px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">Keterangan</th>
+                      <th className="w-[56px] min-w-[56px] border-r border-[#ACA899] px-2 font-normal text-center bg-[#ECE9D8]">Delete</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -301,12 +501,9 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                           onClick={() => setSelectedId(row.id)}
                           className="h-[22px] border-b border-[#ACA899] bg-white"
                         >
-                          {/* Row Selector Marker (*) */}
                           <td className="w-[22px] border-r border-[#ACA899] bg-[#ECE9D8] text-center font-bold text-black text-[13px] leading-none p-0">
                             {isSelected ? '*' : ''}
                           </td>
-
-                          {/* No. */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
@@ -316,8 +513,6 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                               className="w-full h-[21px] px-1 text-center font-mono text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* ID Supplier */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
@@ -329,13 +524,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                               className="w-full h-[21px] px-1.5 font-mono text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* Supplier (highlighted pale yellow on active row matching reference) */}
-                          <td
-                            className={`border-r border-[#ACA899] p-0 ${
-                              isSelected ? 'bg-[#FFFF99]' : 'bg-white'
-                            }`}
-                          >
+                          <td className={`border-r border-[#ACA899] p-0 ${isSelected ? 'bg-[#FFFF99]' : 'bg-white'}`}>
                             <input
                               type="text"
                               value={row.supplier}
@@ -348,8 +537,6 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                               }`}
                             />
                           </td>
-
-                          {/* No. Cek / Giro */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
@@ -361,8 +548,6 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                               className="w-full h-[21px] px-1.5 font-mono text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* Bank */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
@@ -374,45 +559,34 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                               className="w-full h-[21px] px-1.5 text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* Due */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
                               value={row.due}
+                              placeholder="dd-mm-yyyy"
                               onFocus={() => setSelectedId(row.id)}
                               onChange={(e) => handleCellChange(row.id, 'due', e.target.value)}
                               className="w-full h-[21px] px-1.5 font-mono text-center text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* Amount Paid */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
                               value={row.amountPaid}
                               onFocus={() => setSelectedId(row.id)}
-                              onChange={(e) =>
-                                handleCellChange(row.id, 'amountPaid', e.target.value)
-                              }
+                              onChange={(e) => handleCellChange(row.id, 'amountPaid', e.target.value)}
                               className="w-full h-[21px] px-1.5 font-mono text-right text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* Keterangan */}
                           <td className="border-r border-[#ACA899] p-0">
                             <input
                               type="text"
                               value={row.keterangan}
                               onFocus={() => setSelectedId(row.id)}
-                              onChange={(e) =>
-                                handleCellChange(row.id, 'keterangan', e.target.value)
-                              }
+                              onChange={(e) => handleCellChange(row.id, 'keterangan', e.target.value)}
                               className="w-full h-[21px] px-1.5 text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
                             />
                           </td>
-
-                          {/* Delete Checkbox */}
                           <td
                             className="border-r border-[#ACA899] text-center p-0 bg-white"
                             onClick={(e) => e.stopPropagation()}
@@ -436,7 +610,6 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
             </div>
           </div>
 
-          {/* Bottom Total Amount Paid Bar (matching reference layout) */}
           <div className="shrink-0 max-w-[1040px] w-full flex items-center justify-end space-x-2 pt-2 pr-6">
             <label
               htmlFor="giro-total-amount-paid"
@@ -448,8 +621,8 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
               id="giro-total-amount-paid"
               type="text"
               readOnly
-              value={`Rp ${totalAmountPaid.toLocaleString('id-ID')}`}
-              className="w-[180px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-2 text-right font-mono text-[11px] text-gray-600 outline-none"
+              value={formatRupiah(totalAmountPaid)}
+              className="w-[180px] h-[22px] bg-white border border-t-[#7F9DB9] border-l-[#7F9DB9] border-b-[#D4D0C8] border-r-[#D4D0C8] px-2 text-right font-mono text-[11px] text-black font-bold outline-none"
             />
           </div>
         </div>
@@ -538,12 +711,10 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="block font-bold text-black mb-1">Due</label>
-                  <input
-                    type="text"
-                    placeholder="dd-mm-yyyy"
+                  <DatePickerInput
                     value={formRow.due}
-                    onChange={(e) => setFormRow({ ...formRow, due: e.target.value })}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9] font-mono"
+                    onChange={(formatted) => setFormRow({ ...formRow, due: formatted })}
+                    format="dmy"
                   />
                 </div>
                 <div>
@@ -570,14 +741,14 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold active:border-t-[#707070] active:border-b-white cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold cursor-pointer"
                 >
-                  Simpan
+                  OK
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] active:border-t-[#707070] active:border-b-white cursor-pointer"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
                 >
                   Batal
                 </button>
@@ -586,6 +757,117 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
           </div>
         </div>
       )}
+
+      {/* Modal FIND Voucher Giro Pembelian */}
+      {isFindOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col text-xs">
+            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold">
+              <span>Cari Dokumen Giro Pembelian (Supabase)</span>
+              <button
+                type="button"
+                onClick={() => setIsFindOpen(false)}
+                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-3 space-y-2">
+              <input
+                ref={findInputRef}
+                type="text"
+                value={findQuery}
+                onChange={(e) => setFindQuery(e.target.value)}
+                placeholder="Ketik No.Bukti atau Tanggal..."
+                className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9]"
+              />
+              <div className="h-[220px] overflow-auto bg-white border border-[#7F9DB9]">
+                <table className="w-full text-left border-collapse text-[11px]">
+                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
+                    <tr>
+                      <th className="px-2 py-1 border-r border-[#ACA899]">No. Bukti</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899]">Tanggal</th>
+                      <th className="px-2 py-1 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredHeaders.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="text-center py-6 text-gray-500 italic">
+                          Belum ada dokumen giro tersimpan
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredHeaders.map((h) => (
+                        <tr
+                          key={h.id}
+                          onClick={async () => {
+                            await loadHeaderDetails(h);
+                            setIsFindOpen(false);
+                          }}
+                          className="cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white"
+                        >
+                          <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">
+                            {h.no_bukti}
+                          </td>
+                          <td className="px-2 py-1 border-r border-[#E0E0E0]">
+                            {toDisplayDmy(h.tanggal)}
+                          </td>
+                          <td className="px-2 py-1 text-right font-mono">
+                            {formatMoney(h.total_amount)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsFindOpen(false)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="BUKTI PENDAFTARAN GIRO PEMBELIAN"
+        subtitle={`No. Bukti: ${noBukti || '-'}`}
+        metaLines={[
+          { label: 'No. Bukti', value: noBukti || '-' },
+          { label: 'Tanggal', value: tanggal || '-' },
+        ]}
+        orientation="landscape"
+        columns={[
+          { header: 'ID Supplier', accessor: 'idSupplier', width: '75px' },
+          { header: 'Supplier', accessor: 'supplier' },
+          { header: 'No. Cek / Giro', accessor: 'noCekGiro', width: '110px' },
+          { header: 'Bank', accessor: 'bank', width: '80px' },
+          { header: 'Due', accessor: 'due', align: 'center', width: '85px' },
+          {
+            header: 'Amount Paid',
+            accessor: (r) => formatMoney(r.amountPaid),
+            align: 'right',
+            width: '105px',
+          },
+          { header: 'Keterangan', accessor: 'keterangan' },
+        ]}
+        rows={printableRows}
+        summaryItems={[
+          {
+            label: 'Total Amount Paid',
+            value: formatRupiah(totalAmountPaid),
+          },
+        ]}
+      />
     </div>
   );
 };

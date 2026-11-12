@@ -1,11 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface SalesInquiryItem {
   id: string;
   noBukti: string;
   tanggalDo: string;
+  tanggalDoIso: string;
   namaCustomer: string;
   namaSales: string;
   keterangan: string;
@@ -24,86 +38,99 @@ interface ListSalesInquiryFormProps {
   onClose: () => void;
 }
 
+function mapDbToInquiry(r: any): SalesInquiryItem {
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggalDo: toDisplayDMyShort(r.tanggal_do),
+    tanggalDoIso: toIsoDate(r.tanggal_do) || '',
+    namaCustomer: r.nama_customer || '',
+    namaSales: r.nama_sales || '',
+    keterangan: r.keterangan || '',
+    follow: r.follow || 'Follow',
+    tglFollow: toDisplayDMyShort(r.tgl_follow) || '-',
+    noSq: r.no_sq || '-',
+    tglSq: toDisplayDMyShort(r.tgl_sq) || '-',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '-',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
+  };
+}
+
 export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [inquiryList, setInquiryList] = useState<SalesInquiryItem[]>([
-    {
-      id: '1',
-      noBukti: '2608-SI-001',
-      tanggalDo: '04-Aug-2026',
-      namaCustomer: 'PT. DJABESMEN',
-      namaSales: 'M. TUTUK',
-      keterangan: 'MS DESTERLINA',
-      follow: 'Follow',
-      tglFollow: '-',
-      noSq: '2608-SQ-C',
-      tglSq: '05-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '04-Aug-2026',
-      diupdateOleh: 'RETNO',
-      tglUpdate: '05-Aug-2026',
-    },
-    {
-      id: '2',
-      noBukti: '2608-SI-002',
-      tanggalDo: '05-Aug-2026',
-      namaCustomer: 'PT. MAKMUR JAYA',
-      namaSales: 'BUDI SANTOSO',
-      keterangan: 'Project tender pengadaan material',
-      follow: 'Pending',
-      tglFollow: '06-Aug-2026',
-      noSq: '2608-SQ-D',
-      tglSq: '06-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '05-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [inquiryList, setInquiryList] = useState<SalesInquiryItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('04-Aug-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [newNoBukti, setNewNoBukti] = useState<string>('2608-SI-003');
-  const [newTanggalDo, setNewTanggalDo] = useState<string>('04-Aug-2026');
-  const [newCustomer, setNewCustomer] = useState<string>('PT. DJABESMEN');
-  const [newSales, setNewSales] = useState<string>('M. TUTUK');
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggalDo, setNewTanggalDo] = useState<string>('');
+  const [newCustomer, setNewCustomer] = useState<string>('');
+  const [newSales, setNewSales] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newFollow, setNewFollow] = useState<string>('Follow');
-  const [newNoSq, setNewNoSq] = useState<string>('2608-SQ-E');
-  const [newTglSq, setNewTglSq] = useState<string>('04-Aug-2026');
-
-  if (!isOpen) return null;
+  const [newNoSq, setNewNoSq] = useState<string>('');
+  const [newTglSq, setNewTglSq] = useState<string>('');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('sales_inquiries', { orderBy: 'tanggal_do', asc: false });
+      const mapped = rows.map(mapDbToInquiry);
+      setInquiryList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-SI-00${inquiryList.length + 1}`);
-    setNewTanggalDo('04-Aug-2026');
-    setNewCustomer('PT. DJABESMEN');
-    setNewSales('M. TUTUK');
+    const todayDisp = toDisplayDMyShort(todayIso());
+    setNewNoBukti(`2608-SI-${String(inquiryList.length + 1).padStart(3, '0')}`);
+    setNewTanggalDo(todayDisp);
+    setNewCustomer('');
+    setNewSales('');
     setNewKeterangan('');
     setNewFollow('Follow');
-    setNewNoSq(`2608-SQ-0${inquiryList.length + 1}`);
-    setNewTglSq('04-Aug-2026');
+    setNewNoSq('');
+    setNewTglSq(todayDisp);
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = inquiryList.find((i) => i.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggalDo(item.tanggalDo);
@@ -111,83 +138,85 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     setNewSales(item.namaSales);
     setNewKeterangan(item.keterangan);
     setNewFollow(item.follow);
-    setNewNoSq(item.noSq);
-    setNewTglSq(item.tglSq);
+    setNewNoSq(item.noSq === '-' ? '' : item.noSq);
+    setNewTglSq(item.tglSq === '-' ? '' : item.tglSq);
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setInquiryList(
-        inquiryList.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggalDo: newTanggalDo,
-                namaCustomer: newCustomer.trim().toUpperCase(),
-                namaSales: newSales.trim().toUpperCase(),
-                keterangan: newKeterangan.trim(),
-                follow: newFollow.trim(),
-                noSq: newNoSq.trim().toUpperCase(),
-                tglSq: newTglSq,
-                diupdateOleh: 'RETNO',
-                tglUpdate: '05-Aug-2026',
-              }
-            : item
-        )
-      );
-      showFeedback('Sales Inquiry diperbarui');
-    } else {
-      const newItem: SalesInquiryItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggalDo: newTanggalDo,
-        namaCustomer: newCustomer.trim().toUpperCase(),
-        namaSales: newSales.trim().toUpperCase(),
+    try {
+      setIsBusy(true);
+      const payload = {
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal_do: toIsoDate(newTanggalDo) || todayIso(),
+        nama_customer: newCustomer.trim().toUpperCase(),
+        nama_sales: newSales.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
         follow: newFollow.trim(),
-        tglFollow: '-',
-        noSq: newNoSq.trim().toUpperCase(),
-        tglSq: newTglSq,
-        dibuatOleh: 'RETNO',
-        tglCreated: '04-Aug-2026',
-        diupdateOleh: '-',
-        tglUpdate: '-',
+        no_sq: newNoSq.trim().toUpperCase(),
+        tgl_sq: toIsoDate(newTglSq),
       };
 
-      setInquiryList([newItem, ...inquiryList]);
-      setSelectedId(newItem.id);
-      showFeedback('Sales Inquiry tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('sales_inquiries', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToInquiry(saved);
+        setInquiryList(inquiryList.map((item) => (item.id === editingId ? mapped : item)));
+        showFeedback('Sales Inquiry diperbarui');
+      } else {
+        const saved = await erpCreate<any>('sales_inquiries', {
+          ...payload,
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+          diupdate_oleh: '-',
+        });
+        const mapped = mapDbToInquiry(saved);
+        setInquiryList([mapped, ...inquiryList]);
+        setSelectedId(mapped.id);
+        showFeedback('Sales Inquiry tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = inquiryList.filter((item) => item.id !== id);
-    setInquiryList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('sales_inquiries', id);
+      const updated = inquiryList.filter((item) => item.id !== id);
+      setInquiryList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Sales Inquiry dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Sales Inquiry dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = inquiryList.filter((item) => {
+    if (filterIso && item.tanggalDoIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'NoBukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Pelanggan') {
-      return item.namaCustomer.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Sales') {
-      return item.namaSales.toLowerCase().includes(term);
-    } else if (searchField === 'No.SQ') {
-      return item.noSq.toLowerCase().includes(term);
-    }
+    if (searchField === 'NoBukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
+    if (searchField === 'Nama Sales') return item.namaSales.toLowerCase().includes(term);
+    if (searchField === 'No.SQ') return item.noSq.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaCustomer.toLowerCase().includes(term) ||
@@ -195,26 +224,57 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     );
   });
 
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Sales_Inquiry',
+      sheetTitle: 'LIST INQUIRY PENJUALAN',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'NoBukti', accessor: 'noBukti' },
+        { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center' },
+        { header: 'Nama Customer', accessor: 'namaCustomer' },
+        { header: 'Nama Sales', accessor: 'namaSales' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'Follow', accessor: 'follow' },
+        { header: 'No. SQ', accessor: 'noSq' },
+        { header: 'Tgl. SQ', accessor: 'tglSq', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-sales-inquiry-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
-      {/* 1. Black Window Header Banner */}
       <FormHeaderBanner
         title="List Inquiry Penjualan"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action Toolbar & Filter Header */}
-      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
+      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm overflow-x-auto">
         <div className="flex items-center space-x-2">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Inquiry Penjualan tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={() => selectedId && handleDelete(selectedId)}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
         </div>
@@ -222,29 +282,26 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-1">
             <span className="font-semibold">Tanggal :</span>
-            <input
-              type="text"
-              value={tanggalFilter}
-              onChange={(e) => setTanggalFilter(e.target.value)}
-              className="px-2 py-0.5 w-24 bg-white border border-[#7A7A7A] text-xs"
+            <DatePickerInput
+              value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+              onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+              format="dMyShort"
+              placeholder="Semua"
             />
-            <button className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]">
-              ▼
-            </button>
             <button
+              type="button"
               onClick={() => setTanggalFilter('Semua')}
-              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]"
+              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8] cursor-pointer"
             >
               Semua
             </button>
           </div>
           <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[90px] shadow-inner">
-            Rp 0
+            {filteredList.length} Inquiry
           </div>
         </div>
       </div>
 
-      {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
       <div className="flex-1 overflow-auto bg-white border border-[#7A7A7A] m-2 relative">
         <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1300px]">
           <thead>
@@ -272,8 +329,13 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                 <tr
                   key={item.id}
                   onClick={() => setSelectedId(item.id)}
+                  onDoubleClick={handleEdit}
                   className={`border-b border-[#E0E0E0] cursor-pointer text-xs ${
-                    isSelected ? 'bg-[#000084] text-white' : index % 2 === 0 ? 'bg-white hover:bg-[#F2F0EB]' : 'bg-[#F9F8F5] hover:bg-[#F2F0EB]'
+                    isSelected
+                      ? 'bg-[#000084] text-white'
+                      : index % 2 === 0
+                      ? 'bg-white hover:bg-[#F2F0EB]'
+                      : 'bg-[#F9F8F5] hover:bg-[#F2F0EB]'
                   }`}
                 >
                   <td className="border-r border-[#E0E0E0] px-2 py-1 text-center font-bold">
@@ -306,7 +368,6 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         </table>
       </div>
 
-      {/* 4. Bottom Search Bar & Record Status */}
       <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
         <div className="flex items-center space-x-2">
           <span className="font-semibold">Search :</span>
@@ -321,6 +382,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
             <option value="No.SQ">No.SQ</option>
           </select>
           <input
+            ref={searchInputRef}
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -329,22 +391,24 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
           />
         </div>
         <div className="flex items-center space-x-4">
-          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner"></div>
+          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
+            {inquiryList.find((r) => r.id === selectedId)?.keterangan || ''}
+          </div>
           <div className="font-semibold px-2 py-0.5 bg-[#ECE9D8] border border-[#919191]">
             Record {filteredList.length}
           </div>
         </div>
       </div>
 
-      {/* Add New Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
               <span>{editingId ? 'Koreksi Sales Inquiry' : 'Tambah Sales Inquiry Baru'}</span>
               <button
+                type="button"
                 onClick={() => setIsAddOpen(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
+                className="text-white hover:text-red-300 font-bold px-1.5 cursor-pointer"
               >
                 ✕
               </button>
@@ -356,18 +420,19 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   type="text"
                   value={newNoBukti}
                   onChange={(e) => setNewNoBukti(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Tanggal DO:</label>
-                <input
-                  type="text"
-                  value={newTanggalDo}
-                  onChange={(e) => setNewTanggalDo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTanggalDo}
+                    onChange={(formatted) => setNewTanggalDo(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Nama Customer:</label>
@@ -375,7 +440,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   type="text"
                   value={newCustomer}
                   onChange={(e) => setNewCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
@@ -385,7 +450,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   type="text"
                   value={newSales}
                   onChange={(e) => setNewSales(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -412,29 +477,31 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   type="text"
                   value={newNoSq}
                   onChange={(e) => setNewNoSq(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Tgl. SQ:</label>
-                <input
-                  type="text"
-                  value={newTglSq}
-                  onChange={(e) => setNewTglSq(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTglSq}
+                    onChange={(formatted) => setNewTglSq(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="flex justify-end space-x-2 pt-3 border-t border-[#D4D0C8]">
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8]"
+                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8] cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0]"
+                  disabled={isBusy}
+                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0] cursor-pointer"
                 >
                   Simpan
                 </button>
@@ -444,6 +511,24 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         </div>
       )}
 
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN INQUIRY PENJUALAN"
+        subtitle={`Filter Tanggal: ${tanggalFilter}`}
+        orientation="landscape"
+        columns={[
+          { header: 'NoBukti', accessor: 'noBukti', width: '110px' },
+          { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center', width: '85px' },
+          { header: 'Nama Customer', accessor: 'namaCustomer' },
+          { header: 'Sales', accessor: 'namaSales', width: '90px' },
+          { header: 'Follow', accessor: 'follow', width: '70px' },
+          { header: 'No. SQ', accessor: 'noSq', width: '100px' },
+          { header: 'Keterangan', accessor: 'keterangan' },
+        ]}
+        rows={filteredList}
+        summaryItems={[{ label: 'Total Inquiry', value: `${filteredList.length} Dokumen` }]}
+      />
     </div>
   );
 };

@@ -1,15 +1,33 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface SalesOrderItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaCustomer: string;
   sales: string;
   poNo: string;
   nilaiSo: string;
+  nilaiSoNum: number;
   deposit: string;
   tglKirim: string;
   persen: string;
@@ -28,192 +46,204 @@ interface ListSalesOrderFormProps {
   onOpenDetail?: () => void;
 }
 
+function mapDbToSo(r: any): SalesOrderItem {
+  const nilaiNum = Number(r.nilai_so || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaCustomer: r.nama_customer || '',
+    sales: r.sales || '',
+    poNo: r.po_no || '',
+    nilaiSo: formatMoney(nilaiNum),
+    nilaiSoNum: nilaiNum,
+    deposit: Number(r.deposit || 0) > 0 ? formatMoney(r.deposit) : '-',
+    tglKirim: toDisplayDMyShort(r.tgl_kirim) || '-',
+    persen: `${Number(r.persen || 0)}%`,
+    keterangan: r.keterangan || '',
+    ppn: `${Number(r.ppn ?? 11)}%`,
+    soClose: r.so_close || 'Not Yet',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '-',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
+  };
+}
+
 export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   isOpen,
   onClose,
   onOpenDetail,
 }) => {
-  const [soList, setSoList] = useState<SalesOrderItem[]>([
-    {
-      id: '1',
-      noBukti: '2608-SO-001',
-      tanggal: '06-Aug-2026',
-      namaCustomer: 'PT. DJABESMEN',
-      sales: 'M. TUTUK',
-      poNo: 'PO-99218',
-      nilaiSo: '12,500,000',
-      deposit: '1,000,000',
-      tglKirim: '10-Aug-2026',
-      persen: '0%',
-      keterangan: 'Pengiriman tahap pertama',
-      ppn: '11%',
-      soClose: 'Not Yet',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-    {
-      id: '2',
-      noBukti: '2608-SO-002',
-      tanggal: '06-Aug-2026',
-      namaCustomer: 'PT. MAKMUR JAYA',
-      sales: 'BUDI SANTOSO',
-      poNo: 'PO-88231',
-      nilaiSo: '8,450,000',
-      deposit: '-',
-      tglKirim: '12-Aug-2026',
-      persen: '0%',
-      keterangan: 'Direct delivery',
-      ppn: '11%',
-      soClose: 'Not Yet',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '-',
-      tglUpdate: '-',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [soList, setSoList] = useState<SalesOrderItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('06-Aug-2026');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [newNoBukti, setNewNoBukti] = useState<string>('2608-SO-003');
-  const [newTanggal, setNewTanggal] = useState<string>('06-Aug-2026');
-  const [newCustomer, setNewCustomer] = useState<string>('PT. DJABESMEN');
-  const [newSales, setNewSales] = useState<string>('M. TUTUK');
-  const [newPoNo, setNewPoNo] = useState<string>('PO-11223');
-  const [newNilaiSo, setNewNilaiSo] = useState<string>('5,000,000');
-  const [newDeposit, setNewDeposit] = useState<string>('-');
-  const [newTglKirim, setNewTglKirim] = useState<string>('15-Aug-2026');
-  const [newPersen, setNewPersen] = useState<string>('0%');
-  const [newKeterangan, setNewKeterangan] = useState<string>('');
-  const [newPpn, setNewPpn] = useState<string>('11%');
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newCustomer, setNewCustomer] = useState<string>('');
+  const [newSales, setNewSales] = useState<string>('');
+  const [newPoNo, setNewPoNo] = useState<string>('');
+  const [newNilaiSo, setNewNilaiSo] = useState<string>('0');
+  const [newDeposit, setNewDeposit] = useState<string>('0');
+  const [newTglKirim, setNewTglKirim] = useState<string>('');
+  const [newPersen, setNewPersen] = useState<string>('0');
+  const [newKeterangan, setNewKeterangan] = useState<string>('');
+  const [newPpn, setNewPpn] = useState<string>('11');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false });
+      const mapped = rows.map(mapDbToSo);
+      setSoList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-SO-00${soList.length + 1}`);
-    setNewTanggal('06-Aug-2026');
-    setNewCustomer('PT. DJABESMEN');
-    setNewSales('M. TUTUK');
-    setNewPoNo('PO-11223');
-    setNewNilaiSo('5,000,000');
-    setNewDeposit('-');
-    setNewTglKirim('15-Aug-2026');
-    setNewPersen('0%');
+    const todayDisp = toDisplayDMyShort(todayIso());
+    setNewNoBukti(`2608-SO-${String(soList.length + 1).padStart(3, '0')}`);
+    setNewTanggal(todayDisp);
+    setNewCustomer('');
+    setNewSales('');
+    setNewPoNo('');
+    setNewNilaiSo('0');
+    setNewDeposit('0');
+    setNewTglKirim(todayDisp);
+    setNewPersen('0');
     setNewKeterangan('');
-    setNewPpn('11%');
+    setNewPpn('11');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = soList.find((s) => s.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewCustomer(item.namaCustomer);
     setNewSales(item.sales);
     setNewPoNo(item.poNo);
-    setNewNilaiSo(item.nilaiSo);
-    setNewDeposit(item.deposit);
-    setNewTglKirim(item.tglKirim);
-    setNewPersen(item.persen);
+    setNewNilaiSo(String(item.nilaiSoNum));
+    setNewDeposit(String(parseNum(item.deposit)));
+    setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
+    setNewPersen(String(parseNum(item.persen)));
     setNewKeterangan(item.keterangan);
-    setNewPpn(item.ppn);
+    setNewPpn(String(parseNum(item.ppn)));
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setSoList(
-        soList.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal,
-                namaCustomer: newCustomer.trim().toUpperCase(),
-                sales: newSales.trim().toUpperCase(),
-                poNo: newPoNo.trim().toUpperCase(),
-                nilaiSo: newNilaiSo.trim(),
-                deposit: newDeposit.trim(),
-                tglKirim: newTglKirim.trim(),
-                persen: newPersen.trim(),
-                keterangan: newKeterangan.trim(),
-                ppn: newPpn.trim(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: '06-Aug-2026',
-              }
-            : item
-        )
-      );
-      showFeedback('Sales Order diperbarui');
-    } else {
-      const newItem: SalesOrderItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal,
-        namaCustomer: newCustomer.trim().toUpperCase(),
+    try {
+      setIsBusy(true);
+      const payload = {
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: toIsoDate(newTanggal) || todayIso(),
+        nama_customer: newCustomer.trim().toUpperCase(),
         sales: newSales.trim().toUpperCase(),
-        poNo: newPoNo.trim().toUpperCase(),
-        nilaiSo: newNilaiSo.trim(),
-        deposit: newDeposit.trim(),
-        tglKirim: newTglKirim.trim(),
-        persen: newPersen.trim(),
+        po_no: newPoNo.trim().toUpperCase(),
+        nilai_so: parseNum(newNilaiSo),
+        deposit: parseNum(newDeposit),
+        tgl_kirim: toIsoDate(newTglKirim),
+        persen: parseNum(newPersen),
         keterangan: newKeterangan.trim(),
-        ppn: newPpn.trim(),
-        soClose: 'Not Yet',
-        dibuatOleh: 'RETNO',
-        tglCreated: '06-Aug-2026',
-        diupdateOleh: '-',
-        tglUpdate: '-',
+        ppn: parseNum(newPpn),
       };
 
-      setSoList([newItem, ...soList]);
-      setSelectedId(newItem.id);
-      showFeedback('Sales Order tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('sales_orders', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToSo(saved);
+        setSoList(soList.map((item) => (item.id === editingId ? mapped : item)));
+        showFeedback('Sales Order diperbarui');
+      } else {
+        const saved = await erpCreate<any>('sales_orders', {
+          ...payload,
+          so_close: 'Not Yet',
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+          diupdate_oleh: '-',
+        });
+        const mapped = mapDbToSo(saved);
+        setSoList([mapped, ...soList]);
+        setSelectedId(mapped.id);
+        showFeedback('Sales Order tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = soList.filter((item) => item.id !== id);
-    setSoList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('sales_orders', id);
+      const updated = soList.filter((item) => item.id !== id);
+      setSoList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Sales Order dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Sales Order dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = soList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Pelanggan') {
-      return item.namaCustomer.toLowerCase().includes(term);
-    } else if (searchField === 'Sales') {
-      return item.sales.toLowerCase().includes(term);
-    } else if (searchField === 'PO.NO') {
-      return item.poNo.toLowerCase().includes(term);
-    }
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
+    if (searchField === 'Sales') return item.sales.toLowerCase().includes(term);
+    if (searchField === 'PO.NO') return item.poNo.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaCustomer.toLowerCase().includes(term) ||
@@ -221,33 +251,66 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     );
   });
 
+  const totalNilaiSo = filteredList.reduce((acc, s) => acc + s.nilaiSoNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Sales_Order',
+      sheetTitle: 'LIST SALES ORDER',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Customer', accessor: 'namaCustomer' },
+        { header: 'Sales', accessor: 'sales' },
+        { header: 'PO.NO', accessor: 'poNo' },
+        { header: 'Nilai SO', accessor: 'nilaiSoNum', align: 'right' },
+        { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center' },
+        { header: 'SO.Close', accessor: 'soClose', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-sales-order-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
-      {/* 1. Black Window Header Banner */}
       <FormHeaderBanner
         title="List Sales Order"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action Toolbar & Filter Header */}
-      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
+      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm overflow-x-auto">
         <div className="flex items-center space-x-2">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Sales Order tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={() => selectedId && handleDelete(selectedId)}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
           {onOpenDetail && (
             <button
               type="button"
               onClick={onOpenDetail}
-              className="h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-[11px] font-sans text-black cursor-pointer"
+              className="h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-[11px] font-sans text-black cursor-pointer whitespace-nowrap"
               title="Cetak Sales Order Detail"
             >
               <span>🖶</span>
@@ -259,29 +322,26 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-1">
             <span className="font-semibold">Tanggal :</span>
-            <input
-              type="text"
-              value={tanggalFilter}
-              onChange={(e) => setTanggalFilter(e.target.value)}
-              className="px-2 py-0.5 w-24 bg-white border border-[#7A7A7A] text-xs"
+            <DatePickerInput
+              value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+              onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+              format="dMyShort"
+              placeholder="Semua"
             />
-            <button className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]">
-              ▼
-            </button>
             <button
+              type="button"
               onClick={() => setTanggalFilter('Semua')}
-              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]"
+              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8] cursor-pointer"
             >
               Semua
             </button>
           </div>
-          <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[90px] shadow-inner">
-            Rp 0
+          <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[110px] shadow-inner">
+            {formatRupiah(totalNilaiSo)}
           </div>
         </div>
       </div>
 
-      {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
       <div className="flex-1 overflow-auto bg-white border border-[#7A7A7A] m-2 relative">
         <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1400px]">
           <thead>
@@ -312,8 +372,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 <tr
                   key={item.id}
                   onClick={() => setSelectedId(item.id)}
+                  onDoubleClick={handleEdit}
                   className={`border-b border-[#E0E0E0] cursor-pointer text-xs ${
-                    isSelected ? 'bg-[#000084] text-white' : index % 2 === 0 ? 'bg-white hover:bg-[#F2F0EB]' : 'bg-[#F9F8F5] hover:bg-[#F2F0EB]'
+                    isSelected
+                      ? 'bg-[#000084] text-white'
+                      : index % 2 === 0
+                      ? 'bg-white hover:bg-[#F2F0EB]'
+                      : 'bg-[#F9F8F5] hover:bg-[#F2F0EB]'
                   }`}
                 >
                   <td className="border-r border-[#E0E0E0] px-2 py-1 text-center font-bold">
@@ -349,7 +414,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         </table>
       </div>
 
-      {/* 4. Bottom Search Bar & Record Status */}
       <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
         <div className="flex items-center space-x-2">
           <span className="font-semibold">Search :</span>
@@ -364,6 +428,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             <option value="PO.NO">PO.NO</option>
           </select>
           <input
+            ref={searchInputRef}
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -372,45 +437,48 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
           />
         </div>
         <div className="flex items-center space-x-4">
-          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner"></div>
+          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
+            {soList.find((r) => r.id === selectedId)?.namaCustomer || ''}
+          </div>
           <div className="font-semibold px-2 py-0.5 bg-[#ECE9D8] border border-[#919191]">
             Record {filteredList.length}
           </div>
         </div>
       </div>
 
-      {/* Add New Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
               <span>{editingId ? 'Koreksi Sales Order' : 'Tambah Sales Order Baru'}</span>
               <button
+                type="button"
                 onClick={() => setIsAddOpen(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
+                className="text-white hover:text-red-300 font-bold px-1.5 cursor-pointer"
               >
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
+            <form onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. Bukti:</label>
                 <input
                   type="text"
                   value={newNoBukti}
                   onChange={(e) => setNewNoBukti(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Tanggal:</label>
-                <input
-                  type="text"
-                  value={newTanggal}
-                  onChange={(e) => setNewTanggal(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTanggal}
+                    onChange={(formatted) => setNewTanggal(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Nama Customer:</label>
@@ -418,7 +486,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   type="text"
                   value={newCustomer}
                   onChange={(e) => setNewCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
@@ -428,7 +496,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   type="text"
                   value={newSales}
                   onChange={(e) => setNewSales(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -437,35 +505,46 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   type="text"
                   value={newPoNo}
                   onChange={(e) => setNewPoNo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Nilai SO:</label>
+                <label className="font-semibold">Nilai SO (Rp):</label>
                 <input
-                  type="text"
+                  type="number"
                   value={newNilaiSo}
                   onChange={(e) => setNewNilaiSo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Deposit:</label>
-                <input
-                  type="text"
-                  value={newDeposit}
-                  onChange={(e) => setNewDeposit(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <label className="font-semibold">Deposit / PPN (%):</label>
+                <div className="col-span-2 flex gap-2">
+                  <input
+                    type="number"
+                    value={newDeposit}
+                    onChange={(e) => setNewDeposit(e.target.value)}
+                    className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                    placeholder="Deposit"
+                  />
+                  <input
+                    type="number"
+                    value={newPpn}
+                    onChange={(e) => setNewPpn(e.target.value)}
+                    className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
+                    placeholder="PPN"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Tgl. Kirim:</label>
-                <input
-                  type="text"
-                  value={newTglKirim}
-                  onChange={(e) => setNewTglKirim(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTglKirim}
+                    onChange={(formatted) => setNewTglKirim(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Keterangan:</label>
@@ -480,13 +559,14 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8]"
+                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8] cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0]"
+                  disabled={isBusy}
+                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0] cursor-pointer"
                 >
                   Simpan
                 </button>
@@ -496,6 +576,28 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         </div>
       )}
 
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN LIST SALES ORDER"
+        subtitle={`Filter Tanggal: ${tanggalFilter}`}
+        orientation="landscape"
+        columns={[
+          { header: 'No.Bukti', accessor: 'noBukti', width: '110px' },
+          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
+          { header: 'Nama Customer', accessor: 'namaCustomer' },
+          { header: 'Sales', accessor: 'sales', width: '75px' },
+          { header: 'PO.NO', accessor: 'poNo', width: '95px' },
+          { header: 'Nilai SO', accessor: 'nilaiSo', align: 'right', width: '100px' },
+          { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '80px' },
+          { header: 'SO.Close', accessor: 'soClose', align: 'center', width: '65px' },
+        ]}
+        rows={filteredList}
+        summaryItems={[
+          { label: 'Total Sales Order', value: `${filteredList.length} Dokumen` },
+          { label: 'Total Nilai SO', value: formatRupiah(totalNilaiSo) },
+        ]}
+      />
     </div>
   );
 };

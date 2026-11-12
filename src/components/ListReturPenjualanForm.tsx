@@ -1,13 +1,32 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import {
+  erpCreate,
+  erpDelete,
+  erpList,
+  erpUpdate,
+  fetchActiveCompanyProfile,
+  formatMoney,
+  formatRupiah,
+  parseNum,
+  toDisplayDMyShort,
+  todayIso,
+  toIsoDate,
+} from '../lib/erpApi';
+import { exportToExcel } from '../lib/exportExcel';
 
 export interface ReturPenjualanItem {
   id: string;
   noBukti: string;
   tanggal: string;
+  tanggalIso: string;
   namaCustomer: string;
+  noFaktur: string;
   nilaiRetur: string;
+  nilaiReturNum: number;
   keterangan: string;
   disc: string;
   ppn: string;
@@ -27,171 +46,192 @@ interface ListReturPenjualanFormProps {
   onOpenPrintReport?: () => void;
 }
 
+function mapDbToReturJual(r: any): ReturPenjualanItem {
+  const nilaiNum = Number(r.nilai_retur || 0);
+  return {
+    id: r.id,
+    noBukti: r.no_bukti || '',
+    tanggal: toDisplayDMyShort(r.tanggal),
+    tanggalIso: toIsoDate(r.tanggal) || '',
+    namaCustomer: r.nama_customer || '',
+    noFaktur: r.no_faktur || '',
+    nilaiRetur: formatMoney(nilaiNum, true),
+    nilaiReturNum: nilaiNum,
+    keterangan: r.keterangan || '',
+    disc: `${Number(r.disc || 0)}%`,
+    ppn: `${Number(r.ppn ?? 11)}%`,
+    stsPrint: r.sts_print || 'Not Yet',
+    tglPrint: toDisplayDMyShort(r.tgl_print) || '',
+    stsPost: r.sts_post || 'Posting',
+    tglPost: toDisplayDMyShort(r.tgl_post) || '',
+    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    tglCreated: toDisplayDMyShort(r.tgl_created),
+    diupdateOleh: r.diupdate_oleh || '',
+    tglUpdate: toDisplayDMyShort(r.tgl_update) || '',
+  };
+}
+
 export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   isOpen,
   onClose,
   onOpenPrintReport,
 }) => {
-  const [returList, setReturList] = useState<ReturPenjualanItem[]>([
-    {
-      id: '1',
-      noBukti: '2608-RJ-INV-001',
-      tanggal: '06-Aug-2026',
-      namaCustomer: 'PT. DJABESMEN',
-      nilaiRetur: '350,000.',
-      keterangan: 'Barang tidak sesuai spesifikasi',
-      disc: '0%',
-      ppn: '11%',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Posting',
-      tglPost: '06-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '06-Aug-2026',
-      diupdateOleh: '',
-      tglUpdate: '',
-    },
-    {
-      id: '2',
-      noBukti: '2608-RJ-INV-002',
-      tanggal: '08-Aug-2026',
-      namaCustomer: 'PT. MAKMUR JAYA',
-      nilaiRetur: '1,200,000.',
-      keterangan: 'Retur kelebihan kirim',
-      disc: '0%',
-      ppn: '11%',
-      stsPrint: 'Not Yet',
-      tglPrint: '',
-      stsPost: 'Posting',
-      tglPost: '08-Aug-2026',
-      dibuatOleh: 'RETNO',
-      tglCreated: '08-Aug-2026',
-      diupdateOleh: '',
-      tglUpdate: '',
-    },
-  ]);
-
-  const [selectedId, setSelectedId] = useState<string>('1');
+  const [returList, setReturList] = useState<ReturPenjualanItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
-  const [tanggalFilter, setTanggalFilter] = useState<string>('');
+  const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
-  // Add New / Koreksi Modal state
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [newNoBukti, setNewNoBukti] = useState<string>('2608-RJ-INV-003');
-  const [newTanggal, setNewTanggal] = useState<string>('09-Aug-2026');
-  const [newCustomer, setNewCustomer] = useState<string>('PT. DJABESMEN');
-  const [newNilaiRetur, setNewNilaiRetur] = useState<string>('500,000.');
-  const [newKeterangan, setNewKeterangan] = useState<string>('');
-  const [newDisc, setNewDisc] = useState<string>('0%');
-  const [newPpn, setNewPpn] = useState<string>('11%');
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newCustomer, setNewCustomer] = useState<string>('');
+  const [newNoFaktur, setNewNoFaktur] = useState<string>('');
+  const [newNilaiRetur, setNewNilaiRetur] = useState<string>('0');
+  const [newKeterangan, setNewKeterangan] = useState<string>('');
+  const [newDisc, setNewDisc] = useState<string>('0');
+  const [newPpn, setNewPpn] = useState<string>('11');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2000);
+    setTimeout(() => setFeedback(null), 2500);
   };
+
+  const loadData = async () => {
+    try {
+      setIsBusy(true);
+      const rows = await erpList<any>('retur_penjualans', { orderBy: 'tanggal', asc: false });
+      const mapped = rows.map(mapDbToReturJual);
+      setReturList(mapped);
+      if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
+        setSelectedId(mapped[0].id);
+      }
+    } catch (err: any) {
+      showFeedback(`Gagal load: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadData();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-RJ-INV-00${returList.length + 1}`);
-    setNewTanggal('09-Aug-2026');
-    setNewCustomer('PT. DJABESMEN');
-    setNewNilaiRetur('500,000.');
+    const todayDisp = toDisplayDMyShort(todayIso());
+    setNewNoBukti(`2608-RJ-INV-${String(returList.length + 1).padStart(3, '0')}`);
+    setNewTanggal(todayDisp);
+    setNewCustomer('');
+    setNewNoFaktur('');
+    setNewNilaiRetur('0');
     setNewKeterangan('');
-    setNewDisc('0%');
-    setNewPpn('11%');
+    setNewDisc('0');
+    setNewPpn('11');
     setIsAddOpen(true);
   };
 
   const handleEdit = () => {
     const item = returList.find((r) => r.id === selectedId);
-    if (!item) return;
+    if (!item) {
+      showFeedback('Pilih baris terlebih dahulu');
+      return;
+    }
     setEditingId(item.id);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewCustomer(item.namaCustomer);
-    setNewNilaiRetur(item.nilaiRetur);
+    setNewNoFaktur(item.noFaktur);
+    setNewNilaiRetur(String(item.nilaiReturNum));
     setNewKeterangan(item.keterangan);
-    setNewDisc(item.disc);
-    setNewPpn(item.ppn);
+    setNewDisc(String(parseNum(item.disc)));
+    setNewPpn(String(parseNum(item.ppn)));
     setIsAddOpen(true);
   };
 
-  const handleSaveNew = (e: React.FormEvent) => {
+  const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoBukti.trim()) return;
 
-    if (editingId) {
-      setReturList(
-        returList.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                noBukti: newNoBukti.trim().toUpperCase(),
-                tanggal: newTanggal,
-                namaCustomer: newCustomer.trim().toUpperCase(),
-                nilaiRetur: newNilaiRetur.trim(),
-                keterangan: newKeterangan.trim(),
-                disc: newDisc.trim(),
-                ppn: newPpn.trim(),
-                diupdateOleh: 'RETNO',
-                tglUpdate: newTanggal,
-              }
-            : item
-        )
-      );
-      showFeedback('Retur Penjualan diperbarui');
-    } else {
-      const newItem: ReturPenjualanItem = {
-        id: Date.now().toString(),
-        noBukti: newNoBukti.trim().toUpperCase(),
-        tanggal: newTanggal,
-        namaCustomer: newCustomer.trim().toUpperCase(),
-        nilaiRetur: newNilaiRetur.trim(),
+    try {
+      setIsBusy(true);
+      const payload = {
+        no_bukti: newNoBukti.trim().toUpperCase(),
+        tanggal: toIsoDate(newTanggal) || todayIso(),
+        nama_customer: newCustomer.trim().toUpperCase(),
+        no_faktur: newNoFaktur.trim().toUpperCase(),
+        nilai_retur: parseNum(newNilaiRetur),
         keterangan: newKeterangan.trim(),
-        disc: newDisc.trim(),
-        ppn: newPpn.trim(),
-        stsPrint: 'Not Yet',
-        tglPrint: '',
-        stsPost: 'Posting',
-        tglPost: newTanggal,
-        dibuatOleh: 'RETNO',
-        tglCreated: newTanggal,
-        diupdateOleh: '',
-        tglUpdate: '',
+        disc: parseNum(newDisc),
+        ppn: parseNum(newPpn),
       };
 
-      setReturList([newItem, ...returList]);
-      setSelectedId(newItem.id);
-      showFeedback('Retur Penjualan tersimpan');
+      if (editingId) {
+        const saved = await erpUpdate<any>('retur_penjualans', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        const mapped = mapDbToReturJual(saved);
+        setReturList(returList.map((item) => (item.id === editingId ? mapped : item)));
+        showFeedback('Retur Penjualan diperbarui');
+      } else {
+        const saved = await erpCreate<any>('retur_penjualans', {
+          ...payload,
+          sts_print: 'Not Yet',
+          sts_post: 'Posting',
+          tgl_post: todayIso(),
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+        });
+        const mapped = mapDbToReturJual(saved);
+        setReturList([mapped, ...returList]);
+        setSelectedId(mapped.id);
+        showFeedback('Retur Penjualan tersimpan');
+      }
+      setIsAddOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    setIsAddOpen(false);
-    setEditingId(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = returList.filter((item) => item.id !== id);
-    setReturList(updated);
-    if (selectedId === id) {
-      setSelectedId(updated[0]?.id || '');
+  const handleDelete = async (id: string) => {
+    try {
+      setIsBusy(true);
+      await erpDelete('retur_penjualans', id);
+      const updated = returList.filter((item) => item.id !== id);
+      setReturList(updated);
+      if (selectedId === id) {
+        setSelectedId(updated[0]?.id || '');
+      }
+      showFeedback('Retur Penjualan dihapus');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
-    showFeedback('Retur Penjualan dihapus');
   };
+
+  const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = returList.filter((item) => {
+    if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'Nama Pelanggan') {
-      return item.namaCustomer.toLowerCase().includes(term);
-    } else if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Keterangan') {
-      return item.keterangan.toLowerCase().includes(term);
-    }
+    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaCustomer.toLowerCase().includes(term) ||
@@ -199,33 +239,66 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
     );
   });
 
+  const totalNilai = filteredList.reduce((acc, r) => acc + r.nilaiReturNum, 0);
+
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleExportExcel = async () => {
+    const company = await fetchActiveCompanyProfile();
+    exportToExcel({
+      fileName: 'List_Retur_Penjualan',
+      sheetTitle: 'LIST RETUR PENJUALAN',
+      subtitle: `Filter Tanggal: ${tanggalFilter}`,
+      companyProfile: company,
+      columns: [
+        { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Nama Customer', accessor: 'namaCustomer' },
+        { header: 'Nilai Retur', accessor: 'nilaiReturNum', align: 'right' },
+        { header: 'Disc', accessor: 'disc', align: 'center' },
+        { header: 'PPN', accessor: 'ppn', align: 'center' },
+        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'Sts.Post', accessor: 'stsPost', align: 'center' },
+      ],
+      rows: filteredList,
+    });
+    showFeedback('Export Excel selesai');
+  };
+
   return (
     <div
       id="list-retur-penjualan-container"
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
-      {/* 1. Black Window Header Banner */}
       <FormHeaderBanner
         title="List Retur Penjualan"
         onClose={onClose}
-        onExportExcel={() => showFeedback('Export Excel selesai')}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadData}
+        onExportExcel={handleExportExcel}
       />
 
-      {/* 2. Action Toolbar & Filter Header */}
-      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm">
+      <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm overflow-x-auto">
         <div className="flex items-center space-x-2">
           <FormActionButtons
-            onSimpan={() => showFeedback('Data Retur Penjualan tersimpan')}
+            onSimpan={loadData}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={() => selectedId && handleDelete(selectedId)}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
             feedback={feedback}
           />
           {onOpenPrintReport && (
             <button
               type="button"
               onClick={onOpenPrintReport}
-              className="h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-[11px] font-sans text-black cursor-pointer"
+              className="h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-[11px] font-sans text-black cursor-pointer whitespace-nowrap"
               title="Buka Form Retur Penjualan Berdasarkan Faktur"
             >
               <span className="text-blue-700">🖶</span>
@@ -237,29 +310,26 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-1">
             <span className="font-semibold">Tanggal :</span>
-            <input
-              type="text"
-              value={tanggalFilter}
-              onChange={(e) => setTanggalFilter(e.target.value)}
-              className="px-2 py-0.5 w-24 bg-white border border-[#7A7A7A] text-xs font-mono"
+            <DatePickerInput
+              value={tanggalFilter === 'Semua' ? '' : tanggalFilter}
+              onChange={(formatted) => setTanggalFilter(formatted || 'Semua')}
+              format="dMyShort"
+              placeholder="Semua"
             />
-            <button className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]">
-              ▼
-            </button>
             <button
-              onClick={() => setTanggalFilter('')}
-              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8]"
+              type="button"
+              onClick={() => setTanggalFilter('Semua')}
+              className="px-2 py-0.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded text-xs hover:bg-[#D4D0C8] cursor-pointer"
             >
               Semua
             </button>
           </div>
-          <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[90px] shadow-inner">
-            Rp 0
+          <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[110px] shadow-inner">
+            {formatRupiah(totalNilai)}
           </div>
         </div>
       </div>
 
-      {/* 3. Main Data Table Container with Horizontal & Vertical Scrollbars */}
       <div className="flex-1 overflow-auto bg-white border border-[#7A7A7A] m-2 relative">
         <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1400px]">
           <thead>
@@ -289,6 +359,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                 <tr
                   key={item.id}
                   onClick={() => setSelectedId(item.id)}
+                  onDoubleClick={handleEdit}
                   className={`border-b border-[#E0E0E0] cursor-pointer text-xs ${
                     isSelected
                       ? 'bg-[#000084] text-white'
@@ -310,7 +381,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.stsPrint}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.tglPrint || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.stsPost}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.tglPost}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.tglPost || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.dibuatOleh}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglCreated}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.diupdateOleh || '-'}</td>
@@ -329,7 +400,6 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
         </table>
       </div>
 
-      {/* 4. Bottom Search Bar & Record Status */}
       <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
         <div className="flex items-center space-x-2">
           <span className="font-semibold">Search :</span>
@@ -343,6 +413,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
             <option value="Keterangan">Keterangan</option>
           </select>
           <input
+            ref={searchInputRef}
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -351,22 +422,24 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
           />
         </div>
         <div className="flex items-center space-x-4">
-          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner"></div>
+          <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
+            {returList.find((r) => r.id === selectedId)?.namaCustomer || ''}
+          </div>
           <div className="font-semibold px-2 py-0.5 bg-[#ECE9D8] border border-[#919191]">
             Record {filteredList.length}
           </div>
         </div>
       </div>
 
-      {/* Add New Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
               <span>{editingId ? 'Koreksi Retur Penjualan' : 'Tambah Retur Penjualan Baru'}</span>
               <button
+                type="button"
                 onClick={() => setIsAddOpen(false)}
-                className="text-white hover:text-red-300 font-bold px-1.5"
+                className="text-white hover:text-red-300 font-bold px-1.5 cursor-pointer"
               >
                 ✕
               </button>
@@ -378,18 +451,19 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                   type="text"
                   value={newNoBukti}
                   onChange={(e) => setNewNoBukti(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Tanggal:</label>
-                <input
-                  type="text"
-                  value={newTanggal}
-                  onChange={(e) => setNewTanggal(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTanggal}
+                    onChange={(formatted) => setNewTanggal(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Nama Customer:</label>
@@ -397,17 +471,26 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                   type="text"
                   value={newCustomer}
                   onChange={(e) => setNewCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   required
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Nilai Retur:</label>
+                <label className="font-semibold">No. Faktur Ref:</label>
                 <input
                   type="text"
+                  value={newNoFaktur}
+                  onChange={(e) => setNewNoFaktur(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Nilai Retur (Rp):</label>
+                <input
+                  type="number"
                   value={newNilaiRetur}
                   onChange={(e) => setNewNilaiRetur(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -420,34 +503,34 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Disc:</label>
-                <input
-                  type="text"
-                  value={newDisc}
-                  onChange={(e) => setNewDisc(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">PPN:</label>
-                <input
-                  type="text"
-                  value={newPpn}
-                  onChange={(e) => setNewPpn(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
-                />
+                <label className="font-semibold">Disc (%) / PPN (%):</label>
+                <div className="col-span-2 flex gap-2">
+                  <input
+                    type="number"
+                    value={newDisc}
+                    onChange={(e) => setNewDisc(e.target.value)}
+                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] text-center"
+                  />
+                  <input
+                    type="number"
+                    value={newPpn}
+                    onChange={(e) => setNewPpn(e.target.value)}
+                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] text-center"
+                  />
+                </div>
               </div>
               <div className="flex justify-end space-x-2 pt-3 border-t border-[#D4D0C8]">
                 <button
                   type="button"
                   onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8]"
+                  className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8] cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0]"
+                  disabled={isBusy}
+                  className="px-4 py-1.5 bg-[#000084] text-white border border-[#000066] rounded hover:bg-[#0000A0] cursor-pointer"
                 >
                   Simpan
                 </button>
@@ -457,6 +540,28 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
         </div>
       )}
 
+      <A4PrintPreviewModal
+        isOpen={isPrintOpen}
+        onClose={() => setIsPrintOpen(false)}
+        title="LAPORAN LIST RETUR PENJUALAN"
+        subtitle={`Filter Tanggal: ${tanggalFilter}`}
+        orientation="landscape"
+        columns={[
+          { header: 'No.Bukti', accessor: 'noBukti', width: '115px' },
+          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
+          { header: 'Nama Customer', accessor: 'namaCustomer' },
+          { header: 'Nilai Retur', accessor: 'nilaiRetur', align: 'right', width: '105px' },
+          { header: 'Disc', accessor: 'disc', align: 'center', width: '50px' },
+          { header: 'PPN', accessor: 'ppn', align: 'center', width: '50px' },
+          { header: 'Sts.Post', accessor: 'stsPost', align: 'center', width: '70px' },
+          { header: 'Keterangan', accessor: 'keterangan' },
+        ]}
+        rows={filteredList}
+        summaryItems={[
+          { label: 'Total Retur Penjualan', value: `${filteredList.length} Dokumen` },
+          { label: 'Total Nilai Retur', value: formatRupiah(totalNilai) },
+        ]}
+      />
     </div>
   );
 };
