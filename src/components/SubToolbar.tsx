@@ -3,12 +3,14 @@ import { erpCreate, erpList, erpUpdate, toDisplayDmy, toIsoDate } from '../lib/e
 import { DatePickerInput } from './DatePickerInput';
 
 interface SubToolbarProps {
+  disabled?: boolean;
   onMonthChange?: (month: string) => void;
   onPeriodChange?: (start: string, end: string) => void;
   onLocationChange?: (loc: string) => void;
 }
 
 export const SubToolbar: React.FC<SubToolbarProps> = ({
+  disabled = false,
   onMonthChange,
   onPeriodChange,
   onLocationChange,
@@ -93,7 +95,9 @@ export const SubToolbar: React.FC<SubToolbarProps> = ({
   return (
     <div
       id="sub-toolbar"
-      className="flex items-center h-[28px] bg-[#ECE9D8] border-b border-[#ACA899] px-2 select-none text-[11px] font-sans text-black overflow-x-auto min-w-0"
+      className={`flex items-center h-[28px] bg-[#ECE9D8] border-b border-[#ACA899] px-2 select-none text-[11px] font-sans text-black overflow-x-auto min-w-0 ${
+        disabled ? 'opacity-40 pointer-events-none' : ''
+      }`}
     >
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-1">

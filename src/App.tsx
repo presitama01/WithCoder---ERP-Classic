@@ -52,9 +52,13 @@ import { LaporanKertasKerjaPrintForm } from './components/LaporanKertasKerjaPrin
 import { LaporanPenjualanBarangPrintForm } from './components/LaporanPenjualanBarangPrintForm';
 import { ListFakturDpForm } from './components/ListFakturDpForm';
 import { ListFakturLainForm } from './components/ListFakturLainForm';
+import { UserRightsForm } from './components/UserRightsForm';
+import { ChangePasswordForm } from './components/ChangePasswordForm';
+import { getCurrentUser, UserRole } from './lib/authService';
 
 export default function App() {
-  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoginOpen, setIsLoginOpen] = useState(true);
   const [activeMdiForm, setActiveMdiForm] = useState<
     | 'category'
     | 'merk'
@@ -98,8 +102,16 @@ export default function App() {
     | 'faktur_lain'
     | null
   >(null);
-  const [activeUser, setActiveUser] = useState<string>('RETNO');
-  const [statusMessage, setStatusMessage] = useState<string>('');
+  const [activeUser, setActiveUser] = useState<string>(() => getCurrentUser().username || 'ADMIN');
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole>(() => getCurrentUser().role || 'Administrator');
+  const [isUserRightsOpen, setIsUserRightsOpen] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [permissionDeniedMsg, setPermissionDeniedMsg] = useState<string | null>(null);
+  const [windowLayoutMode, setWindowLayoutMode] = useState<'normal' | 'cascade' | 'tile-h' | 'tile-v'>('normal');
+
+  const [statusMessage, setStatusMessage] = useState<string>(
+    'Aplikasi terkunci. Silakan login terlebih dahulu untuk mengakses menu WithCoder - ERP.'
+  );
   const [isInsertMode, setIsInsertMode] = useState(true);
   const [showExitDialog, setShowExitDialog] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -128,6 +140,11 @@ export default function App() {
       setActiveMdiForm('lokasi');
       setActiveForm(null);
     } else if (actionName === 'Company Profile') {
+      if (currentUserRole !== 'Administrator') {
+        setPermissionDeniedMsg('Akses Ditolak: Setup Perusahaan & Cabang hanya dapat diakses oleh Administrator.');
+        setStatusMessage('Akses Ditolak: Memerlukan hak Administrator.');
+        return;
+      }
       setActiveMdiForm('company_profile');
       setActiveForm(null);
     } else if (actionName === 'Rekening Bank') {
@@ -306,9 +323,11 @@ export default function App() {
     }
   };
 
-  const handleLoginSuccess = (user: string) => {
+  const handleLoginSuccess = (user: string, role: UserRole) => {
+    setIsLoggedIn(true);
     setActiveUser(user);
-    setStatusMessage(`User: [${user}] terotentikasi. Sistem siap digunakan.`);
+    setCurrentUserRole(role);
+    setStatusMessage(`User: [${user}] (${role}) berhasil masuk. Seluruh fitur telah dibuka.`);
     setIsLoginOpen(false);
   };
 
@@ -318,12 +337,19 @@ export default function App() {
 
   const confirmExit = () => {
     setShowExitDialog(false);
+    setIsLoggedIn(false);
+    setActiveMdiForm(null);
     setStatusMessage('Sesi ditutup.');
     setIsLoginOpen(true);
   };
 
   const handleLogout = () => {
-    setStatusMessage('User telah logout. Silakan login kembali.');
+    setIsLoggedIn(false);
+    setActiveMdiForm(null);
+    setIsUserRightsOpen(false);
+    setIsChangePasswordOpen(false);
+    setActiveForm(null);
+    setStatusMessage('Aplikasi telah logout dan dikunci. Silakan login kembali melalui menu File -> LogIn.');
     setIsLoginOpen(true);
   };
 
@@ -347,7 +373,16 @@ export default function App() {
     } else if (actionName === 'Master Lokasi Gudang') {
       setActiveMdiForm('lokasi');
       setActiveForm(null);
-    } else if (actionName === 'Company Profile') {
+    } else if (
+      actionName === 'Company Profile' ||
+      actionName === 'Setup Perusahaan' ||
+      actionName === 'Setup Perusahaan & Cabang'
+    ) {
+      if (currentUserRole !== 'Administrator') {
+        setPermissionDeniedMsg('Akses Ditolak: Setup Perusahaan & Cabang hanya dapat diakses oleh Administrator.');
+        setStatusMessage('Akses Ditolak: Memerlukan hak Administrator.');
+        return;
+      }
       setActiveMdiForm('company_profile');
       setActiveForm(null);
     } else if (actionName === 'Rekening Bank') {
@@ -516,8 +551,27 @@ export default function App() {
     ) {
       setActiveMdiForm('laporan_kertas_kerja');
       setActiveForm(null);
-    } else if (actionName === 'Cascade Windows' || actionName === 'Arrange Icons') {
-      setIsLoginOpen(true);
+    } else if (actionName === 'Cascade Windows') {
+      setWindowLayoutMode('cascade');
+      setStatusMessage('Tampilan Windows: Cascade diaplikasikan.');
+    } else if (actionName === 'Tile Horizontal') {
+      setWindowLayoutMode('tile-h');
+      setStatusMessage('Tampilan Windows: Tile Horizontal diaplikasikan.');
+    } else if (actionName === 'Tile Vertical') {
+      setWindowLayoutMode('tile-v');
+      setStatusMessage('Tampilan Windows: Tile Vertical diaplikasikan.');
+    } else if (actionName === 'Arrange Icons') {
+      setWindowLayoutMode('normal');
+      setStatusMessage('Tampilan Windows: Standar (Arrange Icons / Reset Tampilan).');
+    } else if (actionName === 'Otorisasi Pengguna' || actionName === 'Otorisasi Pengguna / User Rights') {
+      if (currentUserRole !== 'Administrator') {
+        setPermissionDeniedMsg('Akses Ditolak: Modul Otorisasi Pengguna hanya dapat diakses oleh Administrator.');
+        setStatusMessage('Akses Ditolak: Memerlukan hak Administrator.');
+        return;
+      }
+      setIsUserRightsOpen(true);
+    } else if (actionName === 'Ganti Password') {
+      setIsChangePasswordOpen(true);
     } else {
       setActiveMdiForm(null);
       setActiveForm({ module: 'System', title: actionName });
@@ -615,6 +669,7 @@ export default function App() {
 
       {/* 2. Top Windows Menu Bar (File, Edit, Admin, Windows) */}
       <MenuBar
+        isLoggedIn={isLoggedIn}
         onOpenLogin={() => setIsLoginOpen(true)}
         onLogout={handleLogout}
         onAction={handleMenuAction}
@@ -624,18 +679,31 @@ export default function App() {
 
       {/* 3. Main Desktop Toolbar (Master, Pembelian, Penjualan, Stock, Keuangan, Exit) */}
       <Toolbar
+        isLoggedIn={isLoggedIn}
         onSelectAction={handleToolbarSelectAction}
         onExit={handleExit}
       />
 
       {/* 4. Sub-toolbar with Month Active, Periode, Lokasi */}
       <SubToolbar
+        disabled={!isLoggedIn}
         onMonthChange={(m) => setStatusMessage(`Periode aktif diubah: ${m}`)}
         onLocationChange={(loc) => setStatusMessage(`Lokasi aktif diubah: ${loc}`)}
       />
 
       {/* 5. Desktop MDI Workspace Area */}
-      <main id="mdi-workspace" className="relative flex-1 overflow-hidden w-full">
+      <main
+        id="mdi-workspace"
+        className={`relative flex-1 overflow-hidden w-full ${
+          windowLayoutMode === 'cascade'
+            ? 'p-6'
+            : windowLayoutMode === 'tile-h'
+            ? 'py-4 px-2'
+            : windowLayoutMode === 'tile-v'
+            ? 'px-6 py-2'
+            : ''
+        }`}
+      >
         {/* Curved Globe World Map Background Wallpaper */}
         <GlobeBackground />
 
@@ -892,12 +960,62 @@ export default function App() {
           />
         )}
 
+        {/* User Rights (Otorisasi Pengguna) MDI Form */}
+        <UserRightsForm
+          isOpen={isUserRightsOpen}
+          onClose={() => setIsUserRightsOpen(false)}
+          onUserUpdated={() => {
+            const cur = getCurrentUser();
+            setActiveUser(cur.username);
+            setCurrentUserRole(cur.role);
+          }}
+        />
+
+        {/* Change Password Dialog */}
+        <ChangePasswordForm
+          isOpen={isChangePasswordOpen}
+          onClose={() => setIsChangePasswordOpen(false)}
+          onSuccess={() => setStatusMessage('Password pengguna berhasil diubah.')}
+        />
+
+        {/* Permission Denied Alert Modal */}
+        {permissionDeniedMsg && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-2 font-sans select-none">
+            <div className="w-[360px] bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#404040] border-r-[#404040] shadow-2xl">
+              <div className="h-[24px] bg-gradient-to-r from-[#800000] to-[#CC0000] text-white px-2 flex items-center justify-between font-bold text-[11px]">
+                <span>Peringatan Otoritas Keamanan</span>
+                <button
+                  type="button"
+                  onClick={() => setPermissionDeniedMsg(null)}
+                  className="text-white hover:bg-red-800 px-1 font-bold text-[10px]"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-3 text-[11px] text-black">
+                <div className="flex items-start space-x-2">
+                  <div className="text-[18px] text-red-600">🚫</div>
+                  <p className="flex-1 font-medium text-gray-800">{permissionDeniedMsg}</p>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setPermissionDeniedMsg(null)}
+                    className="w-[70px] h-[22px] bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#404040] border-r-[#404040] text-[11px] font-bold text-black hover:bg-gray-100 cursor-pointer"
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Draggable Login Dialog Window (can be reopened via logout / menu) */}
         <LoginWindow
           isOpen={isLoginOpen}
           onClose={() => setIsLoginOpen(false)}
           onLoginSuccess={handleLoginSuccess}
-          initialPos={{ x: 20, y: 30 }}
         />
 
         {/* Exit Confirmation Dialog (Classic Windows Alert) */}
@@ -988,7 +1106,7 @@ export default function App() {
 
       {/* 6. Bottom Classic Status Bar */}
       <StatusBar
-        userName={activeUser}
+        userName={isLoggedIn ? `${activeUser} (${currentUserRole.toUpperCase()})` : 'BELUM LOGIN (TERKUNCI)'}
         statusMessage={statusMessage}
         isInsertMode={isInsertMode}
         onToggleInsert={() => setIsInsertMode(!isInsertMode)}

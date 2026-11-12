@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MenuGroup, MenuItem } from '../types';
+import { MenuGroup } from '../types';
+import { executeEditAction } from '../lib/clipboardHelper';
 
 interface MenuBarProps {
+  isLoggedIn?: boolean;
   onOpenLogin?: () => void;
   onLogout?: () => void;
   onAction?: (actionName: string) => void;
@@ -10,11 +12,12 @@ interface MenuBarProps {
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({
+  isLoggedIn = true,
   onOpenLogin,
   onLogout,
   onAction,
   onExit,
-  onAbout,
+  onAbout: _onAbout,
 }) => {
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null);
   const [activeSubmenuIndex, setActiveSubmenuIndex] = useState<number | null>(null);
@@ -36,6 +39,15 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       accessKey: 'F',
       items: [
         {
+          label: 'LogIn...',
+          disabled: isLoggedIn,
+          action: () => {
+            setOpenMenuIndex(null);
+            onOpenLogin?.();
+          },
+        },
+        { divider: true, label: '' },
+        {
           label: 'Database Utility',
           disabled: true,
           hasSubmenu: true,
@@ -47,7 +59,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
             { label: 'Check Database Integrity', action: () => handleAction('Check Database Integrity') },
           ],
         },
-        { label: 'Rubah Password', action: () => handleAction('Rubah Password') },
+        { label: 'Rubah Password', disabled: true, action: () => handleAction('Rubah Password') },
         { divider: true, label: '' },
         {
           label: 'SecurityTransaksi',
@@ -61,50 +73,91 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           ],
         },
         { divider: true, label: '' },
-        { label: 'Tabel Transaksi', action: () => handleAction('Tabel Transaksi') },
+        { label: 'Tabel Transaksi', disabled: true, action: () => handleAction('Tabel Transaksi') },
         { label: 'Tabel Kurs', disabled: true, action: () => handleAction('Tabel Kurs') },
         { divider: true, label: '' },
-        { label: 'Set Periode Bulan', action: () => handleAction('Set Periode Bulan') },
+        { label: 'Set Periode Bulan', disabled: true, action: () => handleAction('Set Periode Bulan') },
         { label: 'Perbaikan Transaksi', disabled: true, action: () => handleAction('Perbaikan Transaksi') },
         { label: 'Posting Transaksi To Jurnal', disabled: true, action: () => handleAction('Posting Transaksi To Jurnal') },
         { label: 'Proses Bulanan', disabled: true, action: () => handleAction('Proses Bulanan') },
         { divider: true, label: '' },
-        { label: 'LogOut', action: onLogout || onExit },
+        {
+          label: 'LogOut',
+          disabled: !isLoggedIn,
+          action: () => {
+            setOpenMenuIndex(null);
+            onLogout?.();
+          },
+        },
+        { divider: true, label: '' },
+        { label: 'Exit', action: onExit },
       ],
     },
     {
       title: 'Edit',
       accessKey: 'E',
       items: [
-        { label: 'Cut', shortcut: 'Ctrl+X', action: () => handleAction('Cut') },
-        { label: 'Copy', shortcut: 'Ctrl+C', action: () => handleAction('Copy') },
-        { label: 'Paste', shortcut: 'Ctrl+V', action: () => handleAction('Paste') },
+        {
+          label: 'Cut',
+          shortcut: 'Ctrl+X',
+          disabled: !isLoggedIn,
+          action: () => {
+            const feedback = executeEditAction('Cut');
+            handleAction(feedback);
+          },
+        },
+        {
+          label: 'Copy',
+          shortcut: 'Ctrl+C',
+          disabled: !isLoggedIn,
+          action: () => {
+            const feedback = executeEditAction('Copy');
+            handleAction(feedback);
+          },
+        },
+        {
+          label: 'Paste',
+          shortcut: 'Ctrl+V',
+          disabled: !isLoggedIn,
+          action: () => {
+            const feedback = executeEditAction('Paste');
+            handleAction(feedback);
+          },
+        },
         { divider: true, label: '' },
-        { label: 'Select All', shortcut: 'Ctrl+A', action: () => handleAction('Select All') },
+        {
+          label: 'Select All',
+          shortcut: 'Ctrl+A',
+          disabled: !isLoggedIn,
+          action: () => {
+            const feedback = executeEditAction('Select All');
+            handleAction(feedback);
+          },
+        },
       ],
     },
     {
       title: 'Admin',
       accessKey: 'A',
       items: [
-        { label: 'Otorisasi Pengguna / User Rights', action: () => handleAction('Otorisasi Pengguna') },
-        { label: 'Ganti Password', action: () => handleAction('Ganti Password') },
+        { label: 'Otorisasi Pengguna / User Rights', disabled: !isLoggedIn, action: () => handleAction('Otorisasi Pengguna') },
+        { label: 'Ganti Password', disabled: !isLoggedIn, action: () => handleAction('Ganti Password') },
         { divider: true, label: '' },
-        { label: 'Setup Perusahaan & Cabang', action: () => handleAction('Setup Perusahaan') },
-        { label: 'Konfigurasi Database', action: () => handleAction('Konfigurasi Database') },
-        { label: 'Backup & Restore Data...', action: () => handleAction('Backup & Restore Data') },
+        { label: 'Setup Perusahaan & Cabang', disabled: !isLoggedIn, action: () => handleAction('Setup Perusahaan') },
+        { label: 'Konfigurasi Database', disabled: true, action: () => handleAction('Konfigurasi Database') },
+        { label: 'Backup & Restore Data...', disabled: true, action: () => handleAction('Backup & Restore Data') },
         { divider: true, label: '' },
-        { label: 'Audit Trail / Log Sistem', action: () => handleAction('Audit Trail') },
+        { label: 'Audit Trail / Log Sistem', disabled: true, action: () => handleAction('Audit Trail') },
       ],
     },
     {
       title: 'Windows',
       accessKey: 'W',
       items: [
-        { label: 'Cascade', action: () => handleAction('Cascade Windows') },
-        { label: 'Tile Horizontal', action: () => handleAction('Tile Horizontal') },
-        { label: 'Tile Vertical', action: () => handleAction('Tile Vertical') },
-        { label: 'Arrange Icons', action: () => handleAction('Arrange Icons') },
+        { label: 'Cascade', disabled: !isLoggedIn, action: () => handleAction('Cascade Windows') },
+        { label: 'Tile Horizontal', disabled: !isLoggedIn, action: () => handleAction('Tile Horizontal') },
+        { label: 'Tile Vertical', disabled: !isLoggedIn, action: () => handleAction('Tile Vertical') },
+        { label: 'Arrange Icons', disabled: !isLoggedIn, action: () => handleAction('Arrange Icons') },
       ],
     },
   ];
@@ -132,6 +185,10 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   }, []);
 
   const handleMenuClick = (index: number) => {
+    // If not logged in, only File menu can be opened
+    if (!isLoggedIn && index !== 0) {
+      return;
+    }
     if (openMenuIndex === index) {
       setOpenMenuIndex(null);
       setActiveSubmenuIndex(null);
@@ -142,6 +199,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   };
 
   const handleMouseEnter = (index: number) => {
+    if (!isLoggedIn && index !== 0) return;
     if (openMenuIndex !== null) {
       setOpenMenuIndex(index);
       setActiveSubmenuIndex(null);
@@ -156,17 +214,22 @@ export const MenuBar: React.FC<MenuBarProps> = ({
     >
       {menus.map((menu, index) => {
         const isOpen = openMenuIndex === index;
+        const isMenuDisabled = !isLoggedIn && index !== 0;
+
         return (
           <div key={menu.title} className="relative">
             <button
               id={`menu-item-${menu.title.toLowerCase()}`}
               type="button"
+              disabled={isMenuDisabled}
               onClick={() => handleMenuClick(index)}
               onMouseEnter={() => handleMouseEnter(index)}
-              className={`px-2 py-0.5 outline-none text-left transition-none text-[11px] font-sans cursor-pointer ${
-                isOpen
-                  ? 'bg-gradient-to-b from-[#E6EFF9] to-[#C8DBF4] border border-[#7BA7E1] rounded-[2px] shadow-sm text-black'
-                  : 'hover:bg-[#E5EFF9] hover:border hover:border-[#B5D3FF] border border-transparent rounded-[2px]'
+              className={`px-2 py-0.5 outline-none text-left transition-none text-[11px] font-sans ${
+                isMenuDisabled
+                  ? 'text-gray-400 cursor-not-allowed'
+                  : isOpen
+                  ? 'bg-gradient-to-b from-[#E6EFF9] to-[#C8DBF4] border border-[#7BA7E1] rounded-[2px] shadow-sm text-black cursor-pointer'
+                  : 'hover:bg-[#E5EFF9] hover:border hover:border-[#B5D3FF] border border-transparent rounded-[2px] cursor-pointer'
               }`}
             >
               <span className="underline">{menu.title.charAt(0)}</span>

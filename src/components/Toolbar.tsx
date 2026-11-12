@@ -34,11 +34,16 @@ export interface ToolbarItem {
 }
 
 interface ToolbarProps {
+  isLoggedIn?: boolean;
   onSelectAction: (moduleName: string, actionName: string) => void;
   onExit: () => void;
 }
 
-export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
+export const Toolbar: React.FC<ToolbarProps> = ({
+  isLoggedIn = true,
+  onSelectAction,
+  onExit,
+}) => {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [activeSubmenuIdx, setActiveSubmenuIdx] = useState<number | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -275,25 +280,35 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onSelectAction, onExit }) => {
       <div className="flex items-center space-x-1">
         {toolbarMenus.map((tool) => {
           const isOpen = openMenuId === tool.id;
+          const isToolDisabled = !isLoggedIn && tool.id !== 'exit';
 
           return (
             <div key={tool.id} className="relative">
               <button
                 id={`toolbar-btn-${tool.id}`}
                 type="button"
-                onClick={() => handleButtonClick(tool)}
-                onMouseEnter={() => handleButtonMouseEnter(tool)}
-                title={tool.label}
-                className={`group flex flex-col items-center justify-center w-[62px] h-[50px] px-1 py-0.5 transition-none cursor-pointer ${
-                  isOpen
-                    ? 'bg-[#E3EBF6] border border-[#7BA7E1] shadow-inner'
-                    : 'hover:bg-[#F2EFE2] hover:border hover:border-[#D1CDBC] border border-transparent active:bg-[#DFDBD0]'
+                disabled={isToolDisabled}
+                onClick={() => {
+                  if (!isToolDisabled) handleButtonClick(tool);
+                }}
+                onMouseEnter={() => {
+                  if (!isToolDisabled) handleButtonMouseEnter(tool);
+                }}
+                title={isToolDisabled ? 'Aplikasi Terkunci (Silakan LogIn)' : tool.label}
+                className={`group flex flex-col items-center justify-center w-[62px] h-[50px] px-1 py-0.5 transition-none ${
+                  isToolDisabled
+                    ? 'opacity-35 grayscale cursor-not-allowed border border-transparent'
+                    : isOpen
+                    ? 'bg-[#E3EBF6] border border-[#7BA7E1] shadow-inner cursor-pointer'
+                    : 'hover:bg-[#F2EFE2] hover:border hover:border-[#D1CDBC] border border-transparent active:bg-[#DFDBD0] cursor-pointer'
                 }`}
               >
                 <div className="flex items-center justify-center h-[32px] transition-transform group-active:translate-x-[0.5px] group-active:translate-y-[0.5px]">
                   {tool.icon}
                 </div>
-                <span className="text-[11px] font-sans text-black leading-tight group-active:translate-x-[0.5px] group-active:translate-y-[0.5px]">
+                <span className={`text-[11px] font-sans leading-tight group-active:translate-x-[0.5px] group-active:translate-y-[0.5px] ${
+                  isToolDisabled ? 'text-gray-400' : 'text-black'
+                }`}>
                   {tool.label}
                 </span>
               </button>
