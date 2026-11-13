@@ -277,6 +277,8 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
     showFeedback('Data user tersinkronisasi dengan Supabase.');
   };
 
+  if (!isOpen) return null;
+
   return (
     <div
       id="user-rights-form-container"
