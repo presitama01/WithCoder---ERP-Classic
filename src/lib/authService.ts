@@ -190,56 +190,30 @@ export async function saveUserAccount(user: AppUserAccount): Promise<AppUserAcco
   };
 
   // 1. Sync to Supabase app_users
-  try {
-    const dbPayload: Record<string, any> = {
-      username: uname,
-      full_name: updatedUser.full_name,
-      role: role.toUpperCase(),
-      is_active: updatedUser.is_active,
-      password: updatedUser.password || '123456',
-      can_master: modules.master,
-      can_pembelian: modules.pembelian,
-      can_penjualan: modules.penjualan,
-      can_stock: modules.stock,
-      can_keuangan: modules.keuangan,
-      can_admin: modules.admin,
-    };
+  const dbPayload: Record<string, any> = {
+    username: uname,
+    full_name: updatedUser.full_name,
+    role: role.toUpperCase(),
+    is_active: updatedUser.is_active,
+    password: updatedUser.password || '123456',
+    can_master: modules.master,
+    can_pembelian: modules.pembelian,
+    can_penjualan: modules.penjualan,
+    can_stock: modules.stock,
+    can_keuangan: modules.keuangan,
+    can_admin: modules.admin,
+  };
 
-    if (user.id && !user.id.startsWith('usr-')) {
-      await erpUpdate('app_users', user.id, dbPayload);
+  if (user.id && !user.id.startsWith('usr-')) {
+    await erpUpdate('app_users', user.id, dbPayload);
+  } else {
+    const existing = await erpList<any>('app_users', { eq: { username: uname } });
+    if (existing.length > 0) {
+      await erpUpdate('app_users', existing[0].id, dbPayload);
+      updatedUser.id = existing[0].id;
     } else {
-      const existing = await erpList<any>('app_users', { eq: { username: uname } });
-      if (existing.length > 0) {
-        await erpUpdate('app_users', existing[0].id, dbPayload);
-        updatedUser.id = existing[0].id;
-      } else {
-        const created = await erpCreate<any>('app_users', dbPayload);
-        if (created?.id) updatedUser.id = created.id;
-      }
-    }
-  } catch {
-    // Fallback if password / permission columns are being added
-    try {
-      const basicPayload = {
-        username: uname,
-        full_name: updatedUser.full_name,
-        role: role.toUpperCase(),
-        is_active: updatedUser.is_active,
-      };
-      if (user.id && !user.id.startsWith('usr-')) {
-        await erpUpdate('app_users', user.id, basicPayload);
-      } else {
-        const existing = await erpList<any>('app_users', { eq: { username: uname } });
-        if (existing.length > 0) {
-          await erpUpdate('app_users', existing[0].id, basicPayload);
-          updatedUser.id = existing[0].id;
-        } else {
-          const created = await erpCreate<any>('app_users', basicPayload);
-          if (created?.id) updatedUser.id = created.id;
-        }
-      }
-    } catch {
-      // Local storage persistence will handle
+      const created = await erpCreate<any>('app_users', dbPayload);
+      if (created?.id) updatedUser.id = created.id;
     }
   }
 
@@ -267,12 +241,13 @@ export async function deleteUserAccount(id: string, username: string): Promise<v
     throw new Error('User ADMIN utama tidak dapat dihapus.');
   }
 
-  try {
-    if (id && !id.startsWith('usr-')) {
-      await erpDelete('app_users', id);
+  if (id && !id.startsWith('usr-')) {
+    await erpDelete('app_users', id);
+  } else {
+    const existing = await erpList<any>('app_users', { eq: { username: uname } });
+    if (existing.length > 0 && existing[0]?.id) {
+      await erpDelete('app_users', existing[0].id);
     }
-  } catch {
-    // Continue local cleanup
   }
 
   const all = await getAllUsers();
@@ -326,18 +301,14 @@ export async function changeUserPassword(
     throw new Error('Password baru minimal harus 4 karakter.');
   }
 
-  // Attempt sync to Supabase app_users table
-  try {
-    if (current.id && !current.id.startsWith('usr-')) {
-      await erpUpdate('app_users', current.id, { password: newPass.trim() });
-    } else {
-      const existing = await erpList<any>('app_users', { eq: { username: uname } });
-      if (existing.length > 0) {
-        await erpUpdate('app_users', existing[0].id, { password: newPass.trim() });
-      }
+  // Sync directly to Supabase app_users table
+  if (current.id && !current.id.startsWith('usr-')) {
+    await erpUpdate('app_users', current.id, { password: newPass.trim() });
+  } else {
+    const existing = await erpList<any>('app_users', { eq: { username: uname } });
+    if (existing.length > 0) {
+      await erpUpdate('app_users', existing[0].id, { password: newPass.trim() });
     }
-  } catch {
-    // Non-blocking
   }
 
   all[idx].password = newPass.trim();

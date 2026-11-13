@@ -11,6 +11,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   toDisplayDMyShort,
   todayIso,
@@ -93,6 +94,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -102,7 +104,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
       const rows = await erpList<any>('pembelian_barangs', { orderBy: 'tanggal', asc: false });
@@ -111,11 +113,18 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -126,8 +135,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
+    setModalError(null);
     const todayDisp = toDisplayDMyShort(todayIso());
-    setNewNoBukti(`2608-PB-IMP-${String(pembelianList.length + 1).padStart(3, '0')}`);
+    setNewNoBukti(nextUniqueCode(pembelianList.map((p) => p.noBukti), '2608-PB-IMP-', 3));
     setNewTanggal(todayDisp);
     setNewSupplier('');
     setNewNoPo('');
@@ -146,6 +156,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewSupplier(item.namaSupplier);
@@ -160,7 +171,11 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNoBukti.trim()) return;
+    setModalError(null);
+    if (!newNoBukti.trim() || !newSupplier.trim() || !newNoFaktur.trim()) {
+      setModalError('No.Bukti, Nama Supplier, dan No.Faktur wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -204,7 +219,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data Pembelian';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -293,10 +310,10 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={loadData}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
-              onHapus={() => selectedId && handleDelete(selectedId)}
+              onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
               onPrint={() => setIsPrintOpen(true)}
               onFind={handleFind}
               isBusy={isBusy}
@@ -449,13 +466,16 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                 <span>{editingId ? 'Koreksi Pembelian Barang' : 'Tambah Pembelian Barang Baru'}</span>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="text-white hover:bg-red-600 px-1.5 rounded cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-2.5">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">No.Bukti:</label>
                   <input
@@ -542,10 +562,18 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     </select>
                   </div>
                 </div>
+                {modalError && (
+                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                    ⚠ {modalError}
+                  </div>
+                )}
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#D0D0D0]">
                   <button
                     type="button"
-                    onClick={() => setIsAddOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsAddOpen(false);
+                    }}
                     className="px-3 py-1 bg-[#E1DFDD] border border-[#ADABA1] rounded text-xs hover:bg-[#F3F2F1] cursor-pointer"
                   >
                     Batal

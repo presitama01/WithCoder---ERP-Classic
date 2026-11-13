@@ -30,6 +30,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
   const [newKode, setNewKode] = useState('');
   const [newWilayah, setNewWilayah] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -52,11 +53,18 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
       if (mapped.length > 0 && !mapped.some((w) => w.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -67,6 +75,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
+    setModalError(null);
     setNewKode('');
     setNewWilayah('');
     setIsAddOpen(true);
@@ -79,13 +88,17 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewKode(item.kodeWilayah);
     setNewWilayah(item.wilayah);
     setIsAddOpen(true);
   };
 
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
     try {
       setIsBusy(true);
       await erpDelete('master_wilayahs', selectedId);
@@ -102,7 +115,11 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKode.trim() || !newWilayah.trim()) return;
+    setModalError(null);
+    if (!newKode.trim() || !newWilayah.trim()) {
+      setModalError('Kode Wilayah dan Nama Wilayah wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -134,7 +151,9 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data ke database';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -188,7 +207,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
           className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
         >
           <FormActionButtons
-            onSimpan={loadData}
+            onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
@@ -291,14 +310,17 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
               <span>{editingId ? 'Koreksi Master Wilayah' : 'Input Master Wilayah Baru'}</span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsAddOpen(false);
+                }}
                 className="w-[16px] h-[15px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 text-[11px] text-black">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-[11px] text-black">
               <div className="flex items-center space-x-3">
                 <label className="w-[100px] font-bold">Kode Wilayah :</label>
                 <input
@@ -324,6 +346,12 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
                 />
               </div>
 
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
@@ -334,7 +362,10 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Batal

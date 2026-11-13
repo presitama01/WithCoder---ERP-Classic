@@ -29,6 +29,7 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isBusy, setIsBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   // Modal editor state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -97,6 +98,7 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
   const selectedUser = users.find((u) => u.username === selectedUsername);
 
   const handleOpenAdd = () => {
+    setModalError(null);
     setIsEditing(false);
     setEditId(undefined);
     setEditUsername('');
@@ -120,6 +122,7 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
       showFeedback('Pilih user terlebih dahulu.');
       return;
     }
+    setModalError(null);
     setIsEditing(true);
     setEditId(selectedUser.id);
     setEditUsername(selectedUser.username);
@@ -172,9 +175,18 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
 
   const handleSaveModal = async (e: React.FormEvent) => {
     e.preventDefault();
+    setModalError(null);
     const uname = editUsername.trim().toUpperCase();
     if (!uname) {
-      showFeedback('User ID wajib diisi.');
+      setModalError('User ID / Username wajib diisi.');
+      return;
+    }
+    if (!editFullName.trim()) {
+      setModalError('Nama Lengkap wajib diisi.');
+      return;
+    }
+    if (!editPassword.trim() || editPassword.trim().length < 4) {
+      setModalError('Password minimal 4 karakter.');
       return;
     }
 
@@ -186,16 +198,18 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
         full_name: editFullName.trim() || uname,
         role: editRole,
         is_active: editIsActive,
-        password: editPassword.trim() || '123456',
+        password: editPassword.trim(),
         modules: editModules,
       });
 
       setIsModalOpen(false);
-      showFeedback(`User ${uname} berhasil disimpan.`);
+      setModalError(null);
+      showFeedback(`User ${uname} berhasil disimpan ke Supabase.`);
       await loadUsersList();
       setSelectedUsername(uname);
       onUserUpdated?.();
     } catch (err: any) {
+      setModalError(err?.message || 'Gagal menyimpan user ke Supabase.');
       showFeedback(`Gagal menyimpan user: ${err.message}`);
     } finally {
       setIsBusy(false);
@@ -253,33 +267,50 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
     showFeedback('Laporan otorisasi pengguna diekspor ke Excel.');
   };
 
-  if (!isOpen) return null;
+  const handleFind = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const handleToolbarSimpan = async () => {
+    await loadUsersList();
+    showFeedback('Data user tersinkronisasi dengan Supabase.');
+  };
 
   return (
     <div
       id="user-rights-form-container"
-      className="absolute inset-0 bg-[#D4D0C8] flex flex-col font-sans select-none z-20"
+      className="absolute inset-0 bg-[#D4D0C8] flex flex-col font-sans select-none z-30"
     >
       {/* 1. Header Banner */}
-      <FormHeaderBanner title="OTORISASI PENGGUNA & HAK AKSES (USER RIGHTS)" />
+      <FormHeaderBanner
+        title="OTORISASI PENGGUNA & HAK AKSES (USER RIGHTS)"
+        onClose={onClose}
+        onFind={handleFind}
+        onPrint={() => setIsPrintOpen(true)}
+        onTableView={loadUsersList}
+        onExportExcel={handleExportExcel}
+      />
 
       {/* 2. Form Toolbar Action Buttons */}
-      <FormActionButtons
-        onAddNew={handleOpenAdd}
-        onEdit={handleOpenEdit}
-        onDelete={handleDeleteClick}
-        onPrint={() => setIsPrintOpen(true)}
-        onExportExcel={handleExportExcel}
-        onClose={onClose}
-        extraTools={
-          <div className="flex items-center space-x-2 text-[11px] text-gray-700 ml-2">
-            <span className="font-bold">Role:</span>
-            <span className="px-1.5 py-0.5 bg-white border border-[#7F9DB9] text-blue-900 font-semibold">
-              {getCurrentUser().role}
-            </span>
-          </div>
-        }
-      />
+      <div className="bg-[#ECE9D8] border-b border-[#ACA899] px-3 py-1.5 flex items-center justify-between text-[11px] overflow-x-auto">
+        <FormActionButtons
+          onSimpan={handleToolbarSimpan}
+          onBaru={handleOpenAdd}
+          onKoreksi={handleOpenEdit}
+          onHapus={handleDeleteClick}
+          onPrint={() => setIsPrintOpen(true)}
+          onFind={handleFind}
+          isBusy={isBusy}
+          feedback={feedback}
+        />
+        <div className="flex items-center space-x-2 text-[11px] text-gray-700 ml-2 shrink-0">
+          <span className="font-bold">Role Aktif:</span>
+          <span className="px-1.5 py-0.5 bg-white border border-[#7F9DB9] text-blue-900 font-semibold">
+            {getCurrentUser().role}
+          </span>
+        </div>
+      </div>
 
       {/* 3. Main Data Grid */}
       <div className="flex-1 p-2 flex flex-col overflow-hidden">
@@ -423,7 +454,7 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveModal} className="p-3 text-[11px] space-y-2.5">
+            <form noValidate onSubmit={handleSaveModal} className="p-3 text-[11px] space-y-2.5">
               <div className="grid grid-cols-[120px_1fr] items-center gap-2">
                 <label className="font-bold">User ID / Username:</label>
                 <input
@@ -544,18 +575,27 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
                 </div>
               </fieldset>
 
+              {modalError && (
+                <div className="px-2 py-1.5 bg-red-50 border border-red-400 text-red-800 text-[11px] font-semibold">
+                  {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2 border-t border-gray-300">
                 <button
                   type="submit"
                   disabled={isBusy}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#404040] border-r-[#404040] font-bold text-black hover:bg-gray-100 active:border-t-[#404040] active:border-l-[#404040]"
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#404040] border-r-[#404040] font-bold text-black hover:bg-gray-100 active:border-t-[#404040] active:border-l-[#404040] cursor-pointer"
                 >
-                  Simpan Otoritas
+                  {isBusy ? 'Menyimpan...' : 'Simpan'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#404040] border-r-[#404040] text-black hover:bg-gray-100"
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setModalError(null);
+                  }}
+                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-[#FFFFFF] border-l-[#FFFFFF] border-b-[#404040] border-r-[#404040] text-black hover:bg-gray-100 cursor-pointer"
                 >
                   Batal
                 </button>

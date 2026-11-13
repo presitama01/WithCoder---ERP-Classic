@@ -11,6 +11,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   toDisplayDMyShort,
   todayIso,
@@ -93,6 +94,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [yellowNote, setYellowNote] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -117,7 +119,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
       const rows = await erpList<any>('faktur_penjualans', {
@@ -130,11 +132,18 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -145,8 +154,9 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
 
   const handleBaru = () => {
     setEditingId(null);
+    setModalError(null);
     const todayDisp = toDisplayDMyShort(todayIso());
-    setNewNoBukti(`INV-LAIN-${String(fakturLainList.length + 1).padStart(4, '0')}`);
+    setNewNoBukti(nextUniqueCode(fakturLainList.map((f) => f.noBukti), 'INV-LAIN-', 4));
     setNewTanggal(todayDisp);
     setNewCustomer('');
     setNewNoSo('');
@@ -168,6 +178,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewCustomer(item.namaCustomer);
@@ -185,7 +196,11 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNoBukti.trim()) return;
+    setModalError(null);
+    if (!newNoBukti.trim() || !newCustomer.trim()) {
+      setModalError('No.Bukti dan Nama Customer wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -231,7 +246,9 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan Faktur Lain';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -324,7 +341,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={loadData}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleHapus}
@@ -487,13 +504,16 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                 <span>{editingId ? 'Koreksi Faktur Lain' : 'Tambah Faktur Lain Baru'}</span>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-2 text-xs">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
                   <label className="font-semibold text-black">No.Bukti:</label>
                   <input
@@ -596,10 +616,18 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
                 </div>
+                {modalError && (
+                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                    ⚠ {modalError}
+                  </div>
+                )}
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
                   <button
                     type="button"
-                    onClick={() => setIsAddOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsAddOpen(false);
+                    }}
                     className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
                   >
                     Batal

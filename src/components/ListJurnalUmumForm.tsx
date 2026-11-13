@@ -10,6 +10,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   todayIso,
   toDisplayDMyShort,
@@ -70,6 +71,7 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
   const [formSaldoDebet, setFormSaldoDebet] = useState<string>('0');
   const [formStsPost, setFormStsPost] = useState<string>('Not Yet');
   const [detailLines, setDetailLines] = useState<JurnalDetailLine[]>([]);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
@@ -118,9 +120,9 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
   if (!isOpen) return null;
 
   const handleBaru = () => {
+    setModalError(null);
     setEditingId(null);
-    const nextNum = String(jurnalList.length + 1).padStart(3, '0');
-    setFormNoBukti(`2608-JU-${nextNum}`);
+    setFormNoBukti(nextUniqueCode(jurnalList.map((j) => j.noBukti), '2608-JU-', 3));
     setFormTanggal(toDisplayDMyShort(todayIso()));
     setFormKategori(kategoriFilter !== 'SEMUA-nya' ? kategoriFilter : 'Jurnal Umum');
     setFormKeterangan('');
@@ -139,6 +141,7 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
       showFeedback('Pilih baris data terlebih dahulu');
       return;
     }
+    setModalError(null);
     setEditingId(current.id);
     setFormNoBukti(current.noBukti);
     setFormTanggal(current.tanggal || toDisplayDMyShort(todayIso()));
@@ -174,7 +177,11 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
 
   const handleSaveModal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formNoBukti.trim()) return;
+    setModalError(null);
+    if (!formNoBukti.trim() || !formKeterangan.trim()) {
+      setModalError('No.Bukti dan Keterangan wajib diisi.');
+      return;
+    }
     const tglIso = toIsoDate(formTanggal) || todayIso();
     const numericSaldo =
       totalLineDebet > 0 ? totalLineDebet : parseNum(formSaldoDebet);
@@ -220,8 +227,11 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
       setSelectedId(mapped.id);
       setIsModalOpen(false);
       setEditingId(null);
+      setModalError(null);
     } catch (err: any) {
-      showFeedback(`Gagal menyimpan: ${err.message}`);
+      const msg = `Gagal menyimpan: ${err.message}`;
+      setModalError(msg);
+      showFeedback(msg);
     } finally {
       setIsBusy(false);
     }
@@ -540,13 +550,16 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
                 <span>{editingId ? 'Koreksi Jurnal Umum' : 'Tambah Jurnal Umum Baru'}</span>
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsModalOpen(false);
+                  }}
                   className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveModal} className="p-4 flex flex-col space-y-3 overflow-auto">
+              <form noValidate onSubmit={handleSaveModal} className="p-4 flex flex-col space-y-3 overflow-auto">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-semibold text-black">No.Bukti:</label>
@@ -736,10 +749,19 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
                   </div>
                 </div>
 
+                {modalError && (
+                  <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] text-[11px] font-semibold">
+                    {modalError}
+                  </div>
+                )}
+
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
                   <button
                     type="button"
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsModalOpen(false);
+                    }}
                     className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
                   >
                     Batal

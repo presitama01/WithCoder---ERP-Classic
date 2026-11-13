@@ -61,6 +61,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   const [newTelepon, setNewTelepon] = useState('');
 
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -79,11 +80,18 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
       if (mapped.length > 0 && !mapped.some((s) => s.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -94,6 +102,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
+    setModalError(null);
     setNewKode('');
     setNewNama('');
     setNewHutang('0');
@@ -111,6 +120,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewKode(item.kodeSupplier);
     setNewNama(item.namaSupplier);
     setNewHutang(String(item.hutang));
@@ -122,7 +132,10 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
     try {
       setIsBusy(true);
       await erpDelete('master_suppliers', selectedId);
@@ -139,7 +152,11 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKode.trim() || !newNama.trim()) return;
+    setModalError(null);
+    if (!newKode.trim() || !newNama.trim()) {
+      setModalError('Kode dan Nama Supplier wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -167,7 +184,9 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data ke database';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -223,7 +242,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
 
         <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
           <FormActionButtons
-            onSimpan={loadData}
+            onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
@@ -314,9 +333,9 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
           <div className="w-[480px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
             <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
               <span>{editingId ? 'Koreksi Master Supplier' : 'Tambah Master Supplier Baru'}</span>
-              <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
+              <button type="button" onClick={() => { setModalError(null); setIsAddOpen(false); }} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
             </div>
-            <form onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
+            <form noValidate onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-bold mb-1">Kode:</label>
@@ -393,6 +412,12 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                 </div>
               </div>
 
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2">
                 <button
                   type="submit"
@@ -403,7 +428,10 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
                 >
                   Batal

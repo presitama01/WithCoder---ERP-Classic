@@ -9,6 +9,7 @@ import {
   erpList,
   erpUpdate,
   fetchActiveCompanyProfile,
+  nextUniqueCode,
   toDisplayDMyShort,
   todayIso,
   toIsoDate,
@@ -71,6 +72,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -89,7 +91,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
       const rows = await erpList<any>('sales_inquiries', { orderBy: 'tanggal_do', asc: false });
@@ -98,11 +100,18 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -113,8 +122,9 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
+    setModalError(null);
     const todayDisp = toDisplayDMyShort(todayIso());
-    setNewNoBukti(`2608-SI-${String(inquiryList.length + 1).padStart(3, '0')}`);
+    setNewNoBukti(nextUniqueCode(inquiryList.map((i) => i.noBukti), '2608-SI-', 3));
     setNewTanggalDo(todayDisp);
     setNewCustomer('');
     setNewSales('');
@@ -132,6 +142,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewNoBukti(item.noBukti);
     setNewTanggalDo(item.tanggalDo);
     setNewCustomer(item.namaCustomer);
@@ -145,7 +156,11 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNoBukti.trim()) return;
+    setModalError(null);
+    if (!newNoBukti.trim() || !newCustomer.trim()) {
+      setModalError('No Bukti dan Nama Customer wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -184,7 +199,9 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan Sales Inquiry';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -268,10 +285,10 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       <div className="bg-[#ECE9D8] border-b border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs shadow-sm overflow-x-auto">
         <div className="flex items-center space-x-2">
           <FormActionButtons
-            onSimpan={loadData}
+            onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={() => selectedId && handleDelete(selectedId)}
+            onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -407,13 +424,16 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
               <span>{editingId ? 'Koreksi Sales Inquiry' : 'Tambah Sales Inquiry Baru'}</span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsAddOpen(false);
+                }}
                 className="text-white hover:text-red-300 font-bold px-1.5 cursor-pointer"
               >
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No Bukti:</label>
                 <input
@@ -490,10 +510,18 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   />
                 </div>
               </div>
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
               <div className="flex justify-end space-x-2 pt-3 border-t border-[#D4D0C8]">
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1.5 bg-[#E1DFD7] border border-[#7A7A7A] rounded hover:bg-[#D4D0C8] cursor-pointer"
                 >
                   Batal

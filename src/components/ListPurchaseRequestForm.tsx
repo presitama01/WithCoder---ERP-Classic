@@ -9,6 +9,7 @@ import {
   erpList,
   erpUpdate,
   fetchActiveCompanyProfile,
+  nextUniqueCode,
   toDisplayDmy,
   todayIso,
   toIsoDate,
@@ -69,6 +70,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -78,7 +80,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
       const rows = await erpList<any>('purchase_requests', { orderBy: 'tanggal', asc: false });
@@ -87,11 +89,18 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -102,7 +111,8 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoPr(`PR/2026/08/${String(prList.length + 1).padStart(3, '0')}`);
+    setModalError(null);
+    setNewNoPr(nextUniqueCode(prList.map((p) => p.noPr), 'PR/2026/08/', 3));
     setNewTanggal(toDisplayDmy(todayIso()));
     setNewDeliveryTo('');
     setNewDelivery('Darat');
@@ -117,6 +127,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewNoPr(item.noPr);
     setNewTanggal(item.tanggal || toDisplayDmy(todayIso()));
     setNewDeliveryTo(item.deliveryTo);
@@ -127,7 +138,11 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNoPr.trim()) return;
+    setModalError(null);
+    if (!newNoPr.trim()) {
+      setModalError('No.PR wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -164,7 +179,9 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan Purchase Request';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -243,10 +260,10 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={loadData}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
-              onHapus={() => selectedId && handleDelete(selectedId)}
+              onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
               onPrint={() => setIsPrintOpen(true)}
               onFind={handleFind}
               isBusy={isBusy}
@@ -384,13 +401,16 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                 <span>{editingId ? 'Koreksi Purchase Request' : 'Tambah Purchase Request Baru'}</span>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="text-white hover:bg-red-600 px-1.5 rounded cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-3">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">No.PR:</label>
                   <input
@@ -439,10 +459,18 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                     className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
                   />
                 </div>
+                {modalError && (
+                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                    ⚠ {modalError}
+                  </div>
+                )}
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#D0D0D0]">
                   <button
                     type="button"
-                    onClick={() => setIsAddOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsAddOpen(false);
+                    }}
                     className="px-3 py-1 bg-[#E1DFDD] border border-[#ADABA1] rounded text-xs hover:bg-[#F3F2F1] cursor-pointer"
                   >
                     Batal

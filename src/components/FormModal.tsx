@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { exportToExcel } from '../lib/exportExcel';
+import { fetchActiveCompanyProfile } from '../lib/erpApi';
 
 interface FormModalProps {
   isOpen: boolean;
@@ -85,6 +88,7 @@ export const FormModal: React.FC<FormModalProps> = ({
   const [isEditOpen, setIsEditOpen] = useState<boolean>(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [formValues, setFormValues] = useState<string[]>([]);
+  const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const nextData = getColumnsAndRows(formTitle);
@@ -156,7 +160,21 @@ export const FormModal: React.FC<FormModalProps> = ({
       <FormHeaderBanner
         title={formTitle}
         onClose={onClose}
-        onExportExcel={() => showFeedback(`Export Excel ${formTitle} selesai`)}
+        onPrint={() => setIsPrintOpen(true)}
+        onExportExcel={async () => {
+          const company = await fetchActiveCompanyProfile();
+          exportToExcel({
+            fileName: formTitle.replace(/\s+/g, '_'),
+            sheetTitle: formTitle.toUpperCase(),
+            companyProfile: company,
+            columns: columns.map((c, idx) => ({
+              header: c,
+              accessor: (r: string[]) => r[idx] || '',
+            })),
+            rows: filteredRows.map((f) => f.row),
+          });
+          showFeedback(`Export Excel ${formTitle} selesai`);
+        }}
       />
 
         {/* Form Action Toolbar */}
@@ -167,17 +185,9 @@ export const FormModal: React.FC<FormModalProps> = ({
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleHapus}
+              onPrint={() => setIsPrintOpen(true)}
               feedback={feedback}
             />
-            <div className="w-[1px] h-[20px] bg-[#ACA899] mx-1" />
-            <button
-              type="button"
-              onClick={() => showFeedback(`Mencetak ${formTitle}...`)}
-              className="h-[28px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#DCD8C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-[11px] font-sans text-black cursor-pointer"
-            >
-              <span>🖨</span>
-              <span>Cetak</span>
-            </button>
           </div>
         </div>
 
@@ -302,6 +312,18 @@ export const FormModal: React.FC<FormModalProps> = ({
             </div>
           </div>
         )}
+
+        <A4PrintPreviewModal
+          isOpen={isPrintOpen}
+          onClose={() => setIsPrintOpen(false)}
+          title={formTitle.toUpperCase()}
+          subtitle={`Total Data: ${filteredRows.length} Record`}
+          columns={columns.map((c, idx) => ({
+            header: c,
+            accessor: (r: string[]) => r[idx] || '',
+          }))}
+          rows={filteredRows.map((f) => f.row)}
+        />
     </div>
   );
 };

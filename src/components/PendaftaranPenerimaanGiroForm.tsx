@@ -10,6 +10,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   toDisplayDmy,
   todayIso,
@@ -67,6 +68,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   const [newDue, setNewDue] = useState<string>(() => toDisplayDmy(todayIso()));
   const [newAmountPaid, setNewAmountPaid] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -142,11 +144,16 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
 
   if (!isOpen) return null;
 
-  const persistGiro = async (listToSave: PenerimaanGiroItem[]) => {
+  const persistGiro = async (
+    listToSave: PenerimaanGiroItem[],
+    onError?: (msg: string) => void
+  ): Promise<boolean> => {
     const cleanNoBukti = noBukti.trim().toUpperCase();
     if (!cleanNoBukti) {
-      showFeedback('No.Bukti wajib diisi');
-      return;
+      const msg = 'No.Bukti wajib diisi';
+      showFeedback(msg);
+      onError?.(msg);
+      return false;
     }
 
     try {
@@ -202,8 +209,12 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       });
       setSavedHeaders(headers);
       showFeedback('Penerimaan Giro tersimpan ke Supabase');
+      return true;
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = `Gagal simpan: ${err.message}`;
+      showFeedback(msg);
+      onError?.(msg);
+      return false;
     } finally {
       setIsBusy(false);
     }
@@ -211,7 +222,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
 
   const handleNewDocument = () => {
     setHeaderId('');
-    setNoBukti(`GIRO${String(savedHeaders.length + 1).padStart(5, '0')}`);
+    setNoBukti(nextUniqueCode(savedHeaders.map((h) => h.no_bukti), 'GIRO', 5));
     setTanggal(toDisplayDmy(todayIso()));
     setGiroList([]);
     setSelectedId('');
@@ -219,8 +230,9 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   };
 
   const handleAddNew = () => {
+    setModalError(null);
     setEditingId(null);
-    setNewIdCustomer(`CUS0${giroList.length + 1}`);
+    setNewIdCustomer(nextUniqueCode(giroList.map((g) => g.idCustomer), 'CUS', 2));
     setNewCustomer('');
     setNewNoCekGiro('');
     setNewBank('');
@@ -236,6 +248,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       showFeedback('Pilih baris data terlebih dahulu');
       return;
     }
+    setModalError(null);
     setEditingId(item.id);
     setNewIdCustomer(item.idCustomer);
     setNewCustomer(item.customer);
@@ -249,7 +262,16 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCustomer.trim() || !newNoCekGiro.trim()) return;
+    setModalError(null);
+    if (
+      !newIdCustomer.trim() ||
+      !newCustomer.trim() ||
+      !newNoCekGiro.trim() ||
+      !newBank.trim()
+    ) {
+      setModalError('ID Customer, Customer, No. Cek / Giro, dan Bank wajib diisi.');
+      return;
+    }
 
     let nextList: PenerimaanGiroItem[];
     if (editingId) {
@@ -282,9 +304,12 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       nextList = [...giroList, newItem];
     }
 
-    setIsAddOpen(false);
-    setEditingId(null);
-    await persistGiro(nextList);
+    const ok = await persistGiro(nextList, (msg) => setModalError(msg));
+    if (ok) {
+      setIsAddOpen(false);
+      setEditingId(null);
+      setModalError(null);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -426,7 +451,9 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
             onSimpan={() => persistGiro(giroList)}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={() => selectedId && handleDelete(selectedId)}
+            onHapus={() =>
+              selectedId ? handleDelete(selectedId) : showFeedback('Pilih baris yang akan dihapus')
+            }
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -554,13 +581,16 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="text-white hover:text-red-300 font-bold px-1 cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 space-y-3">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-gray-800 font-semibold mb-1">ID Customer</label>
@@ -641,10 +671,19 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                   />
                 </div>
 
+                {modalError && (
+                  <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] text-[11px] font-semibold">
+                    {modalError}
+                  </div>
+                )}
+
                 <div className="flex justify-end space-x-2 pt-3 border-t border-[#ACA899]">
                   <button
                     type="button"
-                    onClick={() => setIsAddOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsAddOpen(false);
+                    }}
                     className="px-4 py-1.5 bg-[#D4D0C8] hover:bg-gray-300 border border-[#707070] rounded text-black font-semibold cursor-pointer"
                   >
                     Batal

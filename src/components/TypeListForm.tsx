@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
-import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile, nextUniqueCode } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 
 export interface TypeItem {
@@ -27,6 +27,7 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -49,11 +50,18 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
       if (mapped.length > 0 && !mapped.some((t) => t.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -63,8 +71,9 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
   if (!isOpen) return null;
 
   const handleAddNew = () => {
-    const nextCode = (types.length + 1).toString().padStart(4, '0');
+    const nextCode = nextUniqueCode(types.map((t) => t.kode), '', 4);
     setEditingId(null);
+    setModalError(null);
     setNewKode(nextCode);
     setNewNama('');
     setIsAddOpen(true);
@@ -77,13 +86,17 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewKode(item.kode);
     setNewNama(item.namaTipe);
     setIsAddOpen(true);
   };
 
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
     try {
       setIsBusy(true);
       await erpDelete('master_types', selectedId);
@@ -100,7 +113,11 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKode.trim() || !newNama.trim()) return;
+    setModalError(null);
+    if (!newKode.trim() || !newNama.trim()) {
+      setModalError('Kode dan Nama Tipe wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -126,7 +143,9 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data ke database';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -181,7 +200,7 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
         className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans min-w-max overflow-x-auto"
       >
         <FormActionButtons
-          onSimpan={loadData}
+          onSimpan={handleToolbarSimpan}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
           onHapus={handleDelete}
@@ -289,14 +308,17 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
               <span>{editingId ? 'Koreksi Type' : 'Input Type Baru'}</span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsAddOpen(false);
+                }}
                 className="w-[16px] h-[15px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 text-[11px] text-black">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-[11px] text-black">
               <div className="flex items-center space-x-3">
                 <label className="w-[90px] font-bold">Kode :</label>
                 <input
@@ -321,6 +343,12 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
                 />
               </div>
 
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
@@ -331,7 +359,10 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Batal

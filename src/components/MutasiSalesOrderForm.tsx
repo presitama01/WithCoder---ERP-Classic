@@ -10,6 +10,7 @@ import {
   erpUpdate,
   erpUpsert,
   fetchActiveCompanyProfile,
+  nextUniqueCode,
   toDisplayDmy,
   todayIso,
   toIsoDate,
@@ -56,6 +57,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedId, setSelectedId] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +82,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
       const [items, orders, sjItems] = await Promise.all([
@@ -133,11 +135,18 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
       if (mappedSo.length > 0 && !mappedSo.some((r) => r.id === selectedId)) {
         setSelectedId(mappedSo[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -148,7 +157,8 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
-    setFormNoSo(`2608-SO-${String(soList.length + 1).padStart(3, '0')}`);
+    setModalError(null);
+    setFormNoSo(nextUniqueCode(soList.map((s) => s.noSo), '2608-SO-', 3));
     setFormNoPo('');
     setFormCustomer('');
     setFormKodeBarang('');
@@ -166,6 +176,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setFormNoSo(item.noSo);
     setFormNoPo(item.noPo === '-' ? '' : item.noPo);
     setFormCustomer(item.customer === '-' ? '' : item.customer);
@@ -198,7 +209,11 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
 
   const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formNoSo.trim() || !formCustomer.trim()) return;
+    setModalError(null);
+    if (!formNoSo.trim() || !formCustomer.trim()) {
+      setModalError('No. SO dan Customer wajib diisi.');
+      return;
+    }
     const pesanNum = parseInt(formPesan || '0', 10) || 0;
     const kirimNum = parseInt(formKirim || '0', 10) || 0;
     const sisaNum = Math.max(0, pesanNum - kirimNum);
@@ -244,7 +259,9 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
       setEditingId(null);
       await loadData();
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan Mutasi SO';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -333,7 +350,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
 
       <div className="shrink-0 bg-[#ECE9D8] border-b border-[#C0C0C0] px-3 py-1.5 flex items-center justify-between text-xs overflow-x-auto">
         <FormActionButtons
-          onSimpan={loadData}
+          onSimpan={handleToolbarSimpan}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
           onHapus={handleDelete}
@@ -513,13 +530,16 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
               <span>{editingId ? 'Koreksi Mutasi Sales Order' : 'Tambah Mutasi Sales Order Baru'}</span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsAddOpen(false);
+                }}
                 className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
               >
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveForm} className="p-4 space-y-2.5 text-xs">
+            <form noValidate onSubmit={handleSaveForm} className="p-4 space-y-2.5 text-xs">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. SO:</label>
                 <input
@@ -595,10 +615,18 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
                   />
                 </div>
               </div>
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
                 >
                   Batal

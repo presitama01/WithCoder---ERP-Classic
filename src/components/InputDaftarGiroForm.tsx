@@ -10,6 +10,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   toDisplayDmy,
   todayIso,
@@ -72,6 +73,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formRow, setFormRow] = useState<GiroDetailRow>(createEmptyRow(1));
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
@@ -252,9 +254,8 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
   };
 
   const handleNewDocument = () => {
-    const nextNum = savedHeaders.length + 1;
     setHeaderId('');
-    setNoBukti(`GP/${new Date().getFullYear()}/${String(nextNum).padStart(3, '0')}`);
+    setNoBukti(nextUniqueCode(savedHeaders.map((h) => h.no_bukti), `GP/${new Date().getFullYear()}/`, 3));
     setTanggal(toDisplayDmy(todayIso()));
     const blank = createEmptyRow(1);
     setRows([blank]);
@@ -266,6 +267,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     const filledCount = rows.filter(
       (r) => r.idSupplier.trim() || r.supplier.trim() || r.noCekGiro.trim()
     ).length;
+    setModalError(null);
     setEditingId(null);
     setFormRow(createEmptyRow(filledCount + 1));
     setIsModalOpen(true);
@@ -273,7 +275,11 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
 
   const handleEdit = () => {
     const current = rows.find((r) => r.id === selectedId) || rows[0];
-    if (!current) return;
+    if (!current) {
+      showFeedback('Pilih baris data terlebih dahulu');
+      return;
+    }
+    setModalError(null);
     setEditingId(current.id);
     setFormRow({ ...current });
     setIsModalOpen(true);
@@ -281,6 +287,11 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
 
   const handleSaveModal = (e: React.FormEvent) => {
     e.preventDefault();
+    setModalError(null);
+    if (!formRow.supplier.trim() || !formRow.noCekGiro.trim()) {
+      setModalError('Supplier dan No. Cek / Giro wajib diisi.');
+      return;
+    }
     if (editingId) {
       setRows((prev) =>
         prev.map((r) => (r.id === editingId ? { ...formRow, id: editingId } : r))
@@ -638,14 +649,17 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
               </span>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsModalOpen(false);
+                }}
                 className="w-[20px] h-[20px] bg-[#C00000] hover:bg-red-700 text-white font-bold flex items-center justify-center text-[11px] cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveModal} className="p-4 space-y-2.5 text-[11px]">
+            <form noValidate onSubmit={handleSaveModal} className="p-4 space-y-2.5 text-[11px]">
               <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="block font-bold text-black mb-1">No.</label>
@@ -738,6 +752,12 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                 />
               </div>
 
+              {modalError && (
+                <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] text-[11px] font-semibold">
+                  {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
@@ -747,7 +767,10 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsModalOpen(false);
+                  }}
                   className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
                 >
                   Batal

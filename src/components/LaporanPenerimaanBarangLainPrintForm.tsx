@@ -10,6 +10,7 @@ import {
   erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
+  nextUniqueCode,
   todayIso,
   toDisplayDmy,
   toDisplayDMyShort,
@@ -60,6 +61,7 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
   const [formNamaBarang, setFormNamaBarang] = useState<string>('');
   const [formQty, setFormQty] = useState<string>('1');
   const [formKeterangan, setFormKeterangan] = useState<string>('');
+  const [crudError, setCrudError] = useState<string | null>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -212,13 +214,14 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
 
   // CRUD Modal Handlers
   const openCrudModal = async () => {
+    setCrudError(null);
     setIsCrudOpen(true);
     try {
       setIsBusy(true);
       const rows = await erpList<any>('penerimaan_barang_lains', { orderBy: 'tanggal', asc: false });
       setCrudRows(rows);
       setEditingId(null);
-      setFormNoBukti(`PBL-${String(rows.length + 1).padStart(3, '0')}`);
+      setFormNoBukti(nextUniqueCode(rows.map((r) => r.no_bukti), 'PBL-', 3));
       setFormTanggal(toDisplayDmy(todayIso()));
       setFormLokasi(lokasiStock !== 'ALL' ? lokasiStock : '01 - OFFICE');
       setFormCustomer('');
@@ -227,15 +230,34 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
       setFormQty('1');
       setFormKeterangan('');
     } catch (err: any) {
-      showFeedback(`Gagal memuat data: ${err.message}`);
+      const msg = `Gagal memuat data: ${err.message}`;
+      setCrudError(msg);
+      showFeedback(msg);
     } finally {
       setIsBusy(false);
     }
   };
 
+  const resetCrudForm = (rowsList: any[]) => {
+    setEditingId(null);
+    setCrudError(null);
+    setFormNoBukti(nextUniqueCode(rowsList.map((r) => r.no_bukti), 'PBL-', 3));
+    setFormTanggal(toDisplayDmy(todayIso()));
+    setFormLokasi(lokasiStock !== 'ALL' ? lokasiStock : '01 - OFFICE');
+    setFormCustomer('');
+    setFormKodeBarang('');
+    setFormNamaBarang('');
+    setFormQty('1');
+    setFormKeterangan('');
+  };
+
   const handleSaveCrud = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formNoBukti.trim()) return;
+    setCrudError(null);
+    if (!formNoBukti.trim()) {
+      setCrudError('No.Bukti wajib diisi.');
+      return;
+    }
     try {
       setIsBusy(true);
       const payload = {
@@ -249,37 +271,48 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
         keterangan: formKeterangan.trim(),
         dibuat_oleh: 'RETNO',
       };
+      let nextRows: any[];
       if (editingId) {
         const updated = await erpUpdate<any>('penerimaan_barang_lains', editingId, payload);
-        setCrudRows((prev) => prev.map((r) => (r.id === editingId ? updated : r)));
+        nextRows = crudRows.map((r) => (r.id === editingId ? updated : r));
+        setCrudRows(nextRows);
         setEditingId(null);
         showFeedback('Data penerimaan lain diperbarui');
       } else {
         const created = await erpCreate<any>('penerimaan_barang_lains', payload);
-        setCrudRows((prev) => [created, ...prev]);
+        nextRows = [created, ...crudRows];
+        setCrudRows(nextRows);
         showFeedback('Data penerimaan lain ditambahkan');
       }
-      setFormNoBukti(`PBL-${String(crudRows.length + 2).padStart(3, '0')}`);
+      setFormNoBukti(nextUniqueCode(nextRows.map((r) => r.no_bukti), 'PBL-', 3));
       setFormKodeBarang('');
       setFormNamaBarang('');
       setFormQty('1');
       setFormKeterangan('');
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = `Gagal simpan: ${err.message}`;
+      setCrudError(msg);
+      showFeedback(msg);
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleDeleteCrud = async (id: string) => {
+    setCrudError(null);
     try {
       setIsBusy(true);
       await erpDelete('penerimaan_barang_lains', id);
-      setCrudRows((prev) => prev.filter((r) => r.id !== id));
-      if (editingId === id) setEditingId(null);
+      const nextRows = crudRows.filter((r) => r.id !== id);
+      setCrudRows(nextRows);
+      if (editingId === id) {
+        resetCrudForm(nextRows);
+      }
       showFeedback('Baris dihapus');
     } catch (err: any) {
-      showFeedback(`Gagal hapus: ${err.message}`);
+      const msg = `Gagal hapus: ${err.message}`;
+      setCrudError(msg);
+      showFeedback(msg);
     } finally {
       setIsBusy(false);
     }
@@ -551,14 +584,17 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
               <span>Input &amp; Kelola Penerimaan Barang Lain — Supabase</span>
               <button
                 type="button"
-                onClick={() => setIsCrudOpen(false)}
+                onClick={() => {
+                  setCrudError(null);
+                  setIsCrudOpen(false);
+                }}
                 className="w-5 h-5 bg-[#ECE9D8] border border-black text-black font-bold flex items-center justify-center cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveCrud} className="p-3 border-b border-[#ACA899] bg-[#ECE9D8] grid grid-cols-4 gap-2 text-[11px]">
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 border-b border-[#ACA899] bg-[#ECE9D8] grid grid-cols-4 gap-2 text-[11px]">
               <div>
                 <label className="block font-semibold">No.Bukti *</label>
                 <input
@@ -668,7 +704,21 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
                 >
                   {editingId ? 'Update' : 'Simpan'}
                 </button>
+                {editingId && (
+                  <button
+                    type="button"
+                    onClick={() => resetCrudForm(crudRows)}
+                    className="px-2 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-black cursor-pointer h-[25px]"
+                  >
+                    Batal
+                  </button>
+                )}
               </div>
+              {crudError && (
+                <div className="col-span-4 p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] text-[11px] font-semibold">
+                  {crudError}
+                </div>
+              )}
             </form>
 
             <div className="flex-1 overflow-auto bg-white p-2">
@@ -701,6 +751,7 @@ export const LaporanPenerimaanBarangLainPrintForm: React.FC<
                         <button
                           type="button"
                           onClick={() => {
+                            setCrudError(null);
                             setEditingId(r.id);
                             setFormNoBukti(r.no_bukti || '');
                             setFormTanggal(toDisplayDmy(r.tanggal));

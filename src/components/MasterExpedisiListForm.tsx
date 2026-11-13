@@ -51,6 +51,7 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   const [newPhone2, setNewPhone2] = useState('');
 
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -69,11 +70,18 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
       if (mapped.length > 0 && !mapped.some((x) => x.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -84,6 +92,7 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
+    setModalError(null);
     setNewKode('');
     setNewNama('');
     setNewAlamat('');
@@ -100,6 +109,7 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewKode(item.kodeExpedisi);
     setNewNama(item.namaExpedisi);
     setNewAlamat(item.alamat);
@@ -110,7 +120,10 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
     try {
       setIsBusy(true);
       await erpDelete('master_expedisis', selectedId);
@@ -127,7 +140,11 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKode.trim() || !newNama.trim()) return;
+    setModalError(null);
+    if (!newKode.trim() || !newNama.trim()) {
+      setModalError('Kode Expedisi dan Nama Expedisi wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -154,7 +171,9 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data ke database';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -209,7 +228,7 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
 
         <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
-            onSimpan={loadData}
+            onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
@@ -301,9 +320,9 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
           <div className="w-[450px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
             <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
               <span>{editingId ? 'Koreksi Master Expedisi' : 'Tambah Master Expedisi Baru'}</span>
-              <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
+              <button type="button" onClick={() => { setModalError(null); setIsAddOpen(false); }} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
             </div>
-            <form onSubmit={handleSaveNew} className="space-y-3 text-[11px]">
+            <form noValidate onSubmit={handleSaveNew} className="space-y-3 text-[11px]">
               <div>
                 <label className="block font-bold mb-1">Kode Expedisi:</label>
                 <input
@@ -363,6 +382,11 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                   className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
                 />
               </div>
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
               <div className="flex justify-end space-x-2 pt-2">
                 <button
                   type="submit"
@@ -373,7 +397,10 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
                 >
                   Batal

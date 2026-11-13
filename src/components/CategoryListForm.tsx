@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
-import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile, nextUniqueCode } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 
 export interface CategoryItem {
@@ -27,6 +27,7 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -49,11 +50,18 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
       if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -63,8 +71,9 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
   if (!isOpen) return null;
 
   const handleAddNew = () => {
-    const nextNum = (categories.length + 1).toString().padStart(4, '0');
+    const nextNum = nextUniqueCode(categories.map((c) => c.kode), '', 4);
     setEditingId(null);
+    setModalError(null);
     setNewKode(nextNum);
     setNewNama('');
     setIsAddOpen(true);
@@ -77,6 +86,7 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewKode(item.kode);
     setNewNama(item.namaKategori);
     setIsAddOpen(true);
@@ -103,7 +113,11 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKode.trim() || !newNama.trim()) return;
+    setModalError(null);
+    if (!newKode.trim() || !newNama.trim()) {
+      setModalError('Kode dan Nama Kategori wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -133,7 +147,9 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data ke database';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -188,7 +204,7 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
         className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans min-w-max overflow-x-auto"
       >
         <FormActionButtons
-          onSimpan={isAddOpen ? undefined : () => loadData()}
+          onSimpan={handleToolbarSimpan}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
           onHapus={handleDelete}
@@ -306,14 +322,17 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
               <span>{editingId ? 'Koreksi Category' : 'Input Category Baru'}</span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsAddOpen(false);
+                }}
                 className="w-[16px] h-[15px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 text-[11px] text-black">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-[11px] text-black">
               <div className="flex items-center space-x-3">
                 <label className="w-[90px] font-bold">Kode :</label>
                 <input
@@ -338,6 +357,12 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
                 />
               </div>
 
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
@@ -348,7 +373,10 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] hover:bg-[#F2EFE2] cursor-pointer"
                 >
                   Batal

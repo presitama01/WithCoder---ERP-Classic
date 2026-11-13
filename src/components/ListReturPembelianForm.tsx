@@ -11,6 +11,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   toDisplayDMyShort,
   todayIso,
@@ -92,6 +93,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -101,7 +103,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
       const rows = await erpList<any>('retur_pembelians', { orderBy: 'tanggal', asc: false });
@@ -110,11 +112,18 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -125,7 +134,8 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
   const handleAddNew = () => {
     setEditingId(null);
-    setNewNoBukti(`2608-RP-IMP-${String(returList.length + 1).padStart(3, '0')}`);
+    setModalError(null);
+    setNewNoBukti(nextUniqueCode(returList.map((r) => r.noBukti), '2608-RP-IMP-', 3));
     setNewTanggal(toDisplayDMyShort(todayIso()));
     setNewSupplier('');
     setNewNilaiRetur('0');
@@ -143,6 +153,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewSupplier(item.namaSupplier);
@@ -156,7 +167,11 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNoBukti.trim()) return;
+    setModalError(null);
+    if (!newNoBukti.trim() || !newSupplier.trim()) {
+      setModalError('No. Bukti Retur dan Nama Supplier wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -199,7 +214,9 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan Retur Pembelian';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -285,10 +302,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={loadData}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
-              onHapus={() => selectedId && handleDelete(selectedId)}
+              onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
               onPrint={() => setIsPrintOpen(true)}
               onFind={handleFind}
               isBusy={isBusy}
@@ -447,14 +464,17 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
               <span>{editingId ? 'Koreksi Retur Pembelian Barang' : 'Form Input Retur Pembelian Barang'}</span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={() => {
+                  setModalError(null);
+                  setIsAddOpen(false);
+                }}
                 className="w-[20px] h-[20px] bg-[#C75050] hover:bg-red-600 text-white rounded-[2px] flex items-center justify-center text-[11px] cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveNew} className="p-4 space-y-3 bg-[#ECE9D8]">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 bg-[#ECE9D8]">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-medium text-gray-800 mb-1">No. Bukti Retur:</label>
@@ -540,6 +560,12 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                 />
               </div>
 
+              {modalError && (
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                  ⚠ {modalError}
+                </div>
+              )}
+
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#D4D0C8]">
                 <button
                   type="submit"
@@ -550,7 +576,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsAddOpen(false);
+                  }}
                   className="px-4 py-1.5 bg-[#E1DFDD] hover:bg-[#F3F2F1] active:bg-[#C8C6C4] border border-[#ADABA1] text-black rounded-[2px] shadow-xs cursor-pointer"
                 >
                   Batal

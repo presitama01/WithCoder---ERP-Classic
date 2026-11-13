@@ -11,6 +11,7 @@ import {
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
   parseNum,
   todayIso,
   toDisplayDmy,
@@ -57,6 +58,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [yellowNote, setYellowNote] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
 
   // Add/Edit Modal state
@@ -132,8 +134,8 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
 
   const handleBaru = () => {
     setEditingId(null);
-    const nextNo = String(hppList.length + 1).padStart(3, '0');
-    setFormNoBukti(`2608-LKL-${nextNo}`);
+    setModalError(null);
+    setFormNoBukti(nextUniqueCode(hppList.map((h) => h.noBukti), '2608-LKL-', 3));
     const todayDmy = toDisplayDMyShort(todayIso());
     setFormTanggal(todayDmy);
     setFormNamaSupplier('');
@@ -154,6 +156,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       return;
     }
     setEditingId(current.id);
+    setModalError(null);
     setFormNoBukti(current.noBukti);
     setFormTanggal(current.tanggal || toDisplayDMyShort(todayIso()));
     setFormNamaSupplier(current.namaSupplier);
@@ -169,7 +172,11 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
 
   const handleSaveModal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formNoBukti.trim()) return;
+    setModalError(null);
+    if (!formNoBukti.trim() || !formNamaSupplier.trim()) {
+      setModalError('No.Bukti dan Nama Supplier wajib diisi.');
+      return;
+    }
     const tglIso = toIsoDate(formTanggal) || todayIso();
     const jthIso = toIsoDate(formJthTmp) || tglIso;
     const nilaiNum = parseNum(formNilaiPembelian);
@@ -215,7 +222,9 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       setIsModalOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal menyimpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data HPP Pembelian';
+      setModalError(msg);
+      showFeedback(`Gagal menyimpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -499,13 +508,16 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
                 <span>{editingId ? 'Koreksi HPP Pembelian' : 'Tambah HPP Pembelian Baru'}</span>
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setIsModalOpen(false);
+                  }}
                   className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
-              <form onSubmit={handleSaveModal} className="p-4 space-y-2.5">
+              <form noValidate onSubmit={handleSaveModal} className="p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-black">No.Bukti:</label>
                   <input
@@ -607,10 +619,18 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
                     </select>
                   </div>
                 </div>
+                {modalError && (
+                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                    ⚠ {modalError}
+                  </div>
+                )}
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
                   <button
                     type="button"
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsModalOpen(false);
+                    }}
                     className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
                   >
                     Batal

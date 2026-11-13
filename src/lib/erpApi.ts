@@ -351,3 +351,33 @@ export function formatRupiah(val: unknown): string {
   const n = parseNum(val);
   return `Rp ${n.toLocaleString('id-ID')}`;
 }
+
+export function nextUniqueCode(
+  existingCodes: Array<string | undefined | null>,
+  prefix: string,
+  pad = 3
+): string {
+  const used = new Set(
+    existingCodes
+      .map((c) => (c || '').trim().toUpperCase())
+      .filter(Boolean)
+  );
+  const normPrefix = prefix.toUpperCase();
+  let maxNum = 0;
+  for (const code of used) {
+    if (normPrefix && !code.startsWith(normPrefix)) continue;
+    const tail = normPrefix ? code.slice(normPrefix.length) : code;
+    const match = tail.match(/(\d+)$/);
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (Number.isFinite(n) && n > maxNum) maxNum = n;
+    }
+  }
+  let candidateNum = Math.max(1, maxNum + 1);
+  let candidate = `${prefix}${String(candidateNum).padStart(pad, '0')}`;
+  while (used.has(candidate.toUpperCase())) {
+    candidateNum += 1;
+    candidate = `${prefix}${String(candidateNum).padStart(pad, '0')}`;
+  }
+  return candidate;
+}

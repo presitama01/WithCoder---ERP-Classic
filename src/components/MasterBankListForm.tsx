@@ -32,6 +32,7 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
 
@@ -58,11 +59,18 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
       if (mapped.length > 0 && !mapped.some((b) => b.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
+      return true;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
+      return false;
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleToolbarSimpan = async () => {
+    const ok = await loadData();
+    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -73,6 +81,7 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
 
   const handleAddNew = async () => {
     setEditingId(null);
+    setModalError(null);
     setNewAccNumber('');
     const company = await fetchActiveCompanyProfile();
     setNewAccName(company.company_name || 'PT. UNIMETRIKA UTAMA');
@@ -88,6 +97,7 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
       return;
     }
     setEditingId(item.id);
+    setModalError(null);
     setNewAccNumber(item.accNumber);
     setNewAccName(item.accName);
     setNewNamaBank(item.namaBank);
@@ -96,7 +106,10 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
   };
 
   const handleDelete = async () => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
     try {
       setIsBusy(true);
       await erpDelete('master_banks', selectedId);
@@ -113,7 +126,11 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
 
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAccNumber.trim() || !newNamaBank.trim()) return;
+    setModalError(null);
+    if (!newAccNumber.trim() || !newAccName.trim() || !newNamaBank.trim()) {
+      setModalError('Acc Number, Acc Name, dan Nama Bank wajib diisi.');
+      return;
+    }
 
     try {
       setIsBusy(true);
@@ -150,7 +167,9 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      const msg = err?.message || 'Gagal menyimpan data ke database';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
     } finally {
       setIsBusy(false);
     }
@@ -204,7 +223,7 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
 
         <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
-            onSimpan={loadData}
+            onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={handleDelete}
@@ -311,9 +330,9 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
             <div className="bg-[#ECE9D8] w-[420px] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl flex flex-col font-sans">
               <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white px-3 py-1.5 flex justify-between items-center text-xs font-bold">
                 <span>{editingId ? 'Koreksi Rekening Bank' : 'Tambah Master Bank Baru'}</span>
-                <button type="button" onClick={() => setIsAddOpen(false)} className="text-white hover:text-red-200 cursor-pointer">✕</button>
+                <button type="button" onClick={() => { setModalError(null); setIsAddOpen(false); }} className="text-white hover:text-red-200 cursor-pointer">✕</button>
               </div>
-              <form onSubmit={handleSaveNew} className="p-4 flex flex-col gap-3 text-xs">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 flex flex-col gap-3 text-xs">
                 <div className="flex flex-col gap-1">
                   <label className="font-semibold text-gray-700">Acc Number :</label>
                   <input
@@ -356,6 +375,11 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
                     className="px-2 py-1 bg-white border border-[#7F9DB9] rounded outline-none"
                   />
                 </div>
+                {modalError && (
+                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                    ⚠ {modalError}
+                  </div>
+                )}
                 <div className="flex justify-end gap-2 mt-3 pt-2 border-t border-gray-300">
                   <button
                     type="submit"
@@ -366,7 +390,10 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIsAddOpen(false)}
+                    onClick={() => {
+                      setModalError(null);
+                      setIsAddOpen(false);
+                    }}
                     className="px-4 py-1 bg-[#E1DFD7] hover:bg-[#D0CEBF] border border-[#7F9DB9] rounded shadow-sm cursor-pointer"
                   >
                     Batal
