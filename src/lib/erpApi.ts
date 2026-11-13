@@ -128,15 +128,23 @@ async function parseApiResponse<T = any>(res: Response, fallbackErrMsg: string):
 async function requestWithRetry(
   url: string,
   init?: RequestInit,
-  retries = 2,
-  backoffMs = 600
+  retries = 5,
+  backoffMs = 700
 ): Promise<Response> {
   let lastError: any = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, init);
-      // If server returned a 502/503/504 (dev server still warming up), retry
-      if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < retries) {
+      const contentType = res.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+
+      // Our Express /api/* routes always return JSON.
+      // A 502/503/504 or non-JSON response (e.g. "The page could not be found" HTML)
+      // indicates the proxy/backend is restarting or waking up.
+      if (
+        (res.status === 502 || res.status === 503 || res.status === 504 || !isJson) &&
+        attempt < retries
+      ) {
         await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
         continue;
       }

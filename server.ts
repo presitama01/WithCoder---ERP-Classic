@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
@@ -15,12 +16,16 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('[WithCoder ERP] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment.');
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
+const supabase = createClient(
+  SUPABASE_URL || 'https://placeholder.supabase.co',
+  SUPABASE_SERVICE_ROLE_KEY || 'placeholder-key',
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
 
 const ALLOWED_TABLES = new Set([
   'app_users',
@@ -454,7 +459,7 @@ async function startServer() {
   });
 
   // Global error handler for API
-  app.use((err: any, _req: Request, res: Response, next: any) => {
+  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) {
       return next(err);
     }
@@ -470,6 +475,7 @@ async function startServer() {
       server: {
         middlewareMode: true,
         hmr: false,
+        watch: null,
       },
       appType: 'spa',
     });
