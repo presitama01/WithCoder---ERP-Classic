@@ -108,7 +108,13 @@ async function parseApiResponse<T = any>(res: Response, fallbackErrMsg: string):
       throw new Error(`Server backend sedang memuat atau memulai ulang (HTTP ${res.status}). Mohon tunggu beberapa detik lalu coba lagi.`);
     }
     if (res.status === 404 || rawText.includes('The page c')) {
-      throw new Error(`Endpoint server API tidak tersedia pada URL ini (HTTP ${res.status}). Pastikan server backend aktif lalu muat ulang halaman.`);
+      const hostInfo = typeof window !== 'undefined' ? window.location.host : '';
+      const isStaticPreview = hostInfo.startsWith('ais-pre-');
+      throw new Error(
+        isStaticPreview
+          ? `Endpoint API tidak tersedia pada URL statis ini (${hostInfo}, HTTP ${res.status}). Gunakan mode Preview Live atau jalankan server full-stack.`
+          : `Endpoint server API tidak ditemukan pada URL ${hostInfo || 'saat ini'} (HTTP ${res.status}). Pastikan server backend aktif (bukan static preview) lalu muat ulang halaman.`
+      );
     }
     if (!res.ok) {
       throw new Error(`Koneksi server gagal (${res.status}): ${rawText.slice(0, 120) || res.statusText}`);
@@ -160,7 +166,7 @@ async function requestWithRetry(
       // Express /api/* always returns JSON. Only retry transient proxy/warmup statuses
       // (502/503/504 or non-JSON warmup HTML), and cap retries on 404 to 1 attempt.
       const isTransientWarmup = res.status === 502 || res.status === 503 || res.status === 504 || (!isJson && res.status !== 404);
-      const isRetryable404 = res.status === 404 && !isJson && attempt < 1;
+      const isRetryable404 = res.status === 404 && !isJson && attempt < 2;
 
       if ((isTransientWarmup || isRetryable404) && attempt < retries) {
         const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
