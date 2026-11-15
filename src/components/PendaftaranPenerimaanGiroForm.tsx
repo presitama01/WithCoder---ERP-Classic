@@ -312,16 +312,41 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const updated = giroList
-      .filter((item) => item.id !== id)
-      .map((item, idx) => ({ ...item, no: idx + 1 }));
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{
+    mode: 'row' | 'header';
+    id: string;
+    label: string;
+  } | null>(null);
 
-    if (updated.length === 0 && headerId) {
+  const requestDeleteRow = (id: string) => {
+    const target = giroList.find((g) => g.id === id);
+    if (!target) {
+      if (giroList.length === 0 && headerId) {
+        setConfirmDeleteTarget({
+          mode: 'header',
+          id: headerId,
+          label: `dokumen giro [${noBukti}]`,
+        });
+        return;
+      }
+      showFeedback('Pilih baris yang akan dihapus');
+      return;
+    }
+    setConfirmDeleteTarget({
+      mode: 'row',
+      id: target.id,
+      label: `${target.noCekGiro || target.customer}`,
+    });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteTarget) return;
+    if (confirmDeleteTarget.mode === 'header') {
       try {
         setIsBusy(true);
-        await erpDelete('giro_penjualan_headers', headerId);
-        showFeedback('Dokumen giro dihapus');
+        await erpDelete('giro_penjualan_headers', confirmDeleteTarget.id);
+        setConfirmDeleteTarget(null);
+        showFeedback('Dokumen giro dihapus dari Supabase');
         await loadInitialData();
       } catch (err: any) {
         showFeedback(`Gagal hapus: ${err.message}`);
@@ -331,7 +356,29 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       return;
     }
 
-    await persistGiro(updated);
+    const updated = giroList
+      .filter((item) => item.id !== confirmDeleteTarget.id)
+      .map((item, idx) => ({ ...item, no: idx + 1 }));
+
+    if (updated.length === 0 && headerId) {
+      try {
+        setIsBusy(true);
+        await erpDelete('giro_penjualan_headers', headerId);
+        setConfirmDeleteTarget(null);
+        showFeedback('Dokumen giro dihapus dari Supabase');
+        await loadInitialData();
+      } catch (err: any) {
+        showFeedback(`Gagal hapus: ${err.message}`);
+      } finally {
+        setIsBusy(false);
+      }
+      return;
+    }
+
+    const ok = await persistGiro(updated);
+    if (ok) {
+      setConfirmDeleteTarget(null);
+    }
   };
 
   const handlePrevHeader = async () => {
@@ -451,9 +498,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
             onSimpan={() => persistGiro(giroList)}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={() =>
-              selectedId ? handleDelete(selectedId) : showFeedback('Pilih baris yang akan dihapus')
-            }
+            onHapus={() => requestDeleteRow(selectedId)}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -519,7 +564,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                         <td className="py-1 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => handleDelete(item.id)}
+                            onClick={() => requestDeleteRow(item.id)}
                             className="px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-bold cursor-pointer"
                           >
                             Hapus
@@ -756,6 +801,38 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                     className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
                   >
                     Tutup
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {confirmDeleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
+              <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
+                Konfirmasi Hapus Penerimaan Giro
+              </div>
+              <div className="p-4 text-xs text-black space-y-3">
+                <p>
+                  Yakin ingin menghapus {confirmDeleteTarget.label} dari database Supabase?
+                </p>
+                <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteTarget(null)}
+                    className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={handleConfirmDelete}
+                    className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
+                  >
+                    Ya, Hapus
                   </button>
                 </div>
               </div>

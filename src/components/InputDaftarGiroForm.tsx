@@ -326,14 +326,62 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     setEditingId(null);
   };
 
-  const handleHapus = async () => {
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState<boolean>(false);
+  const [confirmDeleteSummary, setConfirmDeleteSummary] = useState<string>('');
+
+  const handleHapus = () => {
     const hasMarked = rows.some((r) => r.markedDelete);
-    if (!hasMarked && rows.length <= 1 && headerId && !rows[0]?.supplier && !rows[0]?.noCekGiro) {
-      // Delete whole voucher header when deleting empty header
+    const activeTargetRows = hasMarked
+      ? rows.filter((r) => r.markedDelete)
+      : rows.filter((r) => r.id === selectedId);
+
+    const isEmptyHeaderOnly =
+      !hasMarked &&
+      rows.length <= 1 &&
+      Boolean(headerId) &&
+      !rows[0]?.supplier &&
+      !rows[0]?.noCekGiro;
+
+    if (isEmptyHeaderOnly) {
+      setConfirmDeleteSummary(`Yakin ingin menghapus dokumen giro [${noBukti}] dari Supabase?`);
+      setConfirmDeleteOpen(true);
+      return;
+    }
+
+    if (activeTargetRows.length === 0) {
+      showFeedback('Pilih atau centang baris giro yang akan dihapus');
+      return;
+    }
+
+    setConfirmDeleteSummary(
+      hasMarked
+        ? `Yakin ingin menghapus ${activeTargetRows.length} baris giro yang dicentang?`
+        : `Yakin ingin menghapus baris giro [${activeTargetRows[0]?.noCekGiro || activeTargetRows[0]?.supplier || 'terpilih'}]?`
+    );
+    setConfirmDeleteOpen(true);
+  };
+
+  const handleConfirmHapus = async () => {
+    const hasMarked = rows.some((r) => r.markedDelete);
+    const remaining = hasMarked
+      ? rows.filter((r) => !r.markedDelete)
+      : rows.filter((r) => r.id !== selectedId);
+
+    const nonBlankRemaining = remaining.filter(
+      (r) =>
+        !r.markedDelete &&
+        (r.idSupplier.trim() ||
+          r.supplier.trim() ||
+          r.noCekGiro.trim() ||
+          parseNum(r.amountPaid) > 0)
+    );
+
+    if (nonBlankRemaining.length === 0 && headerId) {
       try {
         setIsBusy(true);
         await erpDelete('giro_pembelian_headers', headerId);
-        showFeedback('Dokumen Giro dihapus dari database');
+        setConfirmDeleteOpen(false);
+        showFeedback('Dokumen Giro dihapus dari Supabase');
         await loadInitialData();
       } catch (err: any) {
         showFeedback(`Gagal hapus: ${err.message}`);
@@ -343,19 +391,61 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
       return;
     }
 
-    const remaining = hasMarked
-      ? rows.filter((r) => !r.markedDelete)
-      : rows.filter((r) => r.id !== selectedId);
-
-    if (remaining.length === 0) {
-      const blank = createEmptyRow(1);
-      setRows([blank]);
-      setSelectedId(blank.id);
-    } else {
-      setRows(remaining);
-      setSelectedId(remaining[0].id);
+    if (headerId) {
+      try {
+        setIsBusy(true);
+        const computedTotal = nonBlankRemaining.reduce((s, r) => s + parseNum(r.amountPaid), 0);
+        const res = await erpCompositeSave<{ header: GiroHeaderRecord; details: any[] }>(
+          'giro-pembelian',
+          {
+            id: headerId,
+            no_bukti: noBukti.trim().toUpperCase(),
+            tanggal: toIsoDate(tanggal) || todayIso(),
+            total_amount: computedTotal,
+            dibuat_oleh: 'RETNO',
+          },
+          nonBlankRemaining.map((r, idx) => ({
+            no_urut: idx + 1,
+            id_supplier: r.idSupplier.trim().toUpperCase(),
+            supplier: r.supplier.trim().toUpperCase(),
+            no_cek_giro: r.noCekGiro.trim().toUpperCase(),
+            bank: r.bank.trim().toUpperCase(),
+            due: toIsoDate(r.due),
+            amount_paid: parseNum(r.amountPaid),
+            keterangan: r.keterangan.trim(),
+            marked_delete: false,
+          }))
+        );
+        const mapped: GiroDetailRow[] = (res.details || []).map((d, idx) => ({
+          id: d.id,
+          no: String(d.no_urut ?? idx + 1),
+          idSupplier: d.id_supplier || '',
+          supplier: d.supplier || '',
+          noCekGiro: d.no_cek_giro || '',
+          bank: d.bank || '',
+          due: toDisplayDmy(d.due),
+          amountPaid: d.amount_paid ? String(d.amount_paid) : '',
+          keterangan: d.keterangan || '',
+          markedDelete: false,
+        }));
+        const nextRows = mapped.length > 0 ? mapped : [createEmptyRow(1)];
+        setRows(nextRows);
+        setSelectedId(nextRows[0].id);
+        setConfirmDeleteOpen(false);
+        showFeedback('Baris giro dihapus & disinkronkan ke Supabase');
+      } catch (err: any) {
+        showFeedback(`Gagal hapus: ${err.message}`);
+      } finally {
+        setIsBusy(false);
+      }
+      return;
     }
-    showFeedback('Baris giro dihapus (Klik Simpan untuk sinkron DB)');
+
+    const nextLocal = remaining.length > 0 ? remaining : [createEmptyRow(1)];
+    setRows(nextLocal);
+    setSelectedId(nextLocal[0].id);
+    setConfirmDeleteOpen(false);
+    showFeedback('Baris giro dihapus');
   };
 
   const handleOpenFind = async () => {
@@ -904,6 +994,36 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                   className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
                 >
                   Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
+              Konfirmasi Hapus Daftar Giro
+            </div>
+            <div className="p-4 text-xs text-black space-y-3">
+              <p>{confirmDeleteSummary}</p>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteOpen(false)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleConfirmHapus}
+                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
+                >
+                  Ya, Hapus
                 </button>
               </div>
             </div>
