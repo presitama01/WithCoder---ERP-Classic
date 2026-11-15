@@ -81,9 +81,23 @@ function isWritableTable(name: string): boolean {
   return ALLOWED_TABLES.has(name);
 }
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[WithCoder ERP] Unhandled Promise Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[WithCoder ERP] Uncaught Exception:', err);
+});
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '5mb' }));
+  app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  });
 
   // Health check verifying live Supabase connection
   app.get('/api/health', async (_req: Request, res: Response) => {

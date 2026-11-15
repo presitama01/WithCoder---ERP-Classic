@@ -99,13 +99,21 @@ async function parseApiResponse<T = any>(res: Response, fallbackErrMsg: string):
 
   if (!isJson) {
     const rawText = await res.text().catch(() => '');
-    if (res.status === 502 || res.status === 503 || res.status === 504 || rawText.includes('The page c')) {
-      throw new Error('Server backend sedang memuat atau memulai ulang. Mohon tunggu beberapa detik lalu coba lagi.');
+    const finalUrl = res.url || '';
+
+    if (finalUrl.includes('__cookie_check') || finalUrl.includes('applet-auth-bridge')) {
+      throw new Error('Sesi halaman preview berakhir. Silakan muat ulang (refresh / F5) browser Anda lalu coba Simpan kembali.');
+    }
+    if (res.status === 502 || res.status === 503 || res.status === 504 || rawText.includes('Starting Server')) {
+      throw new Error(`Server backend sedang memuat atau memulai ulang (HTTP ${res.status}). Mohon tunggu beberapa detik lalu coba lagi.`);
+    }
+    if (res.status === 404 || rawText.includes('The page c')) {
+      throw new Error(`Endpoint server API tidak tersedia pada URL ini (HTTP ${res.status}). Pastikan server backend aktif lalu muat ulang halaman.`);
     }
     if (!res.ok) {
       throw new Error(`Koneksi server gagal (${res.status}): ${rawText.slice(0, 120) || res.statusText}`);
     }
-    throw new Error(`Respon tidak terduga dari server (${contentType || 'non-JSON'}).`);
+    throw new Error(`Respon tidak terduga dari server (${contentType || 'non-JSON'}). Silakan refresh halaman.`);
   }
 
   let json: any = null;
@@ -125,39 +133,61 @@ async function parseApiResponse<T = any>(res: Response, fallbackErrMsg: string):
   return json as T;
 }
 
+const RETRY_DELAYS_MS = [600, 1000, 1400, 2000, 2500, 3000, 3500, 4000];
+
 async function requestWithRetry(
   url: string,
   init?: RequestInit,
-  retries = 5,
-  backoffMs = 700
+  retries = RETRY_DELAYS_MS.length
 ): Promise<Response> {
   let lastError: any = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, init);
+      const res = await fetch(url, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        ...init,
+      });
       const contentType = res.headers.get('content-type') || '';
       const isJson = contentType.includes('application/json');
+      const finalUrl = res.url || '';
 
-      // Our Express /api/* routes always return JSON.
-      // A 502/503/504 or non-JSON response (e.g. "The page could not be found" HTML)
-      // indicates the proxy/backend is restarting or waking up.
-      if (
-        (res.status === 502 || res.status === 503 || res.status === 504 || !isJson) &&
-        attempt < retries
-      ) {
-        await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+      // Do not loop unnecessarily if redirected to auth/cookie check
+      if (finalUrl.includes('__cookie_check') || finalUrl.includes('applet-auth-bridge')) {
+        return res;
+      }
+
+      // Express /api/* always returns JSON. Only retry transient proxy/warmup statuses
+      // (502/503/504 or non-JSON warmup HTML), and cap retries on 404 to 1 attempt.
+      const isTransientWarmup = res.status === 502 || res.status === 503 || res.status === 504 || (!isJson && res.status !== 404);
+      const isRetryable404 = res.status === 404 && !isJson && attempt < 1;
+
+      if ((isTransientWarmup || isRetryable404) && attempt < retries) {
+        const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
       return res;
     } catch (err: any) {
       lastError = err;
       if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+        const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
     }
   }
-  throw lastError || new Error('Gagal terhubung ke server ERP.');
+  throw lastError || new Error('Gagal terhubung ke server ERP. Pastikan koneksi aktif lalu coba lagi.');
+}
+
+export async function warmUpBackend(): Promise<boolean> {
+  try {
+    const res = await requestWithRetry('/api/health', { method: 'GET' }, 3);
+    const contentType = res.headers.get('content-type') || '';
+    return res.ok && contentType.includes('application/json');
+  } catch {
+    return false;
+  }
 }
 
 export async function erpList<T = any>(table: string, opts?: ErpQueryOptions): Promise<T[]> {

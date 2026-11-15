@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { WindowHeader } from './components/WindowHeader';
 import { MenuBar } from './components/MenuBar';
 import { Toolbar } from './components/Toolbar';
@@ -55,8 +55,13 @@ import { ListFakturLainForm } from './components/ListFakturLainForm';
 import { UserRightsForm } from './components/UserRightsForm';
 import { ChangePasswordForm } from './components/ChangePasswordForm';
 import { getCurrentUser, UserRole } from './lib/authService';
+import { warmUpBackend } from './lib/erpApi';
 
 export default function App() {
+  useEffect(() => {
+    warmUpBackend();
+  }, []);
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(true);
   const [activeMdiForm, setActiveMdiForm] = useState<
