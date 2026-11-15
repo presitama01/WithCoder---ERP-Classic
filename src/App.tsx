@@ -332,6 +332,8 @@ export default function App() {
     setIsLoggedIn(true);
     setActiveUser(user);
     setCurrentUserRole(role);
+    setActiveMdiForm(null);
+    setActiveForm(null);
     setStatusMessage(`User: [${user}] (${role}) berhasil masuk. Seluruh fitur telah dibuka.`);
     setIsLoginOpen(false);
   };
@@ -630,7 +632,7 @@ export default function App() {
       : activeMdiForm === 'purchase_request'
       ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Purchase Request]'
       : activeMdiForm === 'daftar_giro'
-      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Pendaftaran Penerimaan Giro]'
+      ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Input Daftar Giro]'
       : activeMdiForm === 'customer'
       ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Master Customer]'
       : activeMdiForm === 'supplier'

@@ -76,6 +76,11 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{
+    mode: 'row' | 'header';
+    id: string;
+    label: string;
+  } | null>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -316,12 +321,6 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       setModalError(null);
     }
   };
-
-  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{
-    mode: 'row' | 'header';
-    id: string;
-    label: string;
-  } | null>(null);
 
   const requestDeleteRow = (id: string) => {
     const target = giroList.find((g) => g.id === id);

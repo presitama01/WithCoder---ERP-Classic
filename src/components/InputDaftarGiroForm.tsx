@@ -82,6 +82,8 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState<boolean>(false);
+  const [confirmDeleteSummary, setConfirmDeleteSummary] = useState<string>('');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -326,9 +328,6 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     setIsModalOpen(false);
     setEditingId(null);
   };
-
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState<boolean>(false);
-  const [confirmDeleteSummary, setConfirmDeleteSummary] = useState<string>('');
 
   const handleHapus = () => {
     const hasMarked = rows.some((r) => r.markedDelete);
