@@ -251,6 +251,41 @@ export async function fetchActiveCompanyProfile(): Promise<CompanyProfileData> {
   return FALLBACK_COMPANY_PROFILE;
 }
 
+export async function syncAppSettings(patch: {
+  month_active?: string;
+  periode_start?: string | null;
+  periode_end?: string | null;
+  lokasi_aktif?: string;
+}): Promise<void> {
+  const existing = await erpList<any>('app_settings', { limit: 1 }).catch(() => []);
+  const current = existing?.[0];
+  const payload: Record<string, any> = {};
+  if (patch.month_active !== undefined && patch.month_active.trim()) {
+    payload.month_active = patch.month_active.trim();
+  }
+  if (patch.periode_start) {
+    payload.periode_start = patch.periode_start;
+  }
+  if (patch.periode_end) {
+    payload.periode_end = patch.periode_end;
+  }
+  if (patch.lokasi_aktif !== undefined && patch.lokasi_aktif !== 'ALL' && patch.lokasi_aktif.trim()) {
+    payload.lokasi_aktif = patch.lokasi_aktif.trim();
+  }
+  if (Object.keys(payload).length === 0) return;
+
+  if (current?.id) {
+    await erpUpdate('app_settings', current.id, payload);
+  } else {
+    await erpCreate('app_settings', {
+      month_active: payload.month_active || '08-2026',
+      periode_start: payload.periode_start || todayIso(),
+      periode_end: payload.periode_end || todayIso(),
+      lokasi_aktif: payload.lokasi_aktif || '01 - OFFICE',
+    });
+  }
+}
+
 // Date Helpers
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_MAP: Record<string, string> = {

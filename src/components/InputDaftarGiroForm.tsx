@@ -68,7 +68,10 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
   const [savedHeaders, setSavedHeaders] = useState<GiroHeaderRecord[]>([]);
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const [findQuery, setFindQuery] = useState<string>('');
+  const [searchField, setSearchField] = useState<string>('Supplier');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const findInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -396,6 +399,23 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     (r) => !r.markedDelete && (r.idSupplier || r.supplier || r.noCekGiro || r.amountPaid)
   );
 
+  const displayedRows = rows.filter((r) => {
+    if (!searchTerm.trim()) return true;
+    const q = searchTerm.trim().toLowerCase();
+    if (searchField === 'Supplier') return r.supplier.toLowerCase().includes(q);
+    if (searchField === 'No. Cek / Giro') return r.noCekGiro.toLowerCase().includes(q);
+    if (searchField === 'ID Supplier') return r.idSupplier.toLowerCase().includes(q);
+    if (searchField === 'Bank') return r.bank.toLowerCase().includes(q);
+    if (searchField === 'Keterangan') return r.keterangan.toLowerCase().includes(q);
+    return (
+      r.supplier.toLowerCase().includes(q) ||
+      r.noCekGiro.toLowerCase().includes(q) ||
+      r.idSupplier.toLowerCase().includes(q) ||
+      r.bank.toLowerCase().includes(q) ||
+      r.keterangan.toLowerCase().includes(q)
+    );
+  });
+
   const filteredHeaders = savedHeaders.filter((h) => {
     if (!findQuery.trim()) return true;
     const q = findQuery.toLowerCase();
@@ -440,7 +460,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
         </div>
 
         <div className="flex-1 flex flex-col overflow-auto bg-[#ECE9D8] p-2.5">
-          <div className="shrink-0 max-w-[920px] w-full bg-[#EFEFEF] border border-[#ACA899] shadow-[inset_1px_1px_0_#FFFFFF] px-4 py-2.5 mb-2 flex flex-wrap items-center justify-between gap-4">
+          <div className="shrink-0 max-w-[1040px] w-full bg-[#EFEFEF] border border-[#ACA899] shadow-[inset_1px_1px_0_#FFFFFF] px-4 py-2 mb-2 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center space-x-2">
               <label
                 htmlFor="giro-no-bukti"
@@ -465,7 +485,39 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
               </button>
             </div>
 
-            <div className="flex items-center space-x-2 pr-4">
+            <div className="flex items-center space-x-1.5">
+              <span className="font-bold text-[11px] text-black whitespace-nowrap">Search :</span>
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value)}
+                className="h-[22px] bg-white border border-[#7F9DB9] px-1 text-[11px] outline-none"
+              >
+                <option value="Supplier">Supplier</option>
+                <option value="No. Cek / Giro">No. Cek / Giro</option>
+                <option value="ID Supplier">ID Supplier</option>
+                <option value="Bank">Bank</option>
+                <option value="Keterangan">Keterangan</option>
+              </select>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter baris giro..."
+                className="w-[160px] h-[22px] bg-white border border-[#7F9DB9] px-1.5 text-[11px] outline-none focus:border-[#316AC5]"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="h-[22px] px-1.5 bg-[#ECE9D8] border border-[#7F9DB9] text-[10px] cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-2">
               <label
                 htmlFor="giro-tanggal"
                 className="font-bold text-[11px] text-black whitespace-nowrap"
@@ -504,7 +556,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row) => {
+                    {displayedRows.map((row) => {
                       const isSelected = selectedId === row.id;
                       return (
                         <tr

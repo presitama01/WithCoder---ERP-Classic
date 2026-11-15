@@ -9,6 +9,7 @@ import {
   erpDelete,
   erpList,
   erpUpsert,
+  nextUniqueCode,
   toDisplayDmy,
   toIsoDate,
 } from '../lib/erpApi';
@@ -65,7 +66,13 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   const companyNameRef = useRef<HTMLInputElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -153,7 +160,11 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
   };
 
   const handleBaru = () => {
-    const nextCode = String(profiles.length + 1).padStart(2, '0');
+    const nextCode = nextUniqueCode(
+      ['01', ...profiles.map((p) => p.profile_code)],
+      '',
+      2
+    );
     setFormData({
       profileCode: nextCode === '01' ? '02' : nextCode,
       companyName: '',
@@ -179,7 +190,7 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
     showFeedback('Mode koreksi aktif - edit lalu klik Simpan');
   };
 
-  const handleHapus = async () => {
+  const handleRequestHapus = () => {
     if (!formData.id) {
       showFeedback('Profil belum tersimpan di database');
       return;
@@ -188,16 +199,36 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
       showFeedback('Profil utama (01) tidak dapat dihapus');
       return;
     }
+    setConfirmDeleteId(formData.id);
+  };
+
+  const handleConfirmHapus = async () => {
+    if (!confirmDeleteId) return;
     try {
       setIsBusy(true);
-      await erpDelete('company_profiles', formData.id);
+      await erpDelete('company_profiles', confirmDeleteId);
+      setConfirmDeleteId(null);
       await loadProfiles('01');
-      showFeedback('Profil dihapus');
+      showFeedback('Profil dihapus dari Supabase');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const openFindModal = async () => {
+    setIsFindOpen(true);
+    try {
+      const rows = await erpList<CompanyProfileData>('company_profiles', {
+        orderBy: 'profile_code',
+        asc: true,
+      });
+      setProfiles(rows);
+    } catch {
+      // keep existing
+    }
+    setTimeout(() => findInputRef.current?.focus(), 60);
   };
 
   const handleExportExcel = () => {
@@ -218,17 +249,20 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         { header: 'Fax', accessor: 'fax' },
         { header: 'Email', accessor: 'mail' },
       ],
-      rows: profiles.length > 0 ? profiles : [
-        {
-          profile_code: formData.profileCode,
-          company_name: formData.companyName,
-          no_npwp: formData.noNpwp,
-          address: formData.address,
-          phone: formData.phone,
-          fax: formData.fax,
-          mail: formData.mail,
-        },
-      ],
+      rows:
+        profiles.length > 0
+          ? profiles
+          : [
+              {
+                profile_code: formData.profileCode,
+                company_name: formData.companyName,
+                no_npwp: formData.noNpwp,
+                address: formData.address,
+                phone: formData.phone,
+                fax: formData.fax,
+                mail: formData.mail,
+              },
+            ],
     });
     showFeedback('Export Excel selesai');
   };
@@ -236,6 +270,19 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
   const availableCodes = Array.from(
     new Set(['01', '02', ...profiles.map((p) => p.profile_code), formData.profileCode])
   ).sort();
+
+  const filteredProfiles = profiles.filter((p) => {
+    if (!findQuery.trim()) return true;
+    const q = findQuery.toLowerCase();
+    return (
+      (p.profile_code || '').toLowerCase().includes(q) ||
+      (p.company_name || '').toLowerCase().includes(q) ||
+      (p.no_npwp || '').toLowerCase().includes(q) ||
+      (p.address || '').toLowerCase().includes(q) ||
+      (p.phone || '').toLowerCase().includes(q) ||
+      (p.mail || '').toLowerCase().includes(q)
+    );
+  });
 
   const printRows = [
     { field: 'Profile Code', value: formData.profileCode },
@@ -260,6 +307,7 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         <FormHeaderBanner
           title="Company Profile"
           onClose={onClose}
+          onFind={openFindModal}
           onPrint={() => setIsPrintOpen(true)}
           onTableView={() => loadProfiles(formData.profileCode)}
           onExportExcel={handleExportExcel}
@@ -270,8 +318,9 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
             onSimpan={handleSave}
             onBaru={handleBaru}
             onKoreksi={handleKoreksi}
-            onHapus={handleHapus}
+            onHapus={handleRequestHapus}
             onPrint={() => setIsPrintOpen(true)}
+            onFind={openFindModal}
             isBusy={isBusy}
             feedback={feedback}
           />
@@ -279,12 +328,15 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
 
         <div className="flex-1 overflow-auto p-4 bg-[#ECE9D8]">
           <div className="max-w-3xl mx-auto bg-[#ECE9D8] border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white p-6 shadow-md">
-            <div className="text-sm font-bold text-[#003C74] border-b border-[#ACA899] pb-2 mb-4">
-              Program Setup &amp; Company Profile
+            <div className="text-sm font-bold text-[#003C74] border-b border-[#ACA899] pb-2 mb-4 flex items-center justify-between">
+              <span>Program Setup &amp; Company Profile</span>
+              <span className="text-[11px] font-normal text-[#555]">
+                Total Profil Tersimpan: <b>{profiles.length}</b>
+              </span>
             </div>
 
             <div className="space-y-3 text-xs text-black">
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <label className="w-36 text-right pr-3 font-medium">Profile Code :</label>
                 <select
                   value={formData.profileCode}
@@ -297,6 +349,13 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={openFindModal}
+                  className="px-2.5 py-1 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
+                >
+                  Cari Profil...
+                </button>
               </div>
 
               <div className="flex items-center">
@@ -432,6 +491,138 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
           </div>
         </div>
       </div>
+
+      {/* Find & Search Modal */}
+      {isFindOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[660px] max-h-[82vh] flex flex-col text-xs">
+            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold">
+              <span>Cari &amp; Daftar Profil Perusahaan (Supabase)</span>
+              <button
+                type="button"
+                onClick={() => setIsFindOpen(false)}
+                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
+              <div className="flex items-center gap-2">
+                <span className="font-bold whitespace-nowrap">Search :</span>
+                <input
+                  ref={findInputRef}
+                  type="text"
+                  value={findQuery}
+                  onChange={(e) => setFindQuery(e.target.value)}
+                  placeholder="Cari Kode, Nama Perusahaan, NPWP, Alamat, Telepon, Email..."
+                  className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={openFindModal}
+                  className="h-[24px] px-3 bg-[#ECE9D8] border border-[#7A7A7A] font-semibold cursor-pointer"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div className="flex-1 min-h-[220px] overflow-auto bg-white border border-[#7F9DB9]">
+                <table className="w-full text-left border-collapse text-[11px]">
+                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
+                    <tr>
+                      <th className="px-2 py-1 border-r border-[#ACA899] w-14 text-center">Kode</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899]">Company Name</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899]">No. NPWP</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899]">Phone</th>
+                      <th className="px-2 py-1">Email</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredProfiles.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="text-center py-6 text-gray-500 italic">
+                          Tidak ada profil perusahaan yang cocok
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredProfiles.map((p) => (
+                        <tr
+                          key={p.id || p.profile_code}
+                          onClick={() => {
+                            setFormData(mapDbToForm(p));
+                            setIsFindOpen(false);
+                            showFeedback(`Profil [${p.profile_code}] dimuat`);
+                          }}
+                          className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
+                            p.profile_code === formData.profileCode ? 'bg-[#FFFF99]' : ''
+                          }`}
+                        >
+                          <td className="px-2 py-1 font-mono font-bold text-center border-r border-[#E0E0E0]">
+                            {p.profile_code}
+                          </td>
+                          <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">
+                            {p.company_name}
+                          </td>
+                          <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">
+                            {p.no_npwp || '-'}
+                          </td>
+                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{p.phone || '-'}</td>
+                          <td className="px-2 py-1">{p.mail || '-'}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-between items-center pt-1">
+                <span className="text-[11px] text-[#555]">
+                  Klik baris untuk memuat profil ke form.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsFindOpen(false)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
+              Konfirmasi Hapus Profil Perusahaan
+            </div>
+            <div className="p-4 text-xs text-black space-y-3">
+              <p>
+                Yakin ingin menghapus profil [{formData.profileCode} - {formData.companyName}] dari
+                database Supabase?
+              </p>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleConfirmHapus}
+                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}

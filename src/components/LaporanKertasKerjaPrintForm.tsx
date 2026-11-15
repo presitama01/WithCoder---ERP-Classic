@@ -1,19 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
+import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
 import {
+  erpCompositeSave,
+  erpDelete,
   erpList,
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
+  parseNum,
+  syncAppSettings,
+  todayIso,
   toDisplayDMyShort,
+  toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 
 interface LaporanKertasKerjaPrintFormProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+interface JurnalDetailLine {
+  id?: string;
+  kode_akun: string;
+  nama_akun: string;
+  debet: number;
+  kredit: number;
+  keterangan: string;
 }
 
 export const LaporanKertasKerjaPrintForm: React.FC<
@@ -26,6 +43,26 @@ export const LaporanKertasKerjaPrintForm: React.FC<
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
 
+  // Live Supabase table (jurnal_umums) + Search state
+  const [tableRows, setTableRows] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Add / Koreksi Modal for jurnal_umums + jurnal_umum_details
+  const [isCrudOpen, setIsCrudOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formNoBukti, setFormNoBukti] = useState<string>('');
+  const [formTanggal, setFormTanggal] = useState<string>(() => toDisplayDMyShort(todayIso()));
+  const [formKategori, setFormKategori] = useState<string>('Jurnal Umum');
+  const [formKeterangan, setFormKeterangan] = useState<string>('');
+  const [formSaldoDebet, setFormSaldoDebet] = useState<string>('0');
+  const [formStsPost, setFormStsPost] = useState<string>('Not Yet');
+  const [detailLines, setDetailLines] = useState<JurnalDetailLine[]>([]);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
+
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
@@ -34,52 +71,258 @@ export const LaporanKertasKerjaPrintForm: React.FC<
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadLiveRows = async (): Promise<any[]> => {
+    const rows = await erpList<any>('jurnal_umums', { orderBy: 'tanggal', asc: false });
+    const mapped = rows.map((r) => ({
+      ...r,
+      id: String(r.id),
+      no_bukti: r.no_bukti || '',
+      tanggal_iso: toIsoDate(r.tanggal) || '',
+      tanggal_display: toDisplayDMyShort(r.tanggal),
+      kategori: r.kategori || 'Jurnal Umum',
+      keterangan: r.keterangan || '',
+      saldo_debet: Number(r.saldo_debet || 0),
+      sts_post: r.sts_post || 'Not Yet',
+      dibuat_oleh: r.dibuat_oleh || 'RETNO',
+    }));
+    setTableRows(mapped);
+    if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
+      setSelectedId(mapped[0].id);
+    }
+    return mapped;
+  };
+
   useEffect(() => {
     if (!isOpen) return;
-    try {
-      const rawPreset = localStorage.getItem('withcoder_preset_kertas_kerja');
-      if (rawPreset) {
-        const v = JSON.parse(rawPreset);
-        if (v.periode) setPeriode(v.periode);
-        if (v.bentukLaporan) setBentukLaporan(v.bentukLaporan);
+    let active = true;
+    (async () => {
+      try {
+        setIsBusy(true);
+        const rawPreset = localStorage.getItem('withcoder_preset_kertas_kerja');
+        if (rawPreset && active) {
+          const v = JSON.parse(rawPreset);
+          if (v.periode) setPeriode(v.periode);
+          if (v.bentukLaporan) setBentukLaporan(v.bentukLaporan);
+        }
+        await loadLiveRows();
+      } catch {
+        // Ignore
+      } finally {
+        if (active) setIsBusy(false);
       }
-    } catch {
-      // Ignore
-    }
+    })();
+    return () => {
+      active = false;
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
 
+  const parts = periode.split('-');
+  const yearMonthPrefix = parts.length === 2 ? `${parts[1]}-${parts[0]}` : '';
+
+  const filteredTableRows = tableRows.filter((r) => {
+    if (yearMonthPrefix && r.tanggal_iso && !r.tanggal_iso.startsWith(yearMonthPrefix)) {
+      return false;
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      if (searchField === 'No.Bukti') return r.no_bukti.toLowerCase().includes(q);
+      if (searchField === 'Kategori') return r.kategori.toLowerCase().includes(q);
+      if (searchField === 'Keterangan') return r.keterangan.toLowerCase().includes(q);
+      if (searchField === 'Status') return r.sts_post.toLowerCase().includes(q);
+      return (
+        r.no_bukti.toLowerCase().includes(q) ||
+        r.kategori.toLowerCase().includes(q) ||
+        r.keterangan.toLowerCase().includes(q) ||
+        r.sts_post.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
   const handleBaru = () => {
-    setPeriode('08-2026');
-    setBentukLaporan('01 - Laporan Kertas Kerja I');
-    showFeedback('Filter baru direset');
+    setModalError(null);
+    setEditingId(null);
+    setFormNoBukti(nextUniqueCode(tableRows.map((r) => r.no_bukti), '2608-JU-', 3));
+    setFormTanggal(toDisplayDMyShort(todayIso()));
+    setFormKategori('Jurnal Umum');
+    setFormKeterangan('');
+    setFormSaldoDebet('0');
+    setFormStsPost('Not Yet');
+    setDetailLines([
+      { kode_akun: '1101', nama_akun: 'Kas / Bank', debet: 0, kredit: 0, keterangan: '' },
+      { kode_akun: '4101', nama_akun: 'Pendapatan / Biaya', debet: 0, kredit: 0, keterangan: '' },
+    ]);
+    setIsCrudOpen(true);
   };
 
-  const handleHapus = () => {
-    setPeriode('08-2026');
-    setBentukLaporan('01 - Laporan Kertas Kerja I');
-    showFeedback('Parameter dikembalikan ke default');
-  };
+  const openEditRow = async (current: any) => {
+    setSelectedId(current.id);
+    setModalError(null);
+    setEditingId(current.id);
+    setFormNoBukti(current.no_bukti);
+    setFormTanggal(current.tanggal_display || toDisplayDMyShort(todayIso()));
+    setFormKategori(current.kategori || 'Jurnal Umum');
+    setFormKeterangan(current.keterangan);
+    setFormSaldoDebet(String(current.saldo_debet || 0));
+    setFormStsPost(current.sts_post || 'Not Yet');
+    setIsCrudOpen(true);
 
-  const handleSimpanPreset = async () => {
     try {
+      const dets = await erpList<any>('jurnal_umum_details', {
+        eq: { jurnal_id: current.id },
+        orderBy: 'created_at',
+        asc: true,
+      });
+      setDetailLines(
+        dets.map((d) => ({
+          id: d.id,
+          kode_akun: d.kode_akun || '',
+          nama_akun: d.nama_akun || '',
+          debet: Number(d.debet || 0),
+          kredit: Number(d.kredit || 0),
+          keterangan: d.keterangan || '',
+        }))
+      );
+    } catch {
+      setDetailLines([]);
+    }
+  };
+
+  const handleKoreksi = () => {
+    const current =
+      filteredTableRows.find((r) => r.id === selectedId) ||
+      tableRows.find((r) => r.id === selectedId) ||
+      filteredTableRows[0];
+    if (!current) {
+      showFeedback('Pilih baris Jurnal Kertas Kerja terlebih dahulu (atau klik Baru)');
+      return;
+    }
+    openEditRow(current);
+  };
+
+  const totalLineDebet = detailLines.reduce((s, d) => s + Number(d.debet || 0), 0);
+  const totalLineKredit = detailLines.reduce((s, d) => s + Number(d.kredit || 0), 0);
+
+  const handleSaveCrud = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError(null);
+    if (!formNoBukti.trim() || !formKeterangan.trim()) {
+      setModalError('No.Bukti dan Keterangan wajib diisi.');
+      return;
+    }
+    const tglIso = toIsoDate(formTanggal) || todayIso();
+    const numericSaldo = totalLineDebet > 0 ? totalLineDebet : parseNum(formSaldoDebet);
+
+    const headerPayload: Record<string, any> = {
+      ...(editingId ? { id: editingId } : {}),
+      no_bukti: formNoBukti.trim().toUpperCase(),
+      tanggal: tglIso,
+      kategori: formKategori,
+      keterangan: formKeterangan.trim(),
+      saldo_debet: numericSaldo,
+      sts_post: formStsPost,
+      ...(editingId
+        ? { diupdate_oleh: 'RETNO', tgl_update: todayIso() }
+        : { dibuat_oleh: 'RETNO', tgl_created: tglIso }),
+    };
+
+    const validDetails = detailLines
+      .filter((d) => d.kode_akun.trim() || d.nama_akun.trim() || d.debet > 0 || d.kredit > 0)
+      .map((d) => ({
+        kode_akun: d.kode_akun.trim().toUpperCase(),
+        nama_akun: d.nama_akun.trim(),
+        debet: Number(d.debet || 0),
+        kredit: Number(d.kredit || 0),
+        keterangan: d.keterangan.trim(),
+      }));
+
+    try {
+      setIsBusy(true);
+      const saved = await erpCompositeSave<{ header: any }>(
+        'jurnal-umum',
+        headerPayload,
+        validDetails
+      );
+      if (saved?.header?.id) setSelectedId(String(saved.header.id));
+      setIsCrudOpen(false);
+      setEditingId(null);
+      await loadLiveRows();
+      showFeedback(
+        editingId
+          ? 'Jurnal Kertas Kerja diperbarui di Supabase'
+          : 'Jurnal Kertas Kerja tersimpan ke Supabase'
+      );
+    } catch (err: any) {
+      const msg = err?.message || 'Gagal menyimpan Jurnal Kertas Kerja';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRequestHapus = () => {
+    const current =
+      filteredTableRows.find((r) => r.id === selectedId) ||
+      tableRows.find((r) => r.id === selectedId);
+    if (!current) {
+      showFeedback('Pilih baris Jurnal Kertas Kerja yang akan dihapus');
+      return;
+    }
+    setConfirmDeleteRow(current);
+  };
+
+  const handleConfirmHapus = async () => {
+    if (!confirmDeleteRow) return;
+    try {
+      setIsBusy(true);
+      await erpDelete('jurnal_umums', confirmDeleteRow.id);
+      setConfirmDeleteRow(null);
+      await loadLiveRows();
+      showFeedback('Jurnal Kertas Kerja dihapus dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSimpan = async () => {
+    try {
+      setIsBusy(true);
       localStorage.setItem(
         'withcoder_preset_kertas_kerja',
         JSON.stringify({ periode, bentukLaporan })
       );
-      showFeedback('Parameter Laporan Kertas Kerja tersimpan');
+      await syncAppSettings({
+        month_active: periode.trim() || undefined,
+      });
+      await loadLiveRows();
+      showFeedback('Parameter & data Kertas Kerja tersinkron ke Supabase');
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleFind = async () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+    try {
+      setIsBusy(true);
+      await loadLiveRows();
+      showFeedback('Data Kertas Kerja dimuat ulang dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
   };
 
   const fetchReportData = async (): Promise<any[]> => {
-    // Parse periode mm-yyyy -> prefix yyyy-mm
-    const parts = periode.split('-');
-    const yearMonthPrefix = parts.length === 2 ? `${parts[1]}-${parts[0]}` : '';
-
-    // Try view first, then fallback / enrich with live tables
     const [jurnals, details, viewRows] = await Promise.all([
       erpList<any>('jurnal_umums', { orderBy: 'tanggal', asc: true }).catch(() => []),
       erpList<any>('jurnal_umum_details', { orderBy: 'kode_akun', asc: true }).catch(() => []),
@@ -132,7 +375,6 @@ export const LaporanKertasKerjaPrintForm: React.FC<
         }));
     }
 
-    // Fallback to jurnal_umums summary rows filtered by month
     return jurnals
       .filter((j) => !yearMonthPrefix || String(j.tanggal || '').startsWith(yearMonthPrefix))
       .map((j) => ({
@@ -203,11 +445,13 @@ export const LaporanKertasKerjaPrintForm: React.FC<
       <FormHeaderBanner
         title="Laporan Kertas Kerja"
         onClose={onClose}
+        onFind={handleFind}
         onPrint={handlePreview}
+        onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
 
-      <div className="flex-1 overflow-auto p-3">
+      <div className="flex-1 overflow-auto p-3 space-y-2.5">
         <div className="max-w-[540px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-2.5 shadow-xs">
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
             <h1 className="font-bold text-[18px] tracking-normal text-black font-serif">
@@ -218,18 +462,19 @@ export const LaporanKertasKerjaPrintForm: React.FC<
           <div className="border-b border-[#999999] pb-2">
             <FormActionButtons
               compact
-              onSimpan={handleSimpanPreset}
+              onSimpan={handleSimpan}
               onBaru={handleBaru}
-              onKoreksi={() => showFeedback('Silakan ubah parameter laporan')}
-              onHapus={handleHapus}
+              onKoreksi={handleKoreksi}
+              onHapus={handleRequestHapus}
               onPrint={handlePreview}
+              onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
             />
           </div>
 
           {/* Group 1: Range */}
-          <fieldset className="border border-[#999999] px-3 pt-2 pb-14 rounded-none relative">
+          <fieldset className="border border-[#999999] px-3 pt-2 pb-6 rounded-none relative">
             <legend className="text-[11px] font-semibold px-1 text-black">
               Range
             </legend>
@@ -296,7 +541,367 @@ export const LaporanKertasKerjaPrintForm: React.FC<
             </button>
           </div>
         </div>
+
+        {/* Live Supabase Search & Jurnal Sumber Kertas Kerja Panel */}
+        <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
+          <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5">
+              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value)}
+                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
+              >
+                <option value="Semua">Semua Kolom</option>
+                <option value="No.Bukti">No.Bukti</option>
+                <option value="Kategori">Kategori</option>
+                <option value="Keterangan">Keterangan</option>
+                <option value="Status">Status</option>
+              </select>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') loadLiveRows();
+                }}
+                placeholder="Cari No.Bukti Jurnal, Kategori, Keterangan..."
+                className="w-[240px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
+              />
+              <button
+                type="button"
+                onClick={() => loadLiveRows()}
+                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
+              >
+                Cari / Refresh
+              </button>
+            </div>
+            <span className="text-[11px] text-black">
+              Data Supabase (<b>jurnal_umums</b>): <b>{filteredTableRows.length}</b> baris
+            </span>
+          </div>
+
+          <div className="max-h-[220px] overflow-auto bg-white">
+            <table className="w-full border-collapse text-[11px]">
+              <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#808080]">
+                <tr>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Bukti</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Kategori</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Keterangan</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">Saldo Debet</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Status</th>
+                  <th className="px-2 py-1 text-center">Dibuat Oleh</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTableRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="text-center py-5 text-gray-500 italic">
+                      Belum ada data Jurnal untuk periode {periode}. Klik "Baru" untuk menambah ke Supabase.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredTableRows.map((r) => {
+                    const isSel = r.id === selectedId;
+                    return (
+                      <tr
+                        key={r.id}
+                        onClick={() => setSelectedId(r.id)}
+                        onDoubleClick={() => openEditRow(r)}
+                        className={`cursor-pointer border-b border-[#E0E0E0] ${
+                          isSel ? 'bg-[#316AC5] text-white' : 'hover:bg-[#EAF2FC]'
+                        }`}
+                      >
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono font-bold">{r.no_bukti}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.tanggal_display}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.kategori}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.keterangan}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">
+                          {formatRupiah(r.saldo_debet)}
+                        </td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sts_post}</td>
+                        <td className="px-2 py-1 text-center">{r.dibuat_oleh}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
+      {/* Add / Edit Composite Journal Modal */}
+      {isCrudOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[720px] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
+              <span>{editingId ? 'Koreksi Jurnal Kertas Kerja' : 'Tambah Jurnal Kertas Kerja Baru'}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalError(null);
+                  setIsCrudOpen(false);
+                }}
+                className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <form noValidate onSubmit={handleSaveCrud} className="p-4 flex flex-col space-y-3 overflow-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-black">No.Bukti:</label>
+                  <input
+                    type="text"
+                    value={formNoBukti}
+                    onChange={(e) => setFormNoBukti(e.target.value)}
+                    required
+                    className="w-48 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-black">Tanggal:</label>
+                  <DatePickerInput
+                    value={formTanggal}
+                    onChange={(formatted) => setFormTanggal(formatted)}
+                    format="dMyShort"
+                    inputClassName="w-[174px] h-[25px] px-2 bg-white border border-[#7A7A7A] text-xs outline-none"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-black">Kategori:</label>
+                  <select
+                    value={formKategori}
+                    onChange={(e) => setFormKategori(e.target.value)}
+                    className="w-48 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                  >
+                    <option value="Jurnal Umum">Jurnal Umum</option>
+                    <option value="Kas Masuk">Kas Masuk</option>
+                    <option value="Kas Keluar">Kas Keluar</option>
+                    <option value="Bank Masuk">Bank Masuk</option>
+                    <option value="Bank Keluar">Bank Keluar</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-black">Sts.Post:</label>
+                  <select
+                    value={formStsPost}
+                    onChange={(e) => setFormStsPost(e.target.value)}
+                    className="w-48 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Posted">Posted</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-black w-28">Keterangan:</label>
+                <input
+                  type="text"
+                  value={formKeterangan}
+                  onChange={(e) => setFormKeterangan(e.target.value)}
+                  required
+                  className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-black w-28">Saldo Debet:</label>
+                <input
+                  type="text"
+                  value={totalLineDebet > 0 ? String(totalLineDebet) : formSaldoDebet}
+                  onChange={(e) => setFormSaldoDebet(e.target.value)}
+                  disabled={totalLineDebet > 0}
+                  className="w-48 px-2 py-1 bg-white border border-[#7A7A7A] text-xs text-right font-mono disabled:bg-[#F3F2F1]"
+                />
+              </div>
+
+              {/* Composite Detail Akun Debet / Kredit */}
+              <div className="border border-[#ACA899] bg-white p-2 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[11px] text-black">
+                    Rincian Baris Akun Jurnal (Debet / Kredit)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDetailLines((prev) => [
+                        ...prev,
+                        { kode_akun: '', nama_akun: '', debet: 0, kredit: 0, keterangan: '' },
+                      ])
+                    }
+                    className="px-2 py-0.5 bg-[#ECE9D8] border border-[#7A7A7A] text-[10px] font-bold cursor-pointer"
+                  >
+                    + Tambah Baris Akun
+                  </button>
+                </div>
+
+                <table className="w-full border-collapse border border-[#D4D0C8] text-[11px]">
+                  <thead className="bg-[#ECE9D8]">
+                    <tr>
+                      <th className="border border-[#B5B3A8] px-1.5 py-0.5 text-left w-20">Kode Akun</th>
+                      <th className="border border-[#B5B3A8] px-1.5 py-0.5 text-left">Nama Akun</th>
+                      <th className="border border-[#B5B3A8] px-1.5 py-0.5 text-right w-24">Debet</th>
+                      <th className="border border-[#B5B3A8] px-1.5 py-0.5 text-right w-24">Kredit</th>
+                      <th className="border border-[#B5B3A8] px-1.5 py-0.5 text-left w-32">Keterangan</th>
+                      <th className="border border-[#B5B3A8] px-1 py-0.5 w-8" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailLines.map((line, idx) => (
+                      <tr key={idx}>
+                        <td className="border border-[#E0DED5] p-0.5">
+                          <input
+                            type="text"
+                            value={line.kode_akun}
+                            onChange={(e) =>
+                              setDetailLines((prev) =>
+                                prev.map((l, i) => (i === idx ? { ...l, kode_akun: e.target.value } : l))
+                              )
+                            }
+                            className="w-full px-1 py-0.5 bg-white outline-none font-mono"
+                          />
+                        </td>
+                        <td className="border border-[#E0DED5] p-0.5">
+                          <input
+                            type="text"
+                            value={line.nama_akun}
+                            onChange={(e) =>
+                              setDetailLines((prev) =>
+                                prev.map((l, i) => (i === idx ? { ...l, nama_akun: e.target.value } : l))
+                              )
+                            }
+                            className="w-full px-1 py-0.5 bg-white outline-none"
+                          />
+                        </td>
+                        <td className="border border-[#E0DED5] p-0.5">
+                          <input
+                            type="number"
+                            value={line.debet}
+                            onChange={(e) =>
+                              setDetailLines((prev) =>
+                                prev.map((l, i) =>
+                                  i === idx ? { ...l, debet: Number(e.target.value || 0) } : l
+                                )
+                              )
+                            }
+                            className="w-full px-1 py-0.5 bg-white outline-none text-right font-mono"
+                          />
+                        </td>
+                        <td className="border border-[#E0DED5] p-0.5">
+                          <input
+                            type="number"
+                            value={line.kredit}
+                            onChange={(e) =>
+                              setDetailLines((prev) =>
+                                prev.map((l, i) =>
+                                  i === idx ? { ...l, kredit: Number(e.target.value || 0) } : l
+                                )
+                              )
+                            }
+                            className="w-full px-1 py-0.5 bg-white outline-none text-right font-mono"
+                          />
+                        </td>
+                        <td className="border border-[#E0DED5] p-0.5">
+                          <input
+                            type="text"
+                            value={line.keterangan}
+                            onChange={(e) =>
+                              setDetailLines((prev) =>
+                                prev.map((l, i) => (i === idx ? { ...l, keterangan: e.target.value } : l))
+                              )
+                            }
+                            className="w-full px-1 py-0.5 bg-white outline-none"
+                          />
+                        </td>
+                        <td className="border border-[#E0DED5] text-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDetailLines((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-red-700 font-bold cursor-pointer px-1"
+                          >
+                            ×
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="flex justify-end space-x-6 text-[11px] font-bold pt-1">
+                  <span>Total Debet: {formatRupiah(totalLineDebet)}</span>
+                  <span>Total Kredit: {formatRupiah(totalLineKredit)}</span>
+                </div>
+              </div>
+
+              {modalError && (
+                <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] text-[11px] font-semibold">
+                  {modalError}
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalError(null);
+                    setIsCrudOpen(false);
+                  }}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBusy}
+                  className="px-3 py-1 bg-[#0A246A] text-white border border-black text-xs hover:bg-[#163994] cursor-pointer"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
+              Konfirmasi Hapus Jurnal Kertas Kerja
+            </div>
+            <div className="p-4 text-xs text-black space-y-3">
+              <p>
+                Yakin ingin menghapus Jurnal [{confirmDeleteRow.no_bukti}] beserta rinciannya dari database Supabase?
+              </p>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteRow(null)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleConfirmHapus}
+                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}

@@ -1,11 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import {
+  erpCreate,
+  erpDelete,
   erpList,
+  erpUpdate,
   fetchActiveCompanyProfile,
+  nextUniqueCode,
+  syncAppSettings,
+  todayIso,
   toDisplayDMyShort,
   toIsoDate,
 } from '../lib/erpApi';
@@ -22,7 +28,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
 }) => {
   const [tglStart, setTglStart] = useState<string>('12-09-2026');
   const [tglEnd, setTglEnd] = useState<string>('12-09-2026');
-  const [filterType, setFilterType] = useState<string>('sales');
+  const [filterType, setFilterType] = useState<string>('all_periode');
   const [salesCode, setSalesCode] = useState<string>('');
   const [salesDesc, setSalesDesc] = useState<string>('');
   const [customerFilter, setCustomerFilter] = useState<string>('');
@@ -34,6 +40,28 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const [salesCatalog, setSalesCatalog] = useState<{ kode: string; nama: string }[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [customerCatalog, setCustomerCatalog] = useState<string[]>([]);
+
+  // Live Supabase table + Search state
+  const [tableRows, setTableRows] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Add / Koreksi Modal
+  const [isCrudOpen, setIsCrudOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formNoBukti, setFormNoBukti] = useState<string>('');
+  const [formTanggal, setFormTanggal] = useState<string>(() => toDisplayDMyShort(todayIso()));
+  const [formCustomer, setFormCustomer] = useState<string>('');
+  const [formNoSo, setFormNoSo] = useState<string>('');
+  const [formPoNo, setFormPoNo] = useState<string>('');
+  const [formSales, setFormSales] = useState<string>('01');
+  const [formNoFaktur, setFormNoFaktur] = useState<string>('');
+  const [formKeterangan, setFormKeterangan] = useState<string>('');
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
+
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
@@ -42,11 +70,35 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadLiveRows = async (): Promise<any[]> => {
+    const rows = await erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false });
+    const mapped = rows.map((r) => ({
+      ...r,
+      id: String(r.id),
+      no_bukti: r.no_bukti || '',
+      tanggal_iso: toIsoDate(r.tanggal) || '',
+      tanggal_display: toDisplayDMyShort(r.tanggal),
+      nama_customer: r.nama_customer || '',
+      no_so: r.no_so || '',
+      po_no: r.po_no || '',
+      sales: r.sales || '',
+      no_faktur: r.no_faktur || '',
+      sts_post: r.sts_post || 'Posting',
+      keterangan: r.keterangan || '',
+    }));
+    setTableRows(mapped);
+    if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
+      setSelectedId(mapped[0].id);
+    }
+    return mapped;
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
     (async () => {
       try {
+        setIsBusy(true);
         const [sales, lokasis, customers] = await Promise.all([
           erpList<any>('master_sales', { orderBy: 'kode_sales', asc: true }).catch(() => []),
           erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
@@ -64,8 +116,11 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           if (v.lokasiStock) setLokasiStock(v.lokasiStock);
           if (v.bentukLaporan) setBentukLaporan(v.bentukLaporan);
         }
+        await loadLiveRows();
       } catch {
         // ignore
+      } finally {
+        if (active) setIsBusy(false);
       }
     })();
     return () => {
@@ -82,34 +137,177 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
 
   if (!isOpen) return null;
 
+  const filteredTableRows = tableRows.filter((r) => {
+    if (filterType === 'sales' && salesCode.trim()) {
+      if (!r.sales.toLowerCase().includes(salesCode.trim().toLowerCase())) return false;
+    }
+    if (filterType === 'customer' && customerFilter.trim()) {
+      if (!r.nama_customer.toLowerCase().includes(customerFilter.trim().toLowerCase())) return false;
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      if (searchField === 'No.Bukti') return r.no_bukti.toLowerCase().includes(q);
+      if (searchField === 'Customer') return r.nama_customer.toLowerCase().includes(q);
+      if (searchField === 'No.SO') return r.no_so.toLowerCase().includes(q);
+      if (searchField === 'Sales') return r.sales.toLowerCase().includes(q);
+      if (searchField === 'No.Faktur') return r.no_faktur.toLowerCase().includes(q);
+      return (
+        r.no_bukti.toLowerCase().includes(q) ||
+        r.nama_customer.toLowerCase().includes(q) ||
+        r.no_so.toLowerCase().includes(q) ||
+        r.po_no.toLowerCase().includes(q) ||
+        r.no_faktur.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
   const handleBaru = () => {
-    setTglStart('12-09-2026');
-    setTglEnd('12-09-2026');
-    setFilterType('sales');
-    setSalesCode('');
-    setSalesDesc('');
-    setCustomerFilter('');
-    setLokasiStock('ALL');
-    setBentukLaporan('01 - Laporan Detail Surat Jalan');
-    showFeedback('Filter baru direset');
+    setEditingId(null);
+    setModalError(null);
+    setFormNoBukti(nextUniqueCode(tableRows.map((r) => r.no_bukti), '2608-DO-INV-', 3));
+    setFormTanggal(toDisplayDMyShort(todayIso()));
+    setFormCustomer(customerFilter || '');
+    setFormNoSo('');
+    setFormPoNo('');
+    setFormSales(salesCode || '01');
+    setFormNoFaktur('');
+    setFormKeterangan('');
+    setIsCrudOpen(true);
   };
 
-  const handleHapus = () => {
-    setSalesCode('');
-    setSalesDesc('');
-    setCustomerFilter('');
-    showFeedback('Parameter dibersihkan');
+  const handleKoreksi = () => {
+    const current =
+      filteredTableRows.find((r) => r.id === selectedId) ||
+      tableRows.find((r) => r.id === selectedId) ||
+      filteredTableRows[0];
+    if (!current) {
+      showFeedback('Pilih baris Surat Jalan terlebih dahulu (atau klik Baru)');
+      return;
+    }
+    setSelectedId(current.id);
+    setEditingId(current.id);
+    setModalError(null);
+    setFormNoBukti(current.no_bukti);
+    setFormTanggal(current.tanggal_display || toDisplayDMyShort(todayIso()));
+    setFormCustomer(current.nama_customer);
+    setFormNoSo(current.no_so);
+    setFormPoNo(current.po_no);
+    setFormSales(current.sales || '01');
+    setFormNoFaktur(current.no_faktur);
+    setFormKeterangan(current.keterangan);
+    setIsCrudOpen(true);
   };
 
-  const handleSimpanPreset = async () => {
+  const handleSaveCrud = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError(null);
+    if (!formNoBukti.trim() || !formCustomer.trim()) {
+      setModalError('No. Bukti SJ dan Nama Customer wajib diisi.');
+      return;
+    }
     try {
+      setIsBusy(true);
+      const tglIso = toIsoDate(formTanggal) || todayIso();
+      const payload = {
+        no_bukti: formNoBukti.trim().toUpperCase(),
+        tanggal: tglIso,
+        nama_customer: formCustomer.trim().toUpperCase(),
+        no_so: formNoSo.trim().toUpperCase(),
+        po_no: formPoNo.trim().toUpperCase(),
+        sales: formSales.trim().toUpperCase(),
+        no_faktur: formNoFaktur.trim().toUpperCase(),
+        keterangan: formKeterangan.trim(),
+      };
+      if (editingId) {
+        await erpUpdate('surat_jalans', editingId, {
+          ...payload,
+          diupdate_oleh: 'RETNO',
+          tgl_update: todayIso(),
+        });
+        showFeedback('Surat Jalan diperbarui di Supabase');
+      } else {
+        const created = await erpCreate<any>('surat_jalans', {
+          ...payload,
+          sts_print: 'Not Yet',
+          sts_post: 'Posting',
+          tgl_post: todayIso(),
+          dibuat_oleh: 'RETNO',
+          tgl_created: todayIso(),
+        });
+        if (created?.id) setSelectedId(String(created.id));
+        showFeedback('Surat Jalan tersimpan ke Supabase');
+      }
+      setIsCrudOpen(false);
+      setEditingId(null);
+      await loadLiveRows();
+    } catch (err: any) {
+      const msg = err?.message || 'Gagal menyimpan Surat Jalan';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRequestHapus = () => {
+    const current =
+      filteredTableRows.find((r) => r.id === selectedId) ||
+      tableRows.find((r) => r.id === selectedId);
+    if (!current) {
+      showFeedback('Pilih baris Surat Jalan yang akan dihapus');
+      return;
+    }
+    setConfirmDeleteRow(current);
+  };
+
+  const handleConfirmHapus = async () => {
+    if (!confirmDeleteRow) return;
+    try {
+      setIsBusy(true);
+      await erpDelete('surat_jalans', confirmDeleteRow.id);
+      setConfirmDeleteRow(null);
+      await loadLiveRows();
+      showFeedback('Surat Jalan dihapus dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSimpan = async () => {
+    try {
+      setIsBusy(true);
       localStorage.setItem(
         'withcoder_preset_surat_jalan',
         JSON.stringify({ tglStart, tglEnd, lokasiStock, bentukLaporan })
       );
-      showFeedback('Parameter Laporan Surat Jalan tersimpan');
+      await syncAppSettings({
+        periode_start: toIsoDate(tglStart),
+        periode_end: toIsoDate(tglEnd),
+        lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
+      });
+      await loadLiveRows();
+      showFeedback('Parameter & data Surat Jalan tersinkron ke Supabase');
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleFind = async () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+    try {
+      setIsBusy(true);
+      await loadLiveRows();
+      showFeedback('Data Surat Jalan dimuat ulang dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -196,12 +394,14 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
       <FormHeaderBanner
         title="Laporan Surat Jalan"
         onClose={onClose}
+        onFind={handleFind}
         onPrint={handlePreview}
+        onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
 
-      <div className="flex-1 overflow-auto p-3">
-        <div className="max-w-[560px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
+      <div className="flex-1 overflow-auto p-3 space-y-2.5">
+        <div className="max-w-[590px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
             <h1 className="font-extrabold text-sm tracking-wider text-black font-sans">
               LAPORAN SURAT JALAN
@@ -211,11 +411,12 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           <div className="border-b border-[#999999] pb-2">
             <FormActionButtons
               compact
-              onSimpan={handleSimpanPreset}
+              onSimpan={handleSimpan}
               onBaru={handleBaru}
-              onKoreksi={() => showFeedback('Silakan ubah filter laporan')}
-              onHapus={handleHapus}
+              onKoreksi={handleKoreksi}
+              onHapus={handleRequestHapus}
               onPrint={handlePreview}
+              onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
             />
@@ -406,7 +607,272 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
             </div>
           </div>
         </div>
+
+        {/* Live Supabase Search & Data Grid Panel */}
+        <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
+          <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5">
+              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value)}
+                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
+              >
+                <option value="Semua">Semua Kolom</option>
+                <option value="No.Bukti">No.Bukti</option>
+                <option value="Customer">Customer</option>
+                <option value="No.SO">No.SO</option>
+                <option value="Sales">Sales</option>
+                <option value="No.Faktur">No.Faktur</option>
+              </select>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') loadLiveRows();
+                }}
+                placeholder="Cari No.Bukti SJ, Customer, No.SO, No.Faktur..."
+                className="w-[230px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
+              />
+              <button
+                type="button"
+                onClick={() => loadLiveRows()}
+                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
+              >
+                Cari / Refresh
+              </button>
+            </div>
+            <span className="text-[11px] text-black">
+              Data Supabase (<b>surat_jalans</b>): <b>{filteredTableRows.length}</b> baris
+            </span>
+          </div>
+
+          <div className="max-h-[220px] overflow-auto bg-white">
+            <table className="w-full border-collapse text-[11px]">
+              <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#808080]">
+                <tr>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Bukti SJ</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Customer</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">PO.No</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Sales</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Faktur</th>
+                  <th className="px-2 py-1 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTableRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="text-center py-5 text-gray-500 italic">
+                      Belum ada data Surat Jalan. Klik "Baru" untuk menambah ke Supabase.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredTableRows.map((r) => {
+                    const isSel = r.id === selectedId;
+                    return (
+                      <tr
+                        key={r.id}
+                        onClick={() => setSelectedId(r.id)}
+                        onDoubleClick={() => {
+                          setSelectedId(r.id);
+                          setEditingId(r.id);
+                          setModalError(null);
+                          setFormNoBukti(r.no_bukti);
+                          setFormTanggal(r.tanggal_display || toDisplayDMyShort(todayIso()));
+                          setFormCustomer(r.nama_customer);
+                          setFormNoSo(r.no_so);
+                          setFormPoNo(r.po_no);
+                          setFormSales(r.sales || '01');
+                          setFormNoFaktur(r.no_faktur);
+                          setFormKeterangan(r.keterangan);
+                          setIsCrudOpen(true);
+                        }}
+                        className={`cursor-pointer border-b border-[#E0E0E0] ${
+                          isSel ? 'bg-[#316AC5] text-white' : 'hover:bg-[#EAF2FC]'
+                        }`}
+                      >
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono font-bold">{r.no_bukti}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.tanggal_display}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_customer}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_so || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.po_no || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sales}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_faktur || '-'}</td>
+                        <td className="px-2 py-1 text-center">{r.sts_post}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
+      {/* Add / Edit Surat Jalan Modal */}
+      {isCrudOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col overflow-hidden text-xs">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold">
+              <span>{editingId ? 'Koreksi Surat Jalan' : 'Tambah Surat Jalan Baru'}</span>
+              <button
+                type="button"
+                onClick={() => setIsCrudOpen(false)}
+                className="w-5 h-5 bg-[#C00000] text-white font-bold flex items-center justify-center cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px]">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">No. Bukti SJ *</label>
+                  <input
+                    type="text"
+                    value={formNoBukti}
+                    onChange={(e) => setFormNoBukti(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Tanggal</label>
+                  <DatePickerInput
+                    value={formTanggal}
+                    onChange={(fmt) => setFormTanggal(fmt)}
+                    format="dmy"
+                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block font-bold mb-0.5">Nama Customer *</label>
+                <input
+                  type="text"
+                  list="sj-modal-cust"
+                  value={formCustomer}
+                  onChange={(e) => setFormCustomer(e.target.value.toUpperCase())}
+                  className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
+                />
+                <datalist id="sj-modal-cust">
+                  {customerCatalog.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">No. SO</label>
+                  <input
+                    type="text"
+                    value={formNoSo}
+                    onChange={(e) => setFormNoSo(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">PO. No</label>
+                  <input
+                    type="text"
+                    value={formPoNo}
+                    onChange={(e) => setFormPoNo(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Sales</label>
+                  <input
+                    type="text"
+                    list="lap-sj-sales-list"
+                    value={formSales}
+                    onChange={(e) => setFormSales(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">No. Faktur</label>
+                  <input
+                    type="text"
+                    value={formNoFaktur}
+                    onChange={(e) => setFormNoFaktur(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Keterangan</label>
+                  <input
+                    type="text"
+                    value={formKeterangan}
+                    onChange={(e) => setFormKeterangan(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+              </div>
+
+              {modalError && (
+                <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] font-semibold">
+                  {modalError}
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
+                <button
+                  type="button"
+                  onClick={() => setIsCrudOpen(false)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#0A246A] text-white border border-black font-bold cursor-pointer"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
+              Konfirmasi Hapus Surat Jalan
+            </div>
+            <div className="p-4 text-xs text-black space-y-3">
+              <p>
+                Yakin ingin menghapus Surat Jalan [{confirmDeleteRow.no_bukti}] dari database Supabase?
+              </p>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteRow(null)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleConfirmHapus}
+                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}

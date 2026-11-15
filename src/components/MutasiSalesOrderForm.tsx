@@ -243,7 +243,6 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         unit: formUnit.trim().toUpperCase(),
         pesan: pesanNum,
         kirim: kirimNum,
-        sisa: sisaNum,
       };
 
       if (editingId) {

@@ -1,13 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
 import {
+  erpCreate,
+  erpDelete,
   erpList,
+  erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
+  nextUniqueCode,
+  parseNum,
+  syncAppSettings,
+  toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 
@@ -22,20 +29,39 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
 }) => {
   const [tglStart, setTglStart] = useState<string>('01-08-2026');
   const [tglEnd, setTglEnd] = useState<string>('31-08-2026');
-  const [filterType, setFilterType] = useState<string>('merk'); // 'merk', 'batasan_kode', 'customer', 'all'
+  const [filterType, setFilterType] = useState<string>('all');
   const [merkFilter, setMerkFilter] = useState<string>('');
   const [kodeBarangStart, setKodeBarangStart] = useState<string>('');
   const [kodeBarangEnd, setKodeBarangEnd] = useState<string>('');
   const [lokasiStock, setLokasiStock] = useState<string>('ALL');
-  const [bentukLaporan, setBentukLaporan] = useState<string>(
-    '01 - Item Cost & Stock'
-  );
+  const [bentukLaporan, setBentukLaporan] = useState<string>('01 - Item Cost & Stock');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
 
   const [merkOptions, setMerkOptions] = useState<string[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangCodes, setBarangCodes] = useState<string[]>([]);
+
+  // Live Supabase table + Search state
+  const [tableRows, setTableRows] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Add / Koreksi Modal for master_barangs
+  const [isCrudOpen, setIsCrudOpen] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formKode, setFormKode] = useState<string>('');
+  const [formNama, setFormNama] = useState<string>('');
+  const [formUnit, setFormUnit] = useState<string>('PCS');
+  const [formMerk, setFormMerk] = useState<string>('');
+  const [formCategory, setFormCategory] = useState<string>('PRODUCT');
+  const [formStock, setFormStock] = useState<string>('0');
+  const [formCost, setFormCost] = useState<string>('0');
+  const [formPrice, setFormPrice] = useState<string>('0');
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [previewRows, setPreviewRows] = useState<any[]>([]);
@@ -45,22 +71,77 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadLiveRows = async (): Promise<any[]> => {
+    const [barangs, stockAwals] = await Promise.all([
+      erpList<any>('master_barangs', { orderBy: 'kode', asc: true }),
+      erpList<any>('stock_awal', { orderBy: 'item_code', asc: true }).catch(() => []),
+    ]);
+
+    const awalMap = new Map<string, any>();
+    for (const sa of stockAwals) {
+      if (lokasiStock !== 'ALL' && sa.lokasi && sa.lokasi !== lokasiStock) continue;
+      const key = (sa.item_code || '').toUpperCase();
+      const prev = awalMap.get(key) || {
+        bagus: 0,
+        rusak: 0,
+        hpp: Number(sa.hpp || 0),
+        lokasi: sa.lokasi || '01 - OFFICE',
+      };
+      awalMap.set(key, {
+        bagus: prev.bagus + Number(sa.stock_bagus || 0),
+        rusak: prev.rusak + Number(sa.stock_rusak || 0),
+        hpp: Number(sa.hpp || prev.hpp || 0),
+        lokasi: sa.lokasi || prev.lokasi,
+      });
+    }
+
+    const mapped = barangs.map((b) => {
+      const code = (b.kode || '').toUpperCase();
+      const sa = awalMap.get(code);
+      const stockBagus = sa ? sa.bagus : Number(b.stock || 0);
+      const stockRusak = sa ? sa.rusak : 0;
+      const hpp = Number(b.cost || sa?.hpp || 0);
+      const hargaJual = Number(b.price || 0);
+      return {
+        id: String(b.id),
+        kode_barang: b.kode || '',
+        nama_barang: b.nama_barang || '',
+        category: b.category || '',
+        merk: b.merk || '',
+        satuan: b.unit || 'PCS',
+        lokasi: sa?.lokasi || '01 - OFFICE',
+        hpp,
+        harga_jual: hargaJual,
+        stock_master: Number(b.stock || 0),
+        stock_bagus: stockBagus,
+        stock_rusak: stockRusak,
+        total_cost: hpp * stockBagus,
+      };
+    });
+
+    setBarangCodes(mapped.map((m) => m.kode_barang).filter(Boolean));
+    setTableRows(mapped);
+    if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
+      setSelectedId(mapped[0].id);
+    }
+    return mapped;
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
     (async () => {
       try {
-        const [merks, lokasis, barangs] = await Promise.all([
+        setIsBusy(true);
+        const [merks, lokasis] = await Promise.all([
           erpList<any>('master_merks', { orderBy: 'nama_merk', asc: true }).catch(() => []),
           erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
-          erpList<any>('master_barangs', { orderBy: 'kode', asc: true }).catch(() => []),
         ]);
         if (!active) return;
         setMerkOptions(merks.map((m) => m.nama_merk || '').filter(Boolean));
         setLokasiOptions(
           lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()).filter(Boolean)
         );
-        setBarangCodes(barangs.map((b) => b.kode || '').filter(Boolean));
         const rawPreset = localStorage.getItem('withcoder_preset_item_cost_stock');
         if (rawPreset) {
           const v = JSON.parse(rawPreset);
@@ -71,8 +152,11 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
           if (v.lokasiStock) setLokasiStock(v.lokasiStock);
           if (v.bentukLaporan) setBentukLaporan(v.bentukLaporan);
         }
+        await loadLiveRows();
       } catch {
         // Ignore lookup error
+      } finally {
+        if (active) setIsBusy(false);
       }
     })();
     return () => {
@@ -82,79 +166,173 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
 
   if (!isOpen) return null;
 
+  const filteredTableRows = tableRows.filter((r) => {
+    if (filterType === 'merk' && merkFilter.trim()) {
+      if (!r.merk.toLowerCase().includes(merkFilter.trim().toLowerCase())) return false;
+    }
+    if (filterType === 'batasan_kode') {
+      const start = kodeBarangStart.trim().toUpperCase();
+      const end = kodeBarangEnd.trim().toUpperCase();
+      const code = r.kode_barang.toUpperCase();
+      if (start && code < start) return false;
+      if (end && code > end) return false;
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      if (searchField === 'Kode') return r.kode_barang.toLowerCase().includes(q);
+      if (searchField === 'Nama Barang') return r.nama_barang.toLowerCase().includes(q);
+      if (searchField === 'Merk') return r.merk.toLowerCase().includes(q);
+      if (searchField === 'Category') return r.category.toLowerCase().includes(q);
+      return (
+        r.kode_barang.toLowerCase().includes(q) ||
+        r.nama_barang.toLowerCase().includes(q) ||
+        r.merk.toLowerCase().includes(q) ||
+        r.category.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
   const handleBaru = () => {
-    setTglStart('01-08-2026');
-    setTglEnd('31-08-2026');
-    setFilterType('merk');
-    setMerkFilter('');
-    setKodeBarangStart('');
-    setKodeBarangEnd('');
-    setLokasiStock('ALL');
-    setBentukLaporan('01 - Item Cost & Stock');
-    showFeedback('Filter baru direset');
+    setEditingId(null);
+    setModalError(null);
+    setFormKode(nextUniqueCode(tableRows.map((r) => r.kode_barang), '', 8));
+    setFormNama('');
+    setFormUnit('PCS');
+    setFormMerk(merkFilter || '');
+    setFormCategory('PRODUCT');
+    setFormStock('0');
+    setFormCost('0');
+    setFormPrice('0');
+    setIsCrudOpen(true);
   };
 
-  const handleHapus = () => {
-    setMerkFilter('');
-    setKodeBarangStart('');
-    setKodeBarangEnd('');
-    showFeedback('Parameter dibersihkan');
+  const handleKoreksi = () => {
+    const current =
+      filteredTableRows.find((r) => r.id === selectedId) ||
+      tableRows.find((r) => r.id === selectedId) ||
+      filteredTableRows[0];
+    if (!current) {
+      showFeedback('Pilih baris item barang terlebih dahulu (atau klik Baru)');
+      return;
+    }
+    setSelectedId(current.id);
+    setEditingId(current.id);
+    setModalError(null);
+    setFormKode(current.kode_barang);
+    setFormNama(current.nama_barang);
+    setFormUnit(current.satuan || 'PCS');
+    setFormMerk(current.merk);
+    setFormCategory(current.category || 'PRODUCT');
+    setFormStock(String(current.stock_master ?? current.stock_bagus ?? 0));
+    setFormCost(String(current.hpp || 0));
+    setFormPrice(String(current.harga_jual || 0));
+    setIsCrudOpen(true);
   };
 
-  const handleSimpanPreset = async () => {
+  const handleSaveCrud = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError(null);
+    if (!formKode.trim() || !formNama.trim()) {
+      setModalError('Kode Barang dan Nama Barang wajib diisi.');
+      return;
+    }
     try {
+      setIsBusy(true);
+      const payload = {
+        kode: formKode.trim().toUpperCase(),
+        nama_barang: formNama.trim().toUpperCase(),
+        unit: formUnit.trim().toUpperCase() || 'PCS',
+        merk: formMerk.trim().toUpperCase(),
+        category: formCategory.trim().toUpperCase(),
+        stock: parseNum(formStock),
+        cost: parseNum(formCost),
+        price: parseNum(formPrice),
+      };
+      if (editingId) {
+        await erpUpdate('master_barangs', editingId, payload);
+        showFeedback('Item Cost & Stock diperbarui di Supabase');
+      } else {
+        const created = await erpCreate<any>('master_barangs', payload);
+        if (created?.id) setSelectedId(String(created.id));
+        showFeedback('Item Barang baru tersimpan ke Supabase');
+      }
+      setIsCrudOpen(false);
+      setEditingId(null);
+      await loadLiveRows();
+    } catch (err: any) {
+      const msg = err?.message || 'Gagal menyimpan Item Barang';
+      setModalError(msg);
+      showFeedback(`Gagal simpan: ${msg}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRequestHapus = () => {
+    const current =
+      filteredTableRows.find((r) => r.id === selectedId) ||
+      tableRows.find((r) => r.id === selectedId);
+    if (!current) {
+      showFeedback('Pilih baris item barang yang akan dihapus');
+      return;
+    }
+    setConfirmDeleteRow(current);
+  };
+
+  const handleConfirmHapus = async () => {
+    if (!confirmDeleteRow) return;
+    try {
+      setIsBusy(true);
+      await erpDelete('master_barangs', confirmDeleteRow.id);
+      setConfirmDeleteRow(null);
+      await loadLiveRows();
+      showFeedback('Item Barang dihapus dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal hapus: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSimpan = async () => {
+    try {
+      setIsBusy(true);
       localStorage.setItem(
         'withcoder_preset_item_cost_stock',
         JSON.stringify({ tglStart, tglEnd, filterType, merkFilter, lokasiStock, bentukLaporan })
       );
-      showFeedback('Parameter Item Cost & Stock tersimpan');
+      await syncAppSettings({
+        periode_start: toIsoDate(tglStart),
+        periode_end: toIsoDate(tglEnd),
+        lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
+      });
+      await loadLiveRows();
+      showFeedback('Parameter & data Item Cost & Stock tersinkron ke Supabase');
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleFind = async () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+    try {
+      setIsBusy(true);
+      await loadLiveRows();
+      showFeedback('Data Item Cost & Stock dimuat ulang dari Supabase');
+    } catch (err: any) {
+      showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
     }
   };
 
   const fetchReportData = async (): Promise<any[]> => {
-    const [barangs, stockAwals] = await Promise.all([
-      erpList<any>('master_barangs', { orderBy: 'kode', asc: true }),
-      erpList<any>('stock_awal', { orderBy: 'item_code', asc: true }).catch(() => []),
-    ]);
-
-    const awalMap = new Map<string, any>();
-    for (const sa of stockAwals) {
-      if (lokasiStock !== 'ALL' && sa.lokasi && sa.lokasi !== lokasiStock) continue;
-      const key = (sa.item_code || '').toUpperCase();
-      const prev = awalMap.get(key) || { bagus: 0, rusak: 0, hpp: Number(sa.hpp || 0), lokasi: sa.lokasi || '01 - OFFICE' };
-      awalMap.set(key, {
-        bagus: prev.bagus + Number(sa.stock_bagus || 0),
-        rusak: prev.rusak + Number(sa.stock_rusak || 0),
-        hpp: Number(sa.hpp || prev.hpp || 0),
-        lokasi: sa.lokasi || prev.lokasi,
-      });
-    }
-
-    const rows = barangs.map((b) => {
-      const code = (b.kode || '').toUpperCase();
-      const sa = awalMap.get(code);
-      const stockBagus = sa ? sa.bagus : Number(b.stock || 0);
-      const stockRusak = sa ? sa.rusak : 0;
-      const hpp = Number(b.cost || sa?.hpp || 0);
-      const hargaJual = Number(b.price || 0);
-      return {
-        kode_barang: b.kode || '',
-        nama_barang: b.nama_barang || '',
-        category: b.category || '',
-        merk: b.merk || '',
-        satuan: b.unit || 'PCS',
-        lokasi: sa?.lokasi || '01 - OFFICE',
-        hpp,
-        harga_jual: hargaJual,
-        stock_bagus: stockBagus,
-        stock_rusak: stockRusak,
-        total_cost: hpp * stockBagus,
-      };
-    });
-
-    return rows.filter((r) => {
+    const fresh = await loadLiveRows();
+    return fresh.filter((r) => {
       if (filterType === 'merk' && merkFilter.trim()) {
         return r.merk.toLowerCase().includes(merkFilter.trim().toLowerCase());
       }
@@ -235,12 +413,14 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
       <FormHeaderBanner
         title="Item Cost & Stock"
         onClose={onClose}
+        onFind={handleFind}
         onPrint={handlePreview}
+        onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
 
-      <div className="flex-1 overflow-auto p-3">
-        <div className="max-w-[580px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
+      <div className="flex-1 overflow-auto p-3 space-y-2.5">
+        <div className="max-w-[610px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
             <h1 className="font-extrabold text-[13px] tracking-wide text-black font-sans">
               ITEM COST &amp; STOCK
@@ -250,11 +430,12 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
           <div className="border-b border-[#999999] pb-2">
             <FormActionButtons
               compact
-              onSimpan={handleSimpanPreset}
+              onSimpan={handleSimpan}
               onBaru={handleBaru}
-              onKoreksi={() => showFeedback('Silakan ubah filter laporan')}
-              onHapus={handleHapus}
+              onKoreksi={handleKoreksi}
+              onHapus={handleRequestHapus}
               onPrint={handlePreview}
+              onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
             />
@@ -262,9 +443,7 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
 
           {/* Group 1: Periode */}
           <fieldset className="border border-[#999999] p-2 rounded-none relative">
-            <legend className="text-[11px] font-semibold px-1 text-black">
-              Periode
-            </legend>
+            <legend className="text-[11px] font-semibold px-1 text-black">Periode</legend>
             <div className="flex items-center space-x-2 pt-0.5">
               <span className="font-semibold text-black text-[11px]">
                 Tanggal ( dd-mm-yyyy ) :
@@ -453,7 +632,268 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Live Supabase Search & Data Grid Panel */}
+        <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
+          <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5">
+              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value)}
+                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
+              >
+                <option value="Semua">Semua Kolom</option>
+                <option value="Kode">Kode</option>
+                <option value="Nama Barang">Nama Barang</option>
+                <option value="Merk">Merk</option>
+                <option value="Category">Category</option>
+              </select>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') loadLiveRows();
+                }}
+                placeholder="Cari Kode Barang, Nama Barang, Merk, Category..."
+                className="w-[230px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
+              />
+              <button
+                type="button"
+                onClick={() => loadLiveRows()}
+                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
+              >
+                Cari / Refresh
+              </button>
+            </div>
+            <span className="text-[11px] text-black">
+              Data Supabase (<b>master_barangs</b>): <b>{filteredTableRows.length}</b> item
+            </span>
+          </div>
+
+          <div className="max-h-[220px] overflow-auto bg-white">
+            <table className="w-full border-collapse text-[11px]">
+              <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#808080]">
+                <tr>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Kode Brg</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Barang</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Merk</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Satuan</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">HPP (Rp)</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">Harga Jual</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">Bagus</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">Rusak</th>
+                  <th className="px-2 py-1 text-right">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTableRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="text-center py-5 text-gray-500 italic">
+                      Belum ada data Item Barang. Klik "Baru" untuk menambah ke Supabase.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredTableRows.map((r) => {
+                    const isSel = r.id === selectedId;
+                    return (
+                      <tr
+                        key={r.id}
+                        onClick={() => setSelectedId(r.id)}
+                        onDoubleClick={() => {
+                          setSelectedId(r.id);
+                          setEditingId(r.id);
+                          setModalError(null);
+                          setFormKode(r.kode_barang);
+                          setFormNama(r.nama_barang);
+                          setFormUnit(r.satuan || 'PCS');
+                          setFormMerk(r.merk);
+                          setFormCategory(r.category || 'PRODUCT');
+                          setFormStock(String(r.stock_master ?? r.stock_bagus ?? 0));
+                          setFormCost(String(r.hpp || 0));
+                          setFormPrice(String(r.harga_jual || 0));
+                          setIsCrudOpen(true);
+                        }}
+                        className={`cursor-pointer border-b border-[#E0E0E0] ${
+                          isSel ? 'bg-[#316AC5] text-white' : 'hover:bg-[#EAF2FC]'
+                        }`}
+                      >
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono font-bold">{r.kode_barang}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_barang}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.merk || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.satuan}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.hpp)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.harga_jual)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.stock_bagus)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.stock_rusak)}</td>
+                        <td className="px-2 py-1 text-right font-mono font-bold">{formatMoney(r.total_cost)}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
+      {/* Add / Edit Item Barang Modal */}
+      {isCrudOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col overflow-hidden text-xs">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold">
+              <span>{editingId ? 'Koreksi Item Cost & Stock' : 'Tambah Item Cost & Stock Baru'}</span>
+              <button
+                type="button"
+                onClick={() => setIsCrudOpen(false)}
+                className="w-5 h-5 bg-[#C00000] text-white font-bold flex items-center justify-center cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px]">
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Kode Barang *</label>
+                  <input
+                    type="text"
+                    value={formKode}
+                    onChange={(e) => setFormKode(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block font-bold mb-0.5">Nama Barang *</label>
+                  <input
+                    type="text"
+                    value={formNama}
+                    onChange={(e) => setFormNama(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Satuan</label>
+                  <input
+                    type="text"
+                    value={formUnit}
+                    onChange={(e) => setFormUnit(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Merk</label>
+                  <input
+                    type="text"
+                    list="item-cost-merk-list"
+                    value={formMerk}
+                    onChange={(e) => setFormMerk(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Category</label>
+                  <input
+                    type="text"
+                    value={formCategory}
+                    onChange={(e) => setFormCategory(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Stock</label>
+                  <input
+                    type="number"
+                    value={formStock}
+                    onChange={(e) => setFormStock(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">HPP / Cost (Rp)</label>
+                  <input
+                    type="number"
+                    value={formCost}
+                    onChange={(e) => setFormCost(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Harga Jual (Rp)</label>
+                  <input
+                    type="number"
+                    value={formPrice}
+                    onChange={(e) => setFormPrice(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+              </div>
+
+              {modalError && (
+                <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] font-semibold">
+                  {modalError}
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
+                <button
+                  type="button"
+                  onClick={() => setIsCrudOpen(false)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBusy}
+                  className="px-4 py-1 bg-[#0A246A] text-white border border-black font-bold cursor-pointer"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
+              Konfirmasi Hapus Item Barang
+            </div>
+            <div className="p-4 text-xs text-black space-y-3">
+              <p>
+                Yakin ingin menghapus Item [{confirmDeleteRow.kode_barang} - {confirmDeleteRow.nama_barang}]
+                dari database Supabase?
+              </p>
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteRow(null)}
+                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleConfirmHapus}
+                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
