@@ -618,16 +618,23 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
               </fieldset>
             </div>
 
-            <div className="w-[100px] border border-[#999999] p-1.5 flex items-center justify-center bg-[#E6E2D4]">
+            <div className="w-[100px] border border-[#999999] p-1.5 flex flex-col items-center justify-center gap-1.5 bg-[#E6E2D4]">
               <button
                 type="button"
                 disabled={isBusy}
                 onClick={handlePreview}
-                className="w-full h-full py-3 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
+                className="w-full flex-1 py-2 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
               >
-                <span className="border border-dotted border-black/40 px-1 py-1 w-full block">
+                <span className="border border-dotted border-black/40 px-1 py-0.5 w-full block">
                   PREVIEW
                 </span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full h-[24px] bg-[#ECE9D8] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F5F3E8] font-bold text-[11px] text-black cursor-pointer flex items-center justify-center"
+              >
+                Close
               </button>
             </div>
           </div>

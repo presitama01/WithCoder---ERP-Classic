@@ -17,6 +17,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface JurnalDetailLine {
   id?: string;
@@ -90,7 +91,7 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     keterangan: r.keterangan || '',
     saldoDebet: Number(r.saldo_debet || 0),
     stsPost: r.sts_post || 'Not Yet',
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created || r.created_at),
     diUpdateOleh: r.diupdate_oleh || '',
     tglUpdate: toDisplayDMyShort(r.tgl_update),
@@ -195,8 +196,8 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
       saldo_debet: numericSaldo,
       sts_post: formStsPost,
       ...(editingId
-        ? { diupdate_oleh: 'RETNO', tgl_update: todayIso() }
-        : { dibuat_oleh: 'RETNO', tgl_created: tglIso }),
+        ? { diupdate_oleh: (getCurrentUser().username || 'ADMIN'), tgl_update: todayIso() }
+        : { dibuat_oleh: (getCurrentUser().username || 'ADMIN'), tgl_created: tglIso }),
     };
 
     const validDetails = detailLines

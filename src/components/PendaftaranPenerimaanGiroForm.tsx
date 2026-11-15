@@ -17,6 +17,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface PenerimaanGiroItem {
   id: string;
@@ -161,7 +162,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       const headerPayload: Record<string, any> = {
         no_bukti: cleanNoBukti,
         tanggal: toIsoDate(tanggal) || todayIso(),
-        dibuat_oleh: 'RETNO',
+        dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
       };
       if (headerId) headerPayload.id = headerId;
 

@@ -15,6 +15,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface PurchaseRequestItem {
   id: string;
@@ -44,7 +45,7 @@ function mapDbToPr(r: any): PurchaseRequestItem {
     deliveryTo: r.delivery_to || '',
     delivery: r.delivery || '',
     noPo: r.no_po || '-',
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDmy(r.tgl_created),
     diupdateOleh: r.diupdate_oleh || '-',
     tglUpdate: toDisplayDmy(r.tgl_update) || '-',
@@ -153,7 +154,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           delivery_to: newDeliveryTo.trim().toUpperCase(),
           delivery: newDelivery.trim(),
           no_po: newNoPo.trim().toUpperCase(),
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapDbToPr(saved);
@@ -166,7 +167,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           delivery_to: newDeliveryTo.trim().toUpperCase(),
           delivery: newDelivery.trim(),
           no_po: newNoPo.trim().toUpperCase(),
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
           tgl_update: null,

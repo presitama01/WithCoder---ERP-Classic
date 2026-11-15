@@ -18,6 +18,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface SalesOrderItem {
   id: string;
@@ -65,7 +66,7 @@ function mapDbToSo(r: any): SalesOrderItem {
     keterangan: r.keterangan || '',
     ppn: `${Number(r.ppn ?? 11)}%`,
     soClose: r.so_close || 'Not Yet',
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diupdateOleh: r.diupdate_oleh || '-',
     tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
@@ -204,7 +205,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       if (editingId) {
         const saved = await erpUpdate<any>('sales_orders', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapDbToSo(saved);
@@ -214,7 +215,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         const saved = await erpCreate<any>('sales_orders', {
           ...payload,
           so_close: 'Not Yet',
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
         });

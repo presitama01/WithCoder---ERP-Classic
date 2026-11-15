@@ -19,6 +19,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 interface LaporanPenjualanBarangPrintFormProps {
   isOpen: boolean;
@@ -243,7 +244,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
       if (editingId) {
         await erpUpdate('faktur_penjualans', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         showFeedback('Faktur Penjualan diperbarui di Supabase');
@@ -253,7 +254,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
           sts_lunas: 'Not Yet',
           sts_print: 'Not Yet',
           sts_post: 'Not Yet',
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
         if (created?.id) setSelectedId(String(created.id));

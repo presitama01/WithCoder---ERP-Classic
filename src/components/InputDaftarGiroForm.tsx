@@ -17,6 +17,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface GiroDetailRow {
   id: string;
@@ -193,7 +194,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
         no_bukti: cleanNoBukti,
         tanggal: toIsoDate(tanggal) || todayIso(),
         total_amount: computedTotal,
-        dibuat_oleh: 'RETNO',
+        dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
       };
       if (headerId) headerPayload.id = headerId;
 
@@ -402,7 +403,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
             no_bukti: noBukti.trim().toUpperCase(),
             tanggal: toIsoDate(tanggal) || todayIso(),
             total_amount: computedTotal,
-            dibuat_oleh: 'RETNO',
+            dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           },
           nonBlankRemaining.map((r, idx) => ({
             no_urut: idx + 1,

@@ -66,6 +66,9 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
   onClose,
 }) => {
   const [barangList, setBarangList] = useState<BarangItem[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [merkOptions, setMerkOptions] = useState<string[]>([]);
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Description');
@@ -77,7 +80,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
   const [newNama, setNewNama] = useState('');
   const [newUnit, setNewUnit] = useState('PCS');
   const [newMerk, setNewMerk] = useState('');
-  const [newCategory, setNewCategory] = useState('PRODUCT');
+  const [newCategory, setNewCategory] = useState('');
   const [newTipe, setNewTipe] = useState('');
   const [newStock, setNewStock] = useState('0');
   const [newCost, setNewCost] = useState('0');
@@ -94,10 +97,57 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadMasterReferences = async () => {
+    const [catRes, merkRes, typeRes] = await Promise.allSettled([
+      erpList<any>('master_categories', { orderBy: 'kode', asc: true, limit: 1000 }),
+      erpList<any>('master_merks', { orderBy: 'nama_merk', asc: true, limit: 1000 }),
+      erpList<any>('master_types', { orderBy: 'kode', asc: true, limit: 1000 }),
+    ]);
+
+    let loadedCats: string[] = [];
+    if (catRes.status === 'fulfilled') {
+      loadedCats = Array.from(
+        new Set(
+          catRes.value
+            .map((c: any) => String(c.nama_kategori || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setCategoryOptions(loadedCats);
+    }
+
+    if (merkRes.status === 'fulfilled') {
+      const loadedMerks = Array.from(
+        new Set(
+          merkRes.value
+            .map((m: any) => String(m.nama_merk || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setMerkOptions(loadedMerks);
+    }
+
+    if (typeRes.status === 'fulfilled') {
+      const loadedTypes = Array.from(
+        new Set(
+          typeRes.value
+            .map((t: any) => String(t.nama_tipe || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setTypeOptions(loadedTypes);
+    }
+
+    return loadedCats;
+  };
+
   const loadData = async () => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 });
+      const [rows] = await Promise.all([
+        erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
+        loadMasterReferences(),
+      ]);
       const mapped = rows.map(mapDbToItem);
       setBarangList(mapped);
       if (mapped.length > 0 && !mapped.some((b) => b.id === selectedId)) {
@@ -123,7 +173,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddNew = () => {
+  const handleAddNew = async () => {
     setEditingId(null);
     setModalError(null);
     const nextCode = nextUniqueCode(barangList.map((b) => b.kode), '', 8);
@@ -131,12 +181,17 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setNewNama('');
     setNewUnit('PCS');
     setNewMerk('');
-    setNewCategory('PRODUCT');
+    setNewCategory(categoryOptions[0] || '');
     setNewTipe('');
     setNewStock('0');
     setNewCost('0');
     setNewPrice('0');
     setIsAddOpen(true);
+
+    const freshCats = await loadMasterReferences();
+    if (freshCats.length > 0) {
+      setNewCategory((prev) => prev || freshCats[0]);
+    }
   };
 
   const handleEdit = () => {
@@ -151,12 +206,13 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setNewNama(item.namaBarang);
     setNewUnit(item.unit || 'PCS');
     setNewMerk(item.merk);
-    setNewCategory(item.category || 'PRODUCT');
+    setNewCategory(item.category || categoryOptions[0] || '');
     setNewTipe(item.tipe);
     setNewStock(String(item.stock));
     setNewCost(String(item.cost));
     setNewPrice(String(item.price));
     setIsAddOpen(true);
+    loadMasterReferences();
   };
 
   const handleDelete = async () => {
@@ -274,6 +330,34 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     searchInputRef.current?.select();
   };
 
+  const allCategoryChoices = Array.from(
+    new Set([
+      ...categoryOptions,
+      ...barangList.map((b) => b.category.trim().toUpperCase()).filter(Boolean),
+    ])
+  );
+  const modalCategoryChoices = Array.from(
+    new Set([
+      ...categoryOptions,
+      ...(newCategory.trim() ? [newCategory.trim().toUpperCase()] : []),
+    ])
+  );
+  const modalMerkChoices = Array.from(
+    new Set([
+      ...merkOptions,
+      ...(newMerk.trim() ? [newMerk.trim().toUpperCase()] : []),
+    ])
+  );
+  const modalTypeChoices = Array.from(
+    new Set([
+      ...typeOptions,
+      ...(newTipe.trim() ? [newTipe.trim().toUpperCase()] : []),
+    ])
+  );
+  const namaBarangSuggestions = Array.from(
+    new Set(barangList.map((b) => b.namaBarang.trim().toUpperCase()).filter(Boolean))
+  );
+
   return (
     <div
       id="master-barang-form-container"
@@ -342,8 +426,11 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
             className="w-full h-[24px] bg-white border border-[#7F9DB9] text-[11px] px-2 pr-5 appearance-none outline-none font-sans focus:border-[#316AC5] cursor-pointer"
           >
             <option value="SEMUA-nya">SEMUA-nya</option>
-            <option value="PRODUCT">PRODUCT</option>
-            <option value="SERVICES">SERVICES</option>
+            {allCategoryChoices.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
           </select>
           <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
         </div>
@@ -455,7 +542,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/25 flex items-center justify-center z-50 p-4">
-          <div className="w-[460px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans">
+          <div className="w-[460px] max-w-[95vw] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans">
             <div className="flex items-center justify-between h-[24px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold">
               <span>{editingId ? 'Koreksi Data Master Barang' : 'Input Master Barang Baru'}</span>
               <button
@@ -472,7 +559,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
 
             <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-[11px] text-black">
               <div className="flex items-center space-x-3">
-                <label className="w-[100px] font-bold">Kode Barang :</label>
+                <label className="w-[100px] shrink-0 font-bold">Kode Barang :</label>
                 <input
                   type="text"
                   value={newKode}
@@ -483,25 +570,31 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
               </div>
 
               <div className="flex items-center space-x-3">
-                <label className="w-[100px] font-bold">Nama Barang :</label>
+                <label className="w-[100px] shrink-0 font-bold">Nama Barang :</label>
                 <input
                   type="text"
+                  list="master-barang-nama-list"
                   value={newNama}
                   onChange={(e) => setNewNama(e.target.value)}
-                  placeholder="Contoh: MITUTOYO, VERNIER CALIPER"
-                  className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase outline-none focus:border-[#316AC5]"
+                  placeholder="Pilih / ketik Nama Barang"
+                  className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase outline-none focus:border-[#316AC5]"
                   required
                   autoFocus
                 />
+                <datalist id="master-barang-nama-list">
+                  {namaBarangSuggestions.map((nama) => (
+                    <option key={nama} value={nama} />
+                  ))}
+                </datalist>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div className="flex items-center space-x-2">
-                  <label className="w-[65px] font-bold">Unit :</label>
+                <div className="flex items-center space-x-2 min-w-0">
+                  <label className="w-[65px] shrink-0 font-bold">Unit :</label>
                   <select
                     value={newUnit}
                     onChange={(e) => setNewUnit(e.target.value)}
-                    className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none cursor-pointer"
+                    className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none cursor-pointer"
                   >
                     <option value="PCS">PCS</option>
                     <option value="SET">SET</option>
@@ -509,37 +602,53 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                     <option value="BOX">BOX</option>
                   </select>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <label className="w-[65px] font-bold">Category :</label>
+                <div className="flex items-center space-x-2 min-w-0">
+                  <label className="w-[65px] shrink-0 font-bold">Category :</label>
                   <select
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value)}
-                    className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none cursor-pointer"
+                    className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none uppercase cursor-pointer"
                   >
-                    <option value="PRODUCT">PRODUCT</option>
-                    <option value="SERVICES">SERVICES</option>
+                    <option value="">-- Pilih Category --</option>
+                    {modalCategoryChoices.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div className="flex items-center space-x-2">
-                  <label className="w-[65px] font-bold">Merk :</label>
-                  <input
-                    type="text"
+                <div className="flex items-center space-x-2 min-w-0">
+                  <label className="w-[65px] shrink-0 font-bold">Merk :</label>
+                  <select
                     value={newMerk}
                     onChange={(e) => setNewMerk(e.target.value)}
-                    className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase outline-none"
-                  />
+                    className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Merk --</option>
+                    {modalMerkChoices.map((merk) => (
+                      <option key={merk} value={merk}>
+                        {merk}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <label className="w-[65px] font-bold">Tipe :</label>
-                  <input
-                    type="text"
+                <div className="flex items-center space-x-2 min-w-0">
+                  <label className="w-[65px] shrink-0 font-bold">Tipe :</label>
+                  <select
                     value={newTipe}
                     onChange={(e) => setNewTipe(e.target.value)}
-                    className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase outline-none"
-                  />
+                    className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Tipe --</option>
+                    {modalTypeChoices.map((tipe) => (
+                      <option key={tipe} value={tipe}>
+                        {tipe}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

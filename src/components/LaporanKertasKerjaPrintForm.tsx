@@ -18,6 +18,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 interface LaporanKertasKerjaPrintFormProps {
   isOpen: boolean;
@@ -83,7 +84,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
       keterangan: r.keterangan || '',
       saldo_debet: Number(r.saldo_debet || 0),
       sts_post: r.sts_post || 'Not Yet',
-      dibuat_oleh: r.dibuat_oleh || 'RETNO',
+      dibuat_oleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     }));
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
@@ -224,8 +225,8 @@ export const LaporanKertasKerjaPrintForm: React.FC<
       saldo_debet: numericSaldo,
       sts_post: formStsPost,
       ...(editingId
-        ? { diupdate_oleh: 'RETNO', tgl_update: todayIso() }
-        : { dibuat_oleh: 'RETNO', tgl_created: tglIso }),
+        ? { diupdate_oleh: (getCurrentUser().username || 'ADMIN'), tgl_update: todayIso() }
+        : { dibuat_oleh: (getCurrentUser().username || 'ADMIN'), tgl_created: tglIso }),
     };
 
     const validDetails = detailLines

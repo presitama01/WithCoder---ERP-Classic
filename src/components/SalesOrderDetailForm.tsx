@@ -20,6 +20,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 interface SalesOrderDetailFormProps {
   isOpen: boolean;
@@ -291,7 +292,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           nama_customer: formCustomer.trim().toUpperCase(),
           po_no: formNoPo.trim().toUpperCase(),
           so_close: sisaNum === 0 ? 'Closed' : 'Not Yet',
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: tglIso,
         },
         'no_bukti'

@@ -19,6 +19,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface HppPembelianItem {
   id: string;
@@ -99,7 +100,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
     tglLunas: toDisplayDMyShort(r.tgl_lunas),
     stsPost: r.sts_post || 'Not Yet',
     tglPost: toDisplayDMyShort(r.tgl_post),
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created || r.created_at),
     diUpdateOleh: r.diupdate_oleh || '',
     tglUpdate: toDisplayDMyShort(r.tgl_update),
@@ -201,7 +202,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       if (editingId) {
         const updated = await erpUpdate<any>('hpp_pembelians', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapRow(updated);
@@ -211,7 +212,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       } else {
         const created = await erpCreate<any>('hpp_pembelians', {
           ...payload,
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: tglIso,
         });
         const mapped = mapRow(created);

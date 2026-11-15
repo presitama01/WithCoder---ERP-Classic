@@ -18,6 +18,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface FakturDpItem {
   id: string;
@@ -76,7 +77,7 @@ function mapDbToFakturDp(r: any): FakturDpItem {
     tglPrint: toDisplayDMyShort(r.tgl_print) || '',
     stsPost: r.sts_post || 'Not Yet',
     tglPost: toDisplayDMyShort(r.tgl_post) || '',
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diUpdateOleh: r.diupdate_oleh || '',
     tglUpdate: toDisplayDMyShort(r.tgl_update) || '',
@@ -223,7 +224,7 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
       if (editingId) {
         const saved = await erpUpdate<any>('faktur_penjualans', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapDbToFakturDp(saved);
@@ -235,7 +236,7 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
           sts_lunas: 'Not Yet',
           sts_print: 'Not Yet',
           sts_post: 'Not Yet',
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
         const mapped = mapDbToFakturDp(saved);

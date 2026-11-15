@@ -4,6 +4,7 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import { exportToExcel } from '../lib/exportExcel';
 import { fetchActiveCompanyProfile } from '../lib/erpApi';
+import { getCurrentUser } from '../lib/authService';
 
 interface FormModalProps {
   isOpen: boolean;
@@ -62,13 +63,14 @@ const getColumnsAndRows = (formTitle: string) => {
     };
   }
 
+  const activeUser = getCurrentUser().username || 'ADMIN';
   return {
     columns: ['No.', 'Kode / ID', 'Deskripsi / Keterangan', 'Tanggal Entry', 'Nilai / Qty', 'Petugas', 'Status'],
     rows: [
-      ['1', 'TRX-101', `${formTitle} - Data Rekord 01`, '01-08-2026', 'Rp 4.500.000', 'RETNO', 'Normal'],
-      ['2', 'TRX-102', `${formTitle} - Data Rekord 02`, '05-08-2026', 'Rp 12.350.000', 'RETNO', 'Normal'],
-      ['3', 'TRX-103', `${formTitle} - Data Rekord 03`, '12-08-2026', 'Rp 8.900.000', 'RETNO', 'Verified'],
-      ['4', 'TRX-104', `${formTitle} - Data Rekord 04`, '18-08-2026', 'Rp 2.100.000', 'RETNO', 'Approved'],
+      ['1', 'TRX-101', `${formTitle} - Data Rekord 01`, '01-08-2026', 'Rp 4.500.000', activeUser, 'Normal'],
+      ['2', 'TRX-102', `${formTitle} - Data Rekord 02`, '05-08-2026', 'Rp 12.350.000', activeUser, 'Normal'],
+      ['3', 'TRX-103', `${formTitle} - Data Rekord 03`, '12-08-2026', 'Rp 8.900.000', activeUser, 'Verified'],
+      ['4', 'TRX-104', `${formTitle} - Data Rekord 04`, '18-08-2026', 'Rp 2.100.000', activeUser, 'Approved'],
     ],
   };
 };
@@ -259,7 +261,7 @@ export const FormModal: React.FC<FormModalProps> = ({
 
         {/* Bottom Form Status */}
         <div className="flex items-center justify-between px-3 py-1 bg-[#ECE9D8] border-t border-[#ACA899] text-[10px] text-gray-600">
-          <span>Petugas: RETNO | Cabang: 01 - OFFICE</span>
+          <span>Petugas: {getCurrentUser().username || 'ADMIN'} | Cabang: 01 - OFFICE</span>
           <span>Status: Siap (F2: Cari, F5: Refresh, Esc: Tutup)</span>
         </div>
 

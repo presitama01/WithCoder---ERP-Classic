@@ -16,6 +16,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface MutasiSoItem {
   id: string;
@@ -229,7 +230,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
           nama_customer: formCustomer.trim().toUpperCase(),
           po_no: formNoPo.trim().toUpperCase(),
           so_close: sisaNum === 0 ? 'Closed' : 'Not Yet',
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         },
         'no_bukti'

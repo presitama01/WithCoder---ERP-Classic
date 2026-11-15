@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCurrentUser } from '../lib/authService';
 
 interface StatusBarProps {
   userName?: string;
@@ -8,12 +9,13 @@ interface StatusBarProps {
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
-  userName = 'RETNO',
+  userName,
   statusMessage = '',
   isInsertMode = true,
   onToggleInsert,
 }) => {
   const [timeStr, setTimeStr] = useState<string>('');
+  const activeUserLabel = userName || getCurrentUser().username || 'ADMIN';
 
   useEffect(() => {
     const updateTime = () => {
@@ -37,7 +39,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       id="main-statusbar"
       className="fixed bottom-0 left-0 right-0 h-[24px] bg-[#ECE9D8] border-t border-[#808080] flex items-center px-1 space-x-1 select-none text-[11px] font-sans z-50"
     >
-      {/* Panel 1: Operator / Presenter Icon + Username (e.g. RETNO) */}
+      {/* Panel 1: Operator / Presenter Icon + Active Logged-in Username */}
       <div
         id="status-panel-operator"
         title="Current Operator / User"
@@ -57,7 +59,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           <line x1="11" y1="13" x2="14" y2="13" stroke="#000000" strokeWidth="1.2" />
         </svg>
         <span className="text-[11px] font-sans font-bold text-black uppercase tracking-tight">
-          {userName || 'RETNO'}
+          {activeUserLabel}
         </span>
       </div>
 

@@ -15,6 +15,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface SuratJalanItem {
   id: string;
@@ -59,7 +60,7 @@ function mapDbToSj(r: any): SuratJalanItem {
     tglPrint: toDisplayDMyShort(r.tgl_print) || '',
     stsPost: r.sts_post || 'Posting',
     tglPost: toDisplayDMyShort(r.tgl_post) || '',
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diupdateOleh: r.diupdate_oleh || '',
     tglUpdate: toDisplayDMyShort(r.tgl_update) || '',
@@ -186,7 +187,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
       if (editingId) {
         const saved = await erpUpdate<any>('surat_jalans', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapDbToSj(saved);
@@ -198,7 +199,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
           sts_print: 'Not Yet',
           sts_post: 'Posting',
           tgl_post: todayIso(),
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
         const mapped = mapDbToSj(saved);

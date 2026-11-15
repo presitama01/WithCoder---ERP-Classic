@@ -18,6 +18,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface SalesQuotationItem {
   id: string;
@@ -54,7 +55,7 @@ function mapDbToQuotation(r: any): SalesQuotationItem {
     keterangan: r.keterangan || '',
     amount: formatMoney(amtNum, true),
     amountNum: amtNum,
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diUpdateOleh: r.diupdate_oleh || '',
     tglUpdate: toDisplayDMyShort(r.tgl_update),
@@ -176,7 +177,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       if (editingId) {
         const saved = await erpUpdate<any>('sales_quotations', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapDbToQuotation(saved);
@@ -185,7 +186,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       } else {
         const saved = await erpCreate<any>('sales_quotations', {
           ...payload,
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
         const mapped = mapDbToQuotation(saved);

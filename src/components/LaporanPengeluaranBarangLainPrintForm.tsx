@@ -19,6 +19,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 interface LaporanPengeluaranBarangLainPrintFormProps {
   isOpen: boolean;
@@ -387,7 +388,7 @@ export const LaporanPengeluaranBarangLainPrintForm: React.FC<
         nama_barang: formNamaBarang.trim().toUpperCase(),
         qty: parseNum(formQty),
         keterangan: formKeterangan.trim(),
-        dibuat_oleh: 'RETNO',
+        dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
       };
       if (editingId) {
         await erpUpdate<any>('pengeluaran_barang_lains', editingId, payload);

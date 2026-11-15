@@ -15,6 +15,7 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { getCurrentUser } from '../lib/authService';
 
 export interface SalesInquiryItem {
   id: string;
@@ -52,7 +53,7 @@ function mapDbToInquiry(r: any): SalesInquiryItem {
     tglFollow: toDisplayDMyShort(r.tgl_follow) || '-',
     noSq: r.no_sq || '-',
     tglSq: toDisplayDMyShort(r.tgl_sq) || '-',
-    dibuatOleh: r.dibuat_oleh || 'RETNO',
+    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diupdateOleh: r.diupdate_oleh || '-',
     tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
@@ -178,7 +179,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       if (editingId) {
         const saved = await erpUpdate<any>('sales_inquiries', editingId, {
           ...payload,
-          diupdate_oleh: 'RETNO',
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_update: todayIso(),
         });
         const mapped = mapDbToInquiry(saved);
@@ -187,7 +188,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       } else {
         const saved = await erpCreate<any>('sales_inquiries', {
           ...payload,
-          dibuat_oleh: 'RETNO',
+          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
         });
