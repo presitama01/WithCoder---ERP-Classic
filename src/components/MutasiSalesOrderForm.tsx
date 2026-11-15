@@ -525,8 +525,8 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
 
       {isAddOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[460px] flex flex-col overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[460px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Mutasi Sales Order' : 'Tambah Mutasi Sales Order Baru'}</span>
               <button
                 type="button"
@@ -539,7 +539,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveForm} className="p-4 space-y-2.5 text-xs">
+            <form noValidate onSubmit={handleSaveForm} className="p-4 space-y-2.5 text-xs overflow-y-auto">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. SO:</label>
                 <input
@@ -597,21 +597,28 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Pesan / Kirim:</label>
+                <label className="font-semibold">Pesan / Kirim / Sisa:</label>
                 <div className="col-span-2 flex gap-2">
                   <input
                     type="number"
                     value={formPesan}
                     onChange={(e) => setFormPesan(e.target.value)}
-                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
                     placeholder="Pesan"
                   />
                   <input
                     type="number"
                     value={formKirim}
                     onChange={(e) => setFormKirim(e.target.value)}
-                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
                     placeholder="Kirim"
+                  />
+                  <input
+                    type="number"
+                    readOnly
+                    value={Math.max(0, (parseInt(formPesan || '0', 10) || 0) - (parseInt(formKirim || '0', 10) || 0))}
+                    title="Sisa otomatis (Pesan - Kirim)"
+                    className="w-1/3 px-2 py-1 bg-[#EAE6D9] border border-[#7A7A7A] text-right font-mono font-bold"
                   />
                 </div>
               </div>

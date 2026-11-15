@@ -91,6 +91,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   const [newMataUang, setNewMataUang] = useState<string>('IDR');
   const [newDisc, setNewDisc] = useState<string>('0');
   const [newPpn, setNewPpn] = useState<string>('11');
+  const [newStsPrint, setNewStsPrint] = useState<string>('Not Yet');
+  const [newTglPrint, setNewTglPrint] = useState<string>('');
+  const [newStsPost, setNewStsPost] = useState<string>('Posted');
+  const [newTglPost, setNewTglPost] = useState<string>('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -144,6 +148,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setNewMataUang('IDR');
     setNewDisc('0');
     setNewPpn('11');
+    setNewStsPrint('Not Yet');
+    setNewTglPrint('');
+    setNewStsPost('Posted');
+    setNewTglPost(toDisplayDMyShort(todayIso()));
     setIsAddOpen(true);
   };
 
@@ -163,6 +171,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setNewMataUang(item.mataUang);
     setNewDisc(String(parseNum(item.disc)));
     setNewPpn(String(parseNum(item.ppn)));
+    setNewStsPrint(item.stsPrint || 'Not Yet');
+    setNewTglPrint(item.tglPrint === '-' ? '' : item.tglPrint);
+    setNewStsPost(item.stsPost || 'Posted');
+    setNewTglPost(item.tglPost === '-' ? '' : item.tglPost);
     setIsAddOpen(true);
   };
 
@@ -186,6 +198,10 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
         mata_uang: newMataUang.trim().toUpperCase(),
         disc: parseNum(newDisc),
         ppn: parseNum(newPpn),
+        sts_print: newStsPrint,
+        tgl_print: toIsoDate(newTglPrint) || (newStsPrint === 'Printed' ? todayIso() : null),
+        sts_post: newStsPost,
+        tgl_post: toIsoDate(newTglPost) || (newStsPost === 'Posted' ? tglIso : null),
       };
 
       if (editingId) {
@@ -200,9 +216,6 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       } else {
         const saved = await erpCreate<any>('retur_pembelians', {
           ...payload,
-          sts_print: 'Not Yet',
-          sts_post: 'Posted',
-          tgl_post: tglIso,
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
@@ -459,9 +472,9 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       </div>
 
       {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-[480px] bg-[#ECE9D8] border-2 border-[#0055EA] rounded-[3px] shadow-[4px_4px_12px_rgba(0,0,0,0.4)] flex flex-col font-sans text-xs">
-            <div className="flex items-center justify-between h-[28px] bg-gradient-to-r from-[#0055EA] to-[#1E90FF] text-white px-2 font-bold">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-[500px] max-w-[95vw] max-h-[90vh] bg-[#ECE9D8] border-2 border-[#0055EA] rounded-[3px] shadow-[4px_4px_12px_rgba(0,0,0,0.4)] flex flex-col overflow-hidden font-sans text-xs">
+            <div className="flex items-center justify-between h-[28px] bg-gradient-to-r from-[#0055EA] to-[#1E90FF] text-white px-2 font-bold shrink-0">
               <span>{editingId ? 'Koreksi Retur Pembelian Barang' : 'Form Input Retur Pembelian Barang'}</span>
               <button
                 type="button"
@@ -475,7 +488,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
               </button>
             </div>
 
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 bg-[#ECE9D8]">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 bg-[#ECE9D8] overflow-y-auto">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-medium text-gray-800 mb-1">No. Bukti Retur:</label>
@@ -546,6 +559,49 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                       onChange={(e) => setNewPpn(e.target.value)}
                       className="w-1/2 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
                     />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-gray-800 mb-1">Sts.Print / Tgl.Print:</label>
+                  <div className="flex gap-1.5 items-center">
+                    <select
+                      value={newStsPrint}
+                      onChange={(e) => setNewStsPrint(e.target.value)}
+                      className="w-24 px-1.5 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Printed">Printed</option>
+                    </select>
+                    <div className="flex-1">
+                      <DatePickerInput
+                        value={newTglPrint}
+                        onChange={(formatted) => setNewTglPrint(formatted)}
+                        format="dMyShort"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block font-medium text-gray-800 mb-1">Sts.Post / Tgl.Post:</label>
+                  <div className="flex gap-1.5 items-center">
+                    <select
+                      value={newStsPost}
+                      onChange={(e) => setNewStsPost(e.target.value)}
+                      className="w-24 px-1.5 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Posted">Posted</option>
+                    </select>
+                    <div className="flex-1">
+                      <DatePickerInput
+                        value={newTglPost}
+                        onChange={(formatted) => setNewTglPost(formatted)}
+                        format="dMyShort"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

@@ -36,6 +36,7 @@ export interface FakturDpItem {
   ppn: string;
   nilaiPenjualan: string;
   nilaiPenjualanNum: number;
+  lokasiStock: string;
   stsLunas: string;
   tglLunas: string;
   stsPrint: string;
@@ -71,6 +72,7 @@ function mapDbToFakturDp(r: any): FakturDpItem {
     ppn: `${Number(r.ppn ?? 10)}.`,
     nilaiPenjualan: formatMoney(nilaiNum, true),
     nilaiPenjualanNum: nilaiNum,
+    lokasiStock: r.lokasi_stock || '01 - OFFICE',
     stsLunas: r.sts_lunas || 'Not Yet',
     tglLunas: toDisplayDMyShort(r.tgl_lunas) || '',
     stsPrint: r.sts_print || 'Not Yet',
@@ -114,6 +116,14 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newPpn, setNewPpn] = useState<string>('11');
   const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('0');
+  const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
+  const [newStsLunas, setNewStsLunas] = useState<string>('Not Yet');
+  const [newTglLunas, setNewTglLunas] = useState<string>('');
+  const [newStsPrint, setNewStsPrint] = useState<string>('Not Yet');
+  const [newTglPrint, setNewTglPrint] = useState<string>('');
+  const [newStsPost, setNewStsPost] = useState<string>('Not Yet');
+  const [newTglPost, setNewTglPost] = useState<string>('');
+  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -148,7 +158,13 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) loadData();
+    if (!isOpen) return;
+    loadData();
+    erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true })
+      .then((lokasis) =>
+        setLokasiOptions(lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()))
+      )
+      .catch(() => {});
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -169,6 +185,13 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
     setNewKeterangan('');
     setNewPpn('11');
     setNewNilaiPenjualan('0');
+    setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
+    setNewStsLunas('Not Yet');
+    setNewTglLunas('');
+    setNewStsPrint('Not Yet');
+    setNewTglPrint('');
+    setNewStsPost('Not Yet');
+    setNewTglPost('');
     setIsAddOpen(true);
   };
 
@@ -192,6 +215,13 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
     setNewKeterangan(item.keterangan);
     setNewPpn(String(parseNum(item.ppn)));
     setNewNilaiPenjualan(String(item.nilaiPenjualanNum));
+    setNewLokasiStock(item.lokasiStock || '01 - OFFICE');
+    setNewStsLunas(item.stsLunas || 'Not Yet');
+    setNewTglLunas(item.tglLunas || '');
+    setNewStsPrint(item.stsPrint || 'Not Yet');
+    setNewTglPrint(item.tglPrint || '');
+    setNewStsPost(item.stsPost || 'Not Yet');
+    setNewTglPost(item.tglPost || '');
     setIsAddOpen(true);
   };
 
@@ -219,6 +249,13 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
         keterangan: newKeterangan.trim(),
         ppn: parseNum(newPpn),
         nilai_penjualan: parseNum(newNilaiPenjualan),
+        lokasi_stock: newLokasiStock.trim() || '01 - OFFICE',
+        sts_lunas: newStsLunas || 'Not Yet',
+        tgl_lunas: toIsoDate(newTglLunas) || null,
+        sts_print: newStsPrint || 'Not Yet',
+        tgl_print: toIsoDate(newTglPrint) || null,
+        sts_post: newStsPost || 'Not Yet',
+        tgl_post: toIsoDate(newTglPost) || null,
       };
 
       if (editingId) {
@@ -233,9 +270,6 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
       } else {
         const saved = await erpCreate<any>('faktur_penjualans', {
           ...payload,
-          sts_lunas: 'Not Yet',
-          sts_print: 'Not Yet',
-          sts_post: 'Not Yet',
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
@@ -510,8 +544,8 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
 
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[480px] overflow-hidden">
-              <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
+            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[520px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Faktur DP' : 'Tambah Faktur DP Baru'}</span>
                 <button
                   type="button"
@@ -524,7 +558,7 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2 text-xs">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2 text-xs overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <label className="font-semibold text-black">No.Bukti:</label>
                   <input
@@ -570,6 +604,15 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
                     type="text"
                     value={newPoNo}
                     onChange={(e) => setNewPoNo(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">No.SJ:</label>
+                  <input
+                    type="text"
+                    value={newNoSj}
+                    onChange={(e) => setNewNoSj(e.target.value)}
                     className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                   />
                 </div>
@@ -626,6 +669,80 @@ export const ListFakturDpForm: React.FC<ListFakturDpFormProps> = ({
                     onChange={(e) => setNewNilaiPenjualan(e.target.value)}
                     className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Lokasi Stock:</label>
+                  <div className="w-72">
+                    <input
+                      type="text"
+                      list="faktur-dp-lokasi-list"
+                      value={newLokasiStock}
+                      onChange={(e) => setNewLokasiStock(e.target.value)}
+                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A]"
+                    />
+                    <datalist id="faktur-dp-lokasi-list">
+                      {lokasiOptions.map((loc) => (
+                        <option key={loc} value={loc} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Sts / Tgl Lunas:</label>
+                  <div className="w-72 grid grid-cols-2 gap-2">
+                    <select
+                      value={newStsLunas}
+                      onChange={(e) => setNewStsLunas(e.target.value)}
+                      className="px-2 py-1 bg-white border border-[#7A7A7A]"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Lunas">Lunas</option>
+                    </select>
+                    <DatePickerInput
+                      value={newTglLunas}
+                      onChange={(formatted) => setNewTglLunas(formatted)}
+                      format="dMyShort"
+                      placeholder="Tgl Lunas"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Sts / Tgl Print:</label>
+                  <div className="w-72 grid grid-cols-2 gap-2">
+                    <select
+                      value={newStsPrint}
+                      onChange={(e) => setNewStsPrint(e.target.value)}
+                      className="px-2 py-1 bg-white border border-[#7A7A7A]"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Printed">Printed</option>
+                    </select>
+                    <DatePickerInput
+                      value={newTglPrint}
+                      onChange={(formatted) => setNewTglPrint(formatted)}
+                      format="dMyShort"
+                      placeholder="Tgl Print"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-black">Sts / Tgl Post:</label>
+                  <div className="w-72 grid grid-cols-2 gap-2">
+                    <select
+                      value={newStsPost}
+                      onChange={(e) => setNewStsPost(e.target.value)}
+                      className="px-2 py-1 bg-white border border-[#7A7A7A]"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Posting">Posting</option>
+                    </select>
+                    <DatePickerInput
+                      value={newTglPost}
+                      onChange={(formatted) => setNewTglPost(formatted)}
+                      format="dMyShort"
+                      placeholder="Tgl Post"
+                    />
+                  </div>
                 </div>
                 {modalError && (
                   <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">

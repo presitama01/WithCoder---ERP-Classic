@@ -87,6 +87,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const [formUnit, setFormUnit] = useState<string>('PCS');
   const [formPesan, setFormPesan] = useState<string>('10');
   const [formKirim, setFormKirim] = useState<string>('0');
+  const [formLokasiStock, setFormLokasiStock] = useState<string>('01 - OFFICE');
+  const [formSoClose, setFormSoClose] = useState<string>('Not Yet');
   const [modalError, setModalError] = useState<string | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<SoDetailGridRow | null>(null);
 
@@ -243,6 +245,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     setFormUnit('PCS');
     setFormPesan('10');
     setFormKirim('0');
+    setFormLokasiStock(lokasiStock !== 'ALL' ? lokasiStock : lokasiOptions[0] || '01 - OFFICE');
+    setFormSoClose('Not Yet');
     setIsCrudOpen(true);
   };
 
@@ -267,6 +271,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     setFormUnit(current.unit || 'PCS');
     setFormPesan(String(current.pesan));
     setFormKirim(String(current.kirim));
+    setFormLokasiStock(current.lokasi_stock || '01 - OFFICE');
+    setFormSoClose(current.so_close || (current.sisa === 0 ? 'Closed' : 'Not Yet'));
     setIsCrudOpen(true);
   };
 
@@ -291,7 +297,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           tanggal: tglIso,
           nama_customer: formCustomer.trim().toUpperCase(),
           po_no: formNoPo.trim().toUpperCase(),
-          so_close: sisaNum === 0 ? 'Closed' : 'Not Yet',
+          lokasi_stock: formLokasiStock.trim() || '01 - OFFICE',
+          so_close: formSoClose || (sisaNum === 0 ? 'Closed' : 'Not Yet'),
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: tglIso,
         },
@@ -840,6 +847,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                           setFormUnit(r.unit || 'PCS');
                           setFormPesan(String(r.pesan));
                           setFormKirim(String(r.kirim));
+                          setFormLokasiStock(r.lokasi_stock || '01 - OFFICE');
+                          setFormSoClose(r.so_close || (r.sisa === 0 ? 'Closed' : 'Not Yet'));
                           setIsCrudOpen(true);
                         }}
                         className={`cursor-pointer border-b border-[#E0E0E0] ${
@@ -869,8 +878,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
       {/* Add / Edit Item Sales Order Modal */}
       {isCrudOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col overflow-hidden text-xs">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[480px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold shrink-0">
               <span>{editingId ? 'Koreksi Item Sales Order' : 'Tambah Sales Order Detail Baru'}</span>
               <button
                 type="button"
@@ -880,7 +889,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px]">
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px] overflow-y-auto">
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">No. SO *</label>
@@ -963,7 +972,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">Unit</label>
                   <input
@@ -990,6 +999,43 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                     onChange={(e) => setFormKirim(e.target.value)}
                     className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Sisa (Auto)</label>
+                  <input
+                    type="number"
+                    readOnly
+                    value={Math.max(0, parseNum(formPesan) - parseNum(formKirim))}
+                    className="w-full h-[24px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] text-right font-mono font-bold text-[#0A246A]"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Lokasi Stock</label>
+                  <input
+                    type="text"
+                    list="so-detail-lokasi-list"
+                    value={formLokasiStock}
+                    onChange={(e) => setFormLokasiStock(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                  <datalist id="so-detail-lokasi-list">
+                    {lokasiOptions.map((loc) => (
+                      <option key={loc} value={loc} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Status SO (so_close)</label>
+                  <select
+                    value={formSoClose}
+                    onChange={(e) => setFormSoClose(e.target.value)}
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Closed">Closed</option>
+                  </select>
                 </div>
               </div>
 

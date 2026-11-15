@@ -39,6 +39,8 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
   const [isBusy, setIsBusy] = useState<boolean>(false);
 
   const [merkOptions, setMerkOptions] = useState<string[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangCodes, setBarangCodes] = useState<string[]>([]);
 
@@ -57,9 +59,15 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
   const [formUnit, setFormUnit] = useState<string>('PCS');
   const [formMerk, setFormMerk] = useState<string>('');
   const [formCategory, setFormCategory] = useState<string>('PRODUCT');
+  const [formTipe, setFormTipe] = useState<string>('');
   const [formStock, setFormStock] = useState<string>('0');
   const [formCost, setFormCost] = useState<string>('0');
   const [formPrice, setFormPrice] = useState<string>('0');
+  const [formDisc, setFormDisc] = useState<string>('0');
+  const [formQMin, setFormQMin] = useState<string>('0');
+  const [formQtyPo, setFormQtyPo] = useState<string>('0');
+  const [formQtySo, setFormQtySo] = useState<string>('0');
+  const [formNotPrint, setFormNotPrint] = useState<boolean>(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
@@ -108,10 +116,16 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
         nama_barang: b.nama_barang || '',
         category: b.category || '',
         merk: b.merk || '',
+        tipe: b.tipe || '',
         satuan: b.unit || 'PCS',
         lokasi: sa?.lokasi || '01 - OFFICE',
         hpp,
         harga_jual: hargaJual,
+        disc: Number(b.disc || 0),
+        q_min: Number(b.q_min || 0),
+        qty_po: Number(b.qty_po || 0),
+        qty_so: Number(b.qty_so || 0),
+        not_print: Boolean(b.not_print),
         stock_master: Number(b.stock || 0),
         stock_bagus: stockBagus,
         stock_rusak: stockRusak,
@@ -133,12 +147,16 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
     (async () => {
       try {
         setIsBusy(true);
-        const [merks, lokasis] = await Promise.all([
+        const [merks, cats, types, lokasis] = await Promise.all([
           erpList<any>('master_merks', { orderBy: 'nama_merk', asc: true }).catch(() => []),
+          erpList<any>('master_categories', { orderBy: 'nama_kategori', asc: true }).catch(() => []),
+          erpList<any>('master_types', { orderBy: 'nama_tipe', asc: true }).catch(() => []),
           erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
         ]);
         if (!active) return;
         setMerkOptions(merks.map((m) => m.nama_merk || '').filter(Boolean));
+        setCategoryOptions(cats.map((c) => c.nama_kategori || '').filter(Boolean));
+        setTypeOptions(types.map((t) => t.nama_tipe || '').filter(Boolean));
         setLokasiOptions(
           lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()).filter(Boolean)
         );
@@ -200,10 +218,16 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
     setFormNama('');
     setFormUnit('PCS');
     setFormMerk(merkFilter || '');
-    setFormCategory('PRODUCT');
+    setFormCategory(categoryOptions[0] || 'PRODUCT');
+    setFormTipe('');
     setFormStock('0');
     setFormCost('0');
     setFormPrice('0');
+    setFormDisc('0');
+    setFormQMin('0');
+    setFormQtyPo('0');
+    setFormQtySo('0');
+    setFormNotPrint(false);
     setIsCrudOpen(true);
   };
 
@@ -224,9 +248,15 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
     setFormUnit(current.satuan || 'PCS');
     setFormMerk(current.merk);
     setFormCategory(current.category || 'PRODUCT');
+    setFormTipe(current.tipe || '');
     setFormStock(String(current.stock_master ?? current.stock_bagus ?? 0));
     setFormCost(String(current.hpp || 0));
     setFormPrice(String(current.harga_jual || 0));
+    setFormDisc(String(current.disc ?? 0));
+    setFormQMin(String(current.q_min ?? 0));
+    setFormQtyPo(String(current.qty_po ?? 0));
+    setFormQtySo(String(current.qty_so ?? 0));
+    setFormNotPrint(Boolean(current.not_print));
     setIsCrudOpen(true);
   };
 
@@ -245,9 +275,15 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
         unit: formUnit.trim().toUpperCase() || 'PCS',
         merk: formMerk.trim().toUpperCase(),
         category: formCategory.trim().toUpperCase(),
+        tipe: formTipe.trim().toUpperCase(),
         stock: parseNum(formStock),
         cost: parseNum(formCost),
         price: parseNum(formPrice),
+        disc: parseNum(formDisc),
+        q_min: parseNum(formQMin),
+        qty_po: parseNum(formQtyPo),
+        qty_so: parseNum(formQtySo),
+        not_print: formNotPrint,
       };
       if (editingId) {
         await erpUpdate('master_barangs', editingId, payload);
@@ -718,9 +754,15 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
                           setFormUnit(r.satuan || 'PCS');
                           setFormMerk(r.merk);
                           setFormCategory(r.category || 'PRODUCT');
+                          setFormTipe(r.tipe || '');
                           setFormStock(String(r.stock_master ?? r.stock_bagus ?? 0));
                           setFormCost(String(r.hpp || 0));
                           setFormPrice(String(r.harga_jual || 0));
+                          setFormDisc(String(r.disc ?? 0));
+                          setFormQMin(String(r.q_min ?? 0));
+                          setFormQtyPo(String(r.qty_po ?? 0));
+                          setFormQtySo(String(r.qty_so ?? 0));
+                          setFormNotPrint(Boolean(r.not_print));
                           setIsCrudOpen(true);
                         }}
                         className={`cursor-pointer border-b border-[#E0E0E0] ${
@@ -749,8 +791,8 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
       {/* Add / Edit Item Barang Modal */}
       {isCrudOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col overflow-hidden text-xs">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[500px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold shrink-0">
               <span>{editingId ? 'Koreksi Item Cost & Stock' : 'Tambah Item Cost & Stock Baru'}</span>
               <button
                 type="button"
@@ -760,7 +802,7 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px]">
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px] overflow-y-auto">
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">Kode Barang *</label>
@@ -781,9 +823,9 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block font-bold mb-0.5">Satuan</label>
+                  <label className="block font-bold mb-0.5">Satuan (Unit)</label>
                   <input
                     type="text"
                     value={formUnit}
@@ -791,6 +833,23 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
                     className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
                   />
                 </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Category</label>
+                  <input
+                    type="text"
+                    list="item-cost-category-list"
+                    value={formCategory}
+                    onChange={(e) => setFormCategory(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                  <datalist id="item-cost-category-list">
+                    {categoryOptions.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">Merk</label>
                   <input
@@ -802,13 +861,19 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-bold mb-0.5">Category</label>
+                  <label className="block font-bold mb-0.5">Tipe</label>
                   <input
                     type="text"
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value.toUpperCase())}
+                    list="item-cost-type-list"
+                    value={formTipe}
+                    onChange={(e) => setFormTipe(e.target.value.toUpperCase())}
                     className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
                   />
+                  <datalist id="item-cost-type-list">
+                    {typeOptions.map((t) => (
+                      <option key={t} value={t} />
+                    ))}
+                  </datalist>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -839,6 +904,56 @@ export const ItemCostStockPrintForm: React.FC<ItemCostStockPrintFormProps> = ({
                     className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
                 </div>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Disc (%)</label>
+                  <input
+                    type="number"
+                    value={formDisc}
+                    onChange={(e) => setFormDisc(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Q.Min</label>
+                  <input
+                    type="number"
+                    value={formQMin}
+                    onChange={(e) => setFormQMin(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Qty.PO</label>
+                  <input
+                    type="number"
+                    value={formQtyPo}
+                    onChange={(e) => setFormQtyPo(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Qty.SO</label>
+                  <input
+                    type="number"
+                    value={formQtySo}
+                    onChange={(e) => setFormQtySo(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center space-x-2 pt-0.5">
+                <input
+                  id="item-cost-not-print"
+                  type="checkbox"
+                  checked={formNotPrint}
+                  onChange={(e) => setFormNotPrint(e.target.checked)}
+                  className="w-3.5 h-3.5 cursor-pointer"
+                />
+                <label htmlFor="item-cost-not-print" className="font-bold cursor-pointer">
+                  Not Print (Jangan tampilkan pada cetak daftar harga)
+                </label>
               </div>
 
               {modalError && (

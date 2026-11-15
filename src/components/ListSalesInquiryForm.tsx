@@ -84,6 +84,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [newSales, setNewSales] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newFollow, setNewFollow] = useState<string>('Follow');
+  const [newTglFollow, setNewTglFollow] = useState<string>('');
   const [newNoSq, setNewNoSq] = useState<string>('');
   const [newTglSq, setNewTglSq] = useState<string>('');
 
@@ -131,6 +132,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     setNewSales('');
     setNewKeterangan('');
     setNewFollow('Follow');
+    setNewTglFollow(todayDisp);
     setNewNoSq('');
     setNewTglSq(todayDisp);
     setIsAddOpen(true);
@@ -150,6 +152,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     setNewSales(item.namaSales);
     setNewKeterangan(item.keterangan);
     setNewFollow(item.follow);
+    setNewTglFollow(item.tglFollow === '-' ? '' : item.tglFollow);
     setNewNoSq(item.noSq === '-' ? '' : item.noSq);
     setNewTglSq(item.tglSq === '-' ? '' : item.tglSq);
     setIsAddOpen(true);
@@ -172,6 +175,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         nama_sales: newSales.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
         follow: newFollow.trim(),
+        tgl_follow: toIsoDate(newTglFollow),
         no_sq: newNoSq.trim().toUpperCase(),
         tgl_sq: toIsoDate(newTglSq),
       };
@@ -420,8 +424,8 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Sales Inquiry' : 'Tambah Sales Inquiry Baru'}</span>
               <button
                 type="button"
@@ -434,7 +438,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs overflow-y-auto">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No Bukti:</label>
                 <input
@@ -491,6 +495,16 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   onChange={(e) => setNewFollow(e.target.value)}
                   className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A]"
                 />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Tgl. Follow:</label>
+                <div className="col-span-2">
+                  <DatePickerInput
+                    value={newTglFollow}
+                    onChange={(formatted) => setNewTglFollow(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. SQ:</label>

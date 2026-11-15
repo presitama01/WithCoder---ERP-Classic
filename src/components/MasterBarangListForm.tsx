@@ -85,6 +85,11 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
   const [newStock, setNewStock] = useState('0');
   const [newCost, setNewCost] = useState('0');
   const [newPrice, setNewPrice] = useState('0');
+  const [newDisc, setNewDisc] = useState('0');
+  const [newQMin, setNewQMin] = useState('0');
+  const [newQtyPo, setNewQtyPo] = useState('0');
+  const [newQtySo, setNewQtySo] = useState('0');
+  const [newNotPrint, setNewNotPrint] = useState(false);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -186,6 +191,11 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setNewStock('0');
     setNewCost('0');
     setNewPrice('0');
+    setNewDisc('0');
+    setNewQMin('0');
+    setNewQtyPo('0');
+    setNewQtySo('0');
+    setNewNotPrint(false);
     setIsAddOpen(true);
 
     const freshCats = await loadMasterReferences();
@@ -211,6 +221,11 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setNewStock(String(item.stock));
     setNewCost(String(item.cost));
     setNewPrice(String(item.price));
+    setNewDisc(String(item.disc ?? 0));
+    setNewQMin(String(item.qMin ?? 0));
+    setNewQtyPo(String(item.qtyPo ?? 0));
+    setNewQtySo(String(item.qtySo ?? 0));
+    setNewNotPrint(Boolean(item.notPrint));
     setIsAddOpen(true);
     loadMasterReferences();
   };
@@ -254,6 +269,11 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
         stock: parseNum(newStock),
         cost: parseNum(newCost),
         price: parseNum(newPrice),
+        disc: parseNum(newDisc),
+        q_min: parseNum(newQMin),
+        qty_po: parseNum(newQtyPo),
+        qty_so: parseNum(newQtySo),
+        not_print: newNotPrint,
       };
 
       if (editingId) {
@@ -542,8 +562,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/25 flex items-center justify-center z-50 p-4">
-          <div className="w-[460px] max-w-[95vw] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans">
-            <div className="flex items-center justify-between h-[24px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold">
+          <div className="w-[480px] max-w-[95vw] max-h-[90vh] flex flex-col bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-black border-r-black shadow-2xl font-sans overflow-hidden">
+            <div className="flex items-center justify-between h-[24px] px-2 bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white text-[11px] font-bold shrink-0">
               <span>{editingId ? 'Koreksi Data Master Barang' : 'Input Master Barang Baru'}</span>
               <button
                 type="button"
@@ -557,7 +577,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
               </button>
             </div>
 
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-[11px] text-black">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-[11px] text-black overflow-y-auto">
               <div className="flex items-center space-x-3">
                 <label className="w-[100px] shrink-0 font-bold">Kode Barang :</label>
                 <input
@@ -680,6 +700,58 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                     className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Disc (%) :</label>
+                  <input
+                    type="number"
+                    value={newDisc}
+                    onChange={(e) => setNewDisc(e.target.value)}
+                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Q.Min :</label>
+                  <input
+                    type="number"
+                    value={newQMin}
+                    onChange={(e) => setNewQMin(e.target.value)}
+                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Qty.PO :</label>
+                  <input
+                    type="number"
+                    value={newQtyPo}
+                    onChange={(e) => setNewQtyPo(e.target.value)}
+                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Qty.SO :</label>
+                  <input
+                    type="number"
+                    value={newQtySo}
+                    onChange={(e) => setNewQtySo(e.target.value)}
+                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 pt-0.5">
+                <input
+                  id="master-barang-not-print"
+                  type="checkbox"
+                  checked={newNotPrint}
+                  onChange={(e) => setNewNotPrint(e.target.checked)}
+                  className="w-3.5 h-3.5 cursor-pointer"
+                />
+                <label htmlFor="master-barang-not-print" className="font-bold cursor-pointer">
+                  Not Print (Jangan tampilkan pada cetak daftar harga)
+                </label>
               </div>
 
               {modalError && (

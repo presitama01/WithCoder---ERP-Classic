@@ -92,6 +92,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   const [newNilai, setNewNilai] = useState<string>('0');
   const [newJthTmp, setNewJthTmp] = useState<string>('');
   const [newStsLunas, setNewStsLunas] = useState<string>('Belum');
+  const [newTglLunas, setNewTglLunas] = useState<string>('');
+  const [newStsPost, setNewStsPost] = useState<string>('Posted');
+  const [newTglPost, setNewTglPost] = useState<string>('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -147,6 +150,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setNewNilai('0');
     setNewJthTmp(todayDisp);
     setNewStsLunas('Belum');
+    setNewTglLunas('');
+    setNewStsPost('Posted');
+    setNewTglPost(todayDisp);
     setIsAddOpen(true);
   };
 
@@ -167,6 +173,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setNewNilai(String(item.nilaiPembelianNum));
     setNewJthTmp(item.jthTmp === '-' ? '' : item.jthTmp);
     setNewStsLunas(item.stsLunas);
+    setNewTglLunas(item.tglLunas === '-' ? '' : item.tglLunas);
+    setNewStsPost(item.stsPost || 'Posted');
+    setNewTglPost(item.tglPost === '-' ? '' : item.tglPost);
     setIsAddOpen(true);
   };
 
@@ -191,7 +200,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
         nilai_pembelian: parseNum(newNilai),
         jth_tmp: toIsoDate(newJthTmp),
         sts_lunas: newStsLunas,
-        tgl_lunas: newStsLunas === 'Lunas' ? todayIso() : null,
+        tgl_lunas: toIsoDate(newTglLunas) || (newStsLunas === 'Lunas' ? todayIso() : null),
+        sts_post: newStsPost,
+        tgl_post: toIsoDate(newTglPost) || (newStsPost === 'Posted' ? tglIso : null),
       };
 
       if (editingId) {
@@ -206,8 +217,6 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       } else {
         const saved = await erpCreate<any>('pembelian_barangs', {
           ...payload,
-          sts_post: 'Posted',
-          tgl_post: tglIso,
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
@@ -461,9 +470,9 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
         </div>
 
         {isAddOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[460px] overflow-hidden">
-              <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[490px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Pembelian Barang' : 'Tambah Pembelian Barang Baru'}</span>
                 <button
                   type="button"
@@ -476,7 +485,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">No.Bukti:</label>
                   <input
@@ -546,7 +555,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Jth.Tmp / Status:</label>
+                  <label className="text-xs font-semibold text-gray-700">Jth.Tmp / Sts.Lunas:</label>
                   <div className="w-72 flex items-center space-x-2">
                     <DatePickerInput
                       value={newJthTmp}
@@ -561,6 +570,36 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                       <option value="Belum">Belum</option>
                       <option value="Lunas">Lunas</option>
                     </select>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Tgl.Lunas:</label>
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTglLunas}
+                      onChange={(formatted) => setNewTglLunas(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Sts.Post / Tgl.Post:</label>
+                  <div className="w-72 flex items-center space-x-2">
+                    <select
+                      value={newStsPost}
+                      onChange={(e) => setNewStsPost(e.target.value)}
+                      className="w-28 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Posted">Posted</option>
+                    </select>
+                    <div className="flex-1">
+                      <DatePickerInput
+                        value={newTglPost}
+                        onChange={(formatted) => setNewTglPost(formatted)}
+                        format="dMyShort"
+                      />
+                    </div>
                   </div>
                 </div>
                 {modalError && (

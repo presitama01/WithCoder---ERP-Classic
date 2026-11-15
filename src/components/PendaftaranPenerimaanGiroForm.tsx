@@ -62,6 +62,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   const [findQuery, setFindQuery] = useState<string>('');
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
+  const [newNoUrut, setNewNoUrut] = useState<string>('1');
   const [newIdCustomer, setNewIdCustomer] = useState<string>('CUS01');
   const [newCustomer, setNewCustomer] = useState<string>('');
   const [newNoCekGiro, setNewNoCekGiro] = useState<string>('');
@@ -167,7 +168,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
       if (headerId) headerPayload.id = headerId;
 
       const detailPayloads = listToSave.map((item, idx) => ({
-        no_urut: idx + 1,
+        no_urut: parseInt(String(item.no || ''), 10) || idx + 1,
         id_customer: item.idCustomer.trim().toUpperCase(),
         customer: item.customer.trim().toUpperCase(),
         no_cek_giro: item.noCekGiro.trim().toUpperCase(),
@@ -233,6 +234,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   const handleAddNew = () => {
     setModalError(null);
     setEditingId(null);
+    setNewNoUrut(String(giroList.length + 1));
     setNewIdCustomer(nextUniqueCode(giroList.map((g) => g.idCustomer), 'CUS', 2));
     setNewCustomer('');
     setNewNoCekGiro('');
@@ -251,6 +253,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     }
     setModalError(null);
     setEditingId(item.id);
+    setNewNoUrut(String(item.no));
     setNewIdCustomer(item.idCustomer);
     setNewCustomer(item.customer);
     setNewNoCekGiro(item.noCekGiro);
@@ -280,6 +283,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
         g.id === editingId
           ? {
               ...g,
+              no: parseInt(newNoUrut, 10) || g.no,
               idCustomer: newIdCustomer.trim().toUpperCase(),
               customer: newCustomer.trim().toUpperCase(),
               noCekGiro: newNoCekGiro.trim().toUpperCase(),
@@ -293,7 +297,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     } else {
       const newItem: PenerimaanGiroItem = {
         id: Date.now().toString(),
-        no: giroList.length + 1,
+        no: parseInt(newNoUrut, 10) || giroList.length + 1,
         idCustomer: newIdCustomer.trim().toUpperCase(),
         customer: newCustomer.trim().toUpperCase(),
         noCekGiro: newNoCekGiro.trim().toUpperCase(),
@@ -619,9 +623,9 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
         </div>
 
         {isAddOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-            <div className="bg-[#ECE9D8] border-2 border-[#000000] shadow-2xl w-[520px] flex flex-col rounded-[2px] font-sans">
-              <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px] p-4">
+            <div className="bg-[#ECE9D8] border-2 border-[#000000] shadow-2xl w-[520px] max-w-[95vw] max-h-[90vh] flex flex-col rounded-[2px] font-sans overflow-hidden">
+              <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between shrink-0">
                 <span className="font-bold text-sm">
                   {editingId ? 'Koreksi Pendaftaran Penerimaan Giro' : 'Tambah Pendaftaran Penerimaan Giro Baru'}
                 </span>
@@ -636,9 +640,19 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                   ✕
                 </button>
               </div>
-              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 overflow-y-auto">
+                <div className="grid grid-cols-5 gap-3">
                   <div>
+                    <label className="block text-gray-800 font-semibold mb-1">No. Urut</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={newNoUrut}
+                      onChange={(e) => setNewNoUrut(e.target.value)}
+                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono text-center"
+                    />
+                  </div>
+                  <div className="col-span-2">
                     <label className="block text-gray-800 font-semibold mb-1">ID Customer</label>
                     <input
                       type="text"
@@ -648,7 +662,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                       className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono uppercase"
                     />
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <label className="block text-gray-800 font-semibold mb-1">No. Cek / Giro</label>
                     <input
                       type="text"

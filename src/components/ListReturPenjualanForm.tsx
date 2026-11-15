@@ -32,6 +32,7 @@ export interface ReturPenjualanItem {
   keterangan: string;
   disc: string;
   ppn: string;
+  lokasiStock: string;
   stsPrint: string;
   tglPrint: string;
   stsPost: string;
@@ -62,6 +63,7 @@ function mapDbToReturJual(r: any): ReturPenjualanItem {
     keterangan: r.keterangan || '',
     disc: `${Number(r.disc || 0)}%`,
     ppn: `${Number(r.ppn ?? 11)}%`,
+    lokasiStock: r.lokasi_stock || '01 - OFFICE',
     stsPrint: r.sts_print || 'Not Yet',
     tglPrint: toDisplayDMyShort(r.tgl_print) || '',
     stsPost: r.sts_post || 'Posting',
@@ -100,6 +102,12 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newDisc, setNewDisc] = useState<string>('0');
   const [newPpn, setNewPpn] = useState<string>('11');
+  const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
+  const [newStsPrint, setNewStsPrint] = useState<string>('Not Yet');
+  const [newTglPrint, setNewTglPrint] = useState<string>('');
+  const [newStsPost, setNewStsPost] = useState<string>('Posting');
+  const [newTglPost, setNewTglPost] = useState<string>('');
+  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -130,7 +138,13 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) loadData();
+    if (!isOpen) return;
+    loadData();
+    erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true })
+      .then((lokasis) =>
+        setLokasiOptions(lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()))
+      )
+      .catch(() => {});
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -147,6 +161,11 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
     setNewKeterangan('');
     setNewDisc('0');
     setNewPpn('11');
+    setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
+    setNewStsPrint('Not Yet');
+    setNewTglPrint('');
+    setNewStsPost('Posting');
+    setNewTglPost(todayDisp);
     setIsAddOpen(true);
   };
 
@@ -166,6 +185,11 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
     setNewKeterangan(item.keterangan);
     setNewDisc(String(parseNum(item.disc)));
     setNewPpn(String(parseNum(item.ppn)));
+    setNewLokasiStock(item.lokasiStock || '01 - OFFICE');
+    setNewStsPrint(item.stsPrint || 'Not Yet');
+    setNewTglPrint(item.tglPrint || '');
+    setNewStsPost(item.stsPost || 'Posting');
+    setNewTglPost(item.tglPost || '');
     setIsAddOpen(true);
   };
 
@@ -188,6 +212,11 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
         keterangan: newKeterangan.trim(),
         disc: parseNum(newDisc),
         ppn: parseNum(newPpn),
+        lokasi_stock: newLokasiStock.trim() || '01 - OFFICE',
+        sts_print: newStsPrint || 'Not Yet',
+        tgl_print: toIsoDate(newTglPrint) || null,
+        sts_post: newStsPost || 'Posting',
+        tgl_post: toIsoDate(newTglPost) || null,
       };
 
       if (editingId) {
@@ -202,9 +231,6 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
       } else {
         const saved = await erpCreate<any>('retur_penjualans', {
           ...payload,
-          sts_print: 'Not Yet',
-          sts_post: 'Posting',
-          tgl_post: todayIso(),
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
@@ -451,8 +477,8 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[520px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Retur Penjualan' : 'Tambah Retur Penjualan Baru'}</span>
               <button
                 type="button"
@@ -465,7 +491,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs overflow-y-auto">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. Bukti:</label>
                 <input
@@ -537,6 +563,61 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                     value={newPpn}
                     onChange={(e) => setNewPpn(e.target.value)}
                     className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] text-center"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Lokasi Stock:</label>
+                <div className="col-span-2">
+                  <input
+                    type="text"
+                    list="retur-penj-lokasi-list"
+                    value={newLokasiStock}
+                    onChange={(e) => setNewLokasiStock(e.target.value)}
+                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A]"
+                  />
+                  <datalist id="retur-penj-lokasi-list">
+                    {lokasiOptions.map((loc) => (
+                      <option key={loc} value={loc} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Sts / Tgl Print:</label>
+                <div className="col-span-2 grid grid-cols-2 gap-2">
+                  <select
+                    value={newStsPrint}
+                    onChange={(e) => setNewStsPrint(e.target.value)}
+                    className="px-2 py-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Printed">Printed</option>
+                  </select>
+                  <DatePickerInput
+                    value={newTglPrint}
+                    onChange={(formatted) => setNewTglPrint(formatted)}
+                    format="dMyShort"
+                    placeholder="Tgl Print"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Sts / Tgl Post:</label>
+                <div className="col-span-2 grid grid-cols-2 gap-2">
+                  <select
+                    value={newStsPost}
+                    onChange={(e) => setNewStsPost(e.target.value)}
+                    className="px-2 py-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Posting">Posting</option>
+                  </select>
+                  <DatePickerInput
+                    value={newTglPost}
+                    onChange={(formatted) => setNewTglPost(formatted)}
+                    format="dMyShort"
+                    placeholder="Tgl Post"
                   />
                 </div>
               </div>

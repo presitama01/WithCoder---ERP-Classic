@@ -85,7 +85,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newNilaiPo, setNewNilaiPo] = useState<string>('0');
   const [newDeposit, setNewDeposit] = useState<string>('0');
+  const [newTglLunas, setNewTglLunas] = useState<string>('');
   const [newTglKirim, setNewTglKirim] = useState<string>('');
+  const [newPersen, setNewPersen] = useState<string>('0');
   const [newPoClose, setNewPoClose] = useState<string>('Not Yet');
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -139,7 +141,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewKeterangan('');
     setNewNilaiPo('0');
     setNewDeposit('0');
+    setNewTglLunas('');
     setNewTglKirim(todayDisplay);
+    setNewPersen('0');
     setNewPoClose('Not Yet');
     setIsAddOpen(true);
   };
@@ -158,7 +162,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewKeterangan(item.keterangan);
     setNewNilaiPo(String(item.nilaiPoNum));
     setNewDeposit(String(parseNum(item.deposit)));
+    setNewTglLunas(item.tglLunas === '-' ? '' : item.tglLunas);
     setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
+    setNewPersen(String(parseNum(item.persen)));
     setNewPoClose(item.poClose);
     setIsAddOpen(true);
   };
@@ -180,7 +186,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
         keterangan: newKeterangan.trim(),
         nilai_po: parseNum(newNilaiPo),
         deposit: parseNum(newDeposit),
+        tgl_lunas: toIsoDate(newTglLunas),
         tgl_kirim: toIsoDate(newTglKirim),
+        persen: parseNum(newPersen),
         po_close: newPoClose,
       };
 
@@ -196,7 +204,6 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       } else {
         const saved = await erpCreate<any>('purchase_orders', {
           ...payload,
-          persen: 0,
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
@@ -442,9 +449,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
         </div>
 
         {isAddOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[460px] overflow-hidden">
-              <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[470px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Purchase Order' : 'Tambah Purchase Order Baru'}</span>
                 <button
                   type="button"
@@ -457,7 +464,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5">
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">No.Bukti:</label>
                   <input
@@ -508,6 +515,25 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Deposit (Rp):</label>
+                  <input
+                    type="number"
+                    value={newDeposit}
+                    onChange={(e) => setNewDeposit(e.target.value)}
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-right"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-700">Tgl.Lunas:</label>
+                  <div className="w-72">
+                    <DatePickerInput
+                      value={newTglLunas}
+                      onChange={(formatted) => setNewTglLunas(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Tgl.Kirim:</label>
                   <div className="w-72">
                     <DatePickerInput
@@ -518,15 +544,24 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Status PO:</label>
-                  <select
-                    value={newPoClose}
-                    onChange={(e) => setNewPoClose(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                  >
-                    <option value="Not Yet">Not Yet</option>
-                    <option value="Closed">Closed</option>
-                  </select>
+                  <label className="text-xs font-semibold text-gray-700">Persen (%) / Status PO:</label>
+                  <div className="w-72 flex items-center space-x-2">
+                    <input
+                      type="number"
+                      value={newPersen}
+                      onChange={(e) => setNewPersen(e.target.value)}
+                      className="w-24 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-right"
+                      placeholder="0"
+                    />
+                    <select
+                      value={newPoClose}
+                      onChange={(e) => setNewPoClose(e.target.value)}
+                      className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                    >
+                      <option value="Not Yet">Not Yet</option>
+                      <option value="Closed">Closed</option>
+                    </select>
+                  </div>
                 </div>
                 {modalError && (
                   <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">

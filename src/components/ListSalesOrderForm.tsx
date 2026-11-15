@@ -36,6 +36,7 @@ export interface SalesOrderItem {
   keterangan: string;
   ppn: string;
   soClose: string;
+  lokasiStock: string;
   dibuatOleh: string;
   tglCreated: string;
   diupdateOleh: string;
@@ -66,6 +67,7 @@ function mapDbToSo(r: any): SalesOrderItem {
     keterangan: r.keterangan || '',
     ppn: `${Number(r.ppn ?? 11)}%`,
     soClose: r.so_close || 'Not Yet',
+    lokasiStock: r.lokasi_stock || '01 - OFFICE',
     dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diupdateOleh: r.diupdate_oleh || '-',
@@ -103,6 +105,9 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const [newPersen, setNewPersen] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newPpn, setNewPpn] = useState<string>('11');
+  const [newSoClose, setNewSoClose] = useState<string>('Not Yet');
+  const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
+  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -112,9 +117,15 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false });
+      const [rows, lokasis] = await Promise.all([
+        erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
+      ]);
       const mapped = rows.map(mapDbToSo);
       setSoList(mapped);
+      setLokasiOptions(
+        lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()).filter(Boolean)
+      );
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
@@ -153,6 +164,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewPersen('0');
     setNewKeterangan('');
     setNewPpn('11');
+    setNewSoClose('Not Yet');
+    setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setIsAddOpen(true);
   };
 
@@ -175,6 +188,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewPersen(String(parseNum(item.persen)));
     setNewKeterangan(item.keterangan);
     setNewPpn(String(parseNum(item.ppn)));
+    setNewSoClose(item.soClose || 'Not Yet');
+    setNewLokasiStock(item.lokasiStock || lokasiOptions[0] || '01 - OFFICE');
     setIsAddOpen(true);
   };
 
@@ -200,6 +215,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         persen: parseNum(newPersen),
         keterangan: newKeterangan.trim(),
         ppn: parseNum(newPpn),
+        so_close: newSoClose,
+        lokasi_stock: newLokasiStock.trim().toUpperCase() || '01 - OFFICE',
       };
 
       if (editingId) {
@@ -214,7 +231,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       } else {
         const saved = await erpCreate<any>('sales_orders', {
           ...payload,
-          so_close: 'Not Yet',
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
           diupdate_oleh: '-',
@@ -466,8 +482,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Sales Order' : 'Tambah Sales Order Baru'}</span>
               <button
                 type="button"
@@ -480,7 +496,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs overflow-y-auto">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. Bukti:</label>
                 <input
@@ -565,6 +581,43 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                     onChange={(formatted) => setNewTglKirim(formatted)}
                     format="dMyShort"
                   />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Persen (%) / SO.Close:</label>
+                <div className="col-span-2 flex gap-2">
+                  <input
+                    type="number"
+                    value={newPersen}
+                    onChange={(e) => setNewPersen(e.target.value)}
+                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                    placeholder="Persen %"
+                  />
+                  <select
+                    value={newSoClose}
+                    onChange={(e) => setNewSoClose(e.target.value)}
+                    className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Closed">Closed</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Lokasi Stock:</label>
+                <div className="col-span-2">
+                  <input
+                    type="text"
+                    list="so-lokasi-stock-list"
+                    value={newLokasiStock}
+                    onChange={(e) => setNewLokasiStock(e.target.value)}
+                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                  <datalist id="so-lokasi-stock-list">
+                    {lokasiOptions.map((l) => (
+                      <option key={l} value={l} />
+                    ))}
+                  </datalist>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">

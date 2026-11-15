@@ -74,7 +74,9 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
   const [formNilaiPembelian, setFormNilaiPembelian] = useState<string>('0');
   const [formJthTmp, setFormJthTmp] = useState<string>(toDisplayDMyShort(todayIso()));
   const [formStsLunas, setFormStsLunas] = useState<string>('Not Yet');
+  const [formTglLunas, setFormTglLunas] = useState<string>('');
   const [formStsPost, setFormStsPost] = useState<string>('Not Yet');
+  const [formTglPost, setFormTglPost] = useState<string>('');
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
@@ -146,7 +148,9 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
     setFormNilaiPembelian('0');
     setFormJthTmp(todayDmy);
     setFormStsLunas('Not Yet');
+    setFormTglLunas('');
     setFormStsPost('Not Yet');
+    setFormTglPost('');
     setIsModalOpen(true);
   };
 
@@ -167,7 +171,9 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
     setFormNilaiPembelian(String(current.nilaiPembelian));
     setFormJthTmp(current.jthTmp || toDisplayDMyShort(todayIso()));
     setFormStsLunas(current.stsLunas || 'Not Yet');
+    setFormTglLunas(current.tglLunas || '');
     setFormStsPost(current.stsPost || 'Not Yet');
+    setFormTglPost(current.tglPost || '');
     setIsModalOpen(true);
   };
 
@@ -192,9 +198,9 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       nilai_pembelian: nilaiNum,
       jth_tmp: jthIso,
       sts_lunas: formStsLunas,
-      tgl_lunas: formStsLunas === 'Lunas' ? todayIso() : null,
+      tgl_lunas: toIsoDate(formTglLunas) || (formStsLunas === 'Lunas' ? todayIso() : null),
       sts_post: formStsPost,
-      tgl_post: formStsPost === 'Posted' ? todayIso() : null,
+      tgl_post: toIsoDate(formTglPost) || (formStsPost === 'Posted' ? todayIso() : null),
     };
 
     try {
@@ -503,9 +509,9 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
 
         {/* Add / Edit Modal Dialog */}
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[490px] overflow-hidden">
-              <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[490px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi HPP Pembelian' : 'Tambah HPP Pembelian Baru'}</span>
                 <button
                   type="button"
@@ -518,7 +524,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form noValidate onSubmit={handleSaveModal} className="p-4 space-y-2.5">
+              <form noValidate onSubmit={handleSaveModal} className="p-4 space-y-2.5 overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-black">No.Bukti:</label>
                   <input
@@ -600,24 +606,43 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-black">Sts.Lunas / Sts.Post:</label>
-                  <div className="w-72 flex space-x-2">
+                  <label className="text-xs font-semibold text-black">Sts.Lunas / Tgl.Lunas:</label>
+                  <div className="w-72 flex items-center space-x-2">
                     <select
                       value={formStsLunas}
                       onChange={(e) => setFormStsLunas(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                      className="w-24 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
                     >
                       <option value="Not Yet">Not Yet</option>
                       <option value="Lunas">Lunas</option>
                     </select>
+                    <div className="flex-1">
+                      <DatePickerInput
+                        value={formTglLunas}
+                        onChange={(formatted) => setFormTglLunas(formatted)}
+                        format="dMyShort"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-black">Sts.Post / Tgl.Post:</label>
+                  <div className="w-72 flex items-center space-x-2">
                     <select
                       value={formStsPost}
                       onChange={(e) => setFormStsPost(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                      className="w-24 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
                     >
                       <option value="Not Yet">Not Yet</option>
                       <option value="Posted">Posted</option>
                     </select>
+                    <div className="flex-1">
+                      <DatePickerInput
+                        value={formTglPost}
+                        onChange={(formatted) => setFormTglPost(formatted)}
+                        format="dMyShort"
+                      />
+                    </div>
                   </div>
                 </div>
                 {modalError && (

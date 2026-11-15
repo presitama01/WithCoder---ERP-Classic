@@ -64,11 +64,21 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   const [formTanggal, setFormTanggal] = useState<string>(() => toDisplayDMyShort(todayIso()));
   const [formCustomer, setFormCustomer] = useState<string>('');
   const [formNoSo, setFormNoSo] = useState<string>('');
+  const [formPoNo, setFormPoNo] = useState<string>('');
   const [formNoSj, setFormNoSj] = useState<string>('');
+  const [formNoFakturPajak, setFormNoFakturPajak] = useState<string>('');
   const [formSales, setFormSales] = useState<string>('05');
+  const [formJthTmp, setFormJthTmp] = useState<string>(() => toDisplayDMyShort(todayIso()));
   const [formPpn, setFormPpn] = useState<string>('11');
   const [formNilai, setFormNilai] = useState<string>('0');
   const [formKeterangan, setFormKeterangan] = useState<string>('');
+  const [formLokasiStock, setFormLokasiStock] = useState<string>('01 - OFFICE');
+  const [formStsLunas, setFormStsLunas] = useState<string>('Not Yet');
+  const [formTglLunas, setFormTglLunas] = useState<string>('');
+  const [formStsPrint, setFormStsPrint] = useState<string>('Not Yet');
+  const [formTglPrint, setFormTglPrint] = useState<string>('');
+  const [formStsPost, setFormStsPost] = useState<string>('Not Yet');
+  const [formTglPost, setFormTglPost] = useState<string>('');
   const [modalError, setModalError] = useState<string | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
@@ -92,11 +102,19 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
       no_so: r.no_so || '',
       no_sj: r.no_sj || '',
       po_no: r.po_no || '',
+      no_faktur_pajak: r.no_faktur_pajak || '',
+      jth_tmp_display: toDisplayDMyShort(r.jth_tmp) || '',
       sales: r.sales || '',
       ppn_num: Number(r.ppn ?? 11),
       ppn: `${Number(r.ppn ?? 11)}%`,
       nilai: Number(r.nilai_penjualan || 0),
+      lokasi_stock: r.lokasi_stock || '01 - OFFICE',
       sts_lunas: r.sts_lunas || 'Not Yet',
+      tgl_lunas_display: toDisplayDMyShort(r.tgl_lunas) || '',
+      sts_print: r.sts_print || 'Not Yet',
+      tgl_print_display: toDisplayDMyShort(r.tgl_print) || '',
+      sts_post: r.sts_post || 'Not Yet',
+      tgl_post_display: toDisplayDMyShort(r.tgl_post) || '',
       keterangan: r.keterangan || '',
     }));
     setTableRows(mapped);
@@ -180,16 +198,27 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   const handleBaru = () => {
     setEditingId(null);
     setModalError(null);
+    const todayDisp = toDisplayDMyShort(todayIso());
     setFormNoBukti(nextUniqueCode(tableRows.map((r) => r.no_bukti), 'INJ-2608-', 4));
     setFormJenisFaktur('REGULAR');
-    setFormTanggal(toDisplayDMyShort(todayIso()));
+    setFormTanggal(todayDisp);
     setFormCustomer(customerFilter || '');
     setFormNoSo('');
+    setFormPoNo('');
     setFormNoSj('');
+    setFormNoFakturPajak('');
     setFormSales(salesCode || '05');
+    setFormJthTmp(todayDisp);
     setFormPpn('11');
     setFormNilai('0');
     setFormKeterangan('');
+    setFormLokasiStock(lokasiStock !== 'ALL' ? lokasiStock : lokasiOptions[0] || '01 - OFFICE');
+    setFormStsLunas('Not Yet');
+    setFormTglLunas('');
+    setFormStsPrint('Not Yet');
+    setFormTglPrint('');
+    setFormStsPost('Not Yet');
+    setFormTglPost('');
     setIsCrudOpen(true);
   };
 
@@ -210,11 +239,21 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
     setFormTanggal(current.tanggal_display || toDisplayDMyShort(todayIso()));
     setFormCustomer(current.nama_customer);
     setFormNoSo(current.no_so);
+    setFormPoNo(current.po_no || '');
     setFormNoSj(current.no_sj);
+    setFormNoFakturPajak(current.no_faktur_pajak || '');
     setFormSales(current.sales || '05');
+    setFormJthTmp(current.jth_tmp_display || current.tanggal_display || toDisplayDMyShort(todayIso()));
     setFormPpn(String(current.ppn_num ?? 11));
     setFormNilai(String(current.nilai || 0));
     setFormKeterangan(current.keterangan);
+    setFormLokasiStock(current.lokasi_stock || '01 - OFFICE');
+    setFormStsLunas(current.sts_lunas || 'Not Yet');
+    setFormTglLunas(current.tgl_lunas_display || '');
+    setFormStsPrint(current.sts_print || 'Not Yet');
+    setFormTglPrint(current.tgl_print_display || '');
+    setFormStsPost(current.sts_post || 'Not Yet');
+    setFormTglPost(current.tgl_post_display || '');
     setIsCrudOpen(true);
   };
 
@@ -234,12 +273,21 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
         tanggal: tglIso,
         nama_customer: formCustomer.trim().toUpperCase(),
         no_so: formNoSo.trim().toUpperCase(),
+        po_no: formPoNo.trim().toUpperCase(),
         no_sj: formNoSj.trim().toUpperCase(),
+        no_faktur_pajak: formNoFakturPajak.trim(),
         sales: formSales.trim().toUpperCase(),
-        jth_tmp: tglIso,
+        jth_tmp: toIsoDate(formJthTmp) || tglIso,
         ppn: parseNum(formPpn),
         nilai_penjualan: parseNum(formNilai),
         keterangan: formKeterangan.trim(),
+        lokasi_stock: formLokasiStock.trim() || '01 - OFFICE',
+        sts_lunas: formStsLunas || 'Not Yet',
+        tgl_lunas: toIsoDate(formTglLunas) || null,
+        sts_print: formStsPrint || 'Not Yet',
+        tgl_print: toIsoDate(formTglPrint) || null,
+        sts_post: formStsPost || 'Not Yet',
+        tgl_post: toIsoDate(formTglPost) || null,
       };
       if (editingId) {
         await erpUpdate('faktur_penjualans', editingId, {
@@ -251,9 +299,6 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
       } else {
         const created = await erpCreate<any>('faktur_penjualans', {
           ...payload,
-          sts_lunas: 'Not Yet',
-          sts_print: 'Not Yet',
-          sts_post: 'Not Yet',
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
@@ -747,11 +792,21 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
                           setFormTanggal(r.tanggal_display || toDisplayDMyShort(todayIso()));
                           setFormCustomer(r.nama_customer);
                           setFormNoSo(r.no_so);
+                          setFormPoNo(r.po_no || '');
                           setFormNoSj(r.no_sj);
+                          setFormNoFakturPajak(r.no_faktur_pajak || '');
                           setFormSales(r.sales || '05');
+                          setFormJthTmp(r.jth_tmp_display || r.tanggal_display || toDisplayDMyShort(todayIso()));
                           setFormPpn(String(r.ppn_num ?? 11));
                           setFormNilai(String(r.nilai || 0));
                           setFormKeterangan(r.keterangan);
+                          setFormLokasiStock(r.lokasi_stock || '01 - OFFICE');
+                          setFormStsLunas(r.sts_lunas || 'Not Yet');
+                          setFormTglLunas(r.tgl_lunas_display || '');
+                          setFormStsPrint(r.sts_print || 'Not Yet');
+                          setFormTglPrint(r.tgl_print_display || '');
+                          setFormStsPost(r.sts_post || 'Not Yet');
+                          setFormTglPost(r.tgl_post_display || '');
                           setIsCrudOpen(true);
                         }}
                         className={`cursor-pointer border-b border-[#E0E0E0] ${
@@ -782,8 +837,8 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
       {/* Add / Edit Faktur Penjualan Modal */}
       {isCrudOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col overflow-hidden text-xs">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[540px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
+            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold shrink-0">
               <span>{editingId ? 'Koreksi Faktur Penjualan' : 'Tambah Faktur Penjualan Baru'}</span>
               <button
                 type="button"
@@ -793,7 +848,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px]">
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px] overflow-y-auto">
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">No. Faktur *</label>
@@ -873,6 +928,35 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
+                  <label className="block font-bold mb-0.5">PO. No</label>
+                  <input
+                    type="text"
+                    value={formPoNo}
+                    onChange={(e) => setFormPoNo(e.target.value.toUpperCase())}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">No. Faktur Pajak</label>
+                  <input
+                    type="text"
+                    value={formNoFakturPajak}
+                    onChange={(e) => setFormNoFakturPajak(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Jth. Tmp</label>
+                  <DatePickerInput
+                    value={formJthTmp}
+                    onChange={(fmt) => setFormJthTmp(fmt)}
+                    format="dmy"
+                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
                   <label className="block font-bold mb-0.5">PPN (%)</label>
                   <input
                     type="number"
@@ -881,7 +965,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
                     className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
                 </div>
-                <div className="col-span-2">
+                <div>
                   <label className="block font-bold mb-0.5">Nilai Penjualan (Rp)</label>
                   <input
                     type="number"
@@ -889,6 +973,21 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
                     onChange={(e) => setFormNilai(e.target.value)}
                     className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
+                </div>
+                <div>
+                  <label className="block font-bold mb-0.5">Lokasi Stock</label>
+                  <input
+                    type="text"
+                    list="lap-penj-lokasi-list"
+                    value={formLokasiStock}
+                    onChange={(e) => setFormLokasiStock(e.target.value)}
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                  <datalist id="lap-penj-lokasi-list">
+                    {lokasiOptions.map((loc) => (
+                      <option key={loc} value={loc} />
+                    ))}
+                  </datalist>
                 </div>
               </div>
               <div>
@@ -899,6 +998,75 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
                   onChange={(e) => setFormKeterangan(e.target.value)}
                   className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
                 />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Sts. Lunas</label>
+                  <select
+                    value={formStsLunas}
+                    onChange={(e) => setFormStsLunas(e.target.value)}
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Lunas">Lunas</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block font-bold mb-0.5">Tgl. Lunas</label>
+                  <DatePickerInput
+                    value={formTglLunas}
+                    onChange={(fmt) => setFormTglLunas(fmt)}
+                    format="dmy"
+                    placeholder="Kosongkan jika belum lunas"
+                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Sts. Print</label>
+                  <select
+                    value={formStsPrint}
+                    onChange={(e) => setFormStsPrint(e.target.value)}
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Printed">Printed</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block font-bold mb-0.5">Tgl. Print</label>
+                  <DatePickerInput
+                    value={formTglPrint}
+                    onChange={(fmt) => setFormTglPrint(fmt)}
+                    format="dmy"
+                    placeholder="Kosongkan jika belum cetak"
+                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-bold mb-0.5">Sts. Post</label>
+                  <select
+                    value={formStsPost}
+                    onChange={(e) => setFormStsPost(e.target.value)}
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Posting">Posting</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block font-bold mb-0.5">Tgl. Post</label>
+                  <DatePickerInput
+                    value={formTglPost}
+                    onChange={(fmt) => setFormTglPost(fmt)}
+                    format="dmy"
+                    placeholder="Kosongkan jika belum posting"
+                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
+                  />
+                </div>
               </div>
 
               {modalError && (

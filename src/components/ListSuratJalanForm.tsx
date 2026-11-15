@@ -28,6 +28,7 @@ export interface SuratJalanItem {
   sales: string;
   noFaktur: string;
   keterangan: string;
+  lokasiStock: string;
   stsPrint: string;
   tglPrint: string;
   stsPost: string;
@@ -56,6 +57,7 @@ function mapDbToSj(r: any): SuratJalanItem {
     sales: r.sales || '',
     noFaktur: r.no_faktur || '',
     keterangan: r.keterangan || '',
+    lokasiStock: r.lokasi_stock || '01 - OFFICE',
     stsPrint: r.sts_print || 'Not Yet',
     tglPrint: toDisplayDMyShort(r.tgl_print) || '',
     stsPost: r.sts_post || 'Posting',
@@ -94,6 +96,12 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   const [newSales, setNewSales] = useState<string>('01');
   const [newNoFaktur, setNewNoFaktur] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
+  const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
+  const [newStsPrint, setNewStsPrint] = useState<string>('Not Yet');
+  const [newTglPrint, setNewTglPrint] = useState<string>('');
+  const [newStsPost, setNewStsPost] = useState<string>('Posting');
+  const [newTglPost, setNewTglPost] = useState<string>('');
+  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -103,9 +111,15 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false });
+      const [rows, lokasis] = await Promise.all([
+        erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
+      ]);
       const mapped = rows.map(mapDbToSj);
       setSjList(mapped);
+      setLokasiOptions(
+        lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()).filter(Boolean)
+      );
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
       }
@@ -141,6 +155,11 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
     setNewSales('01');
     setNewNoFaktur('');
     setNewKeterangan('');
+    setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
+    setNewStsPrint('Not Yet');
+    setNewTglPrint('');
+    setNewStsPost('Posting');
+    setNewTglPost(todayDisp);
     setIsAddOpen(true);
   };
 
@@ -160,6 +179,11 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
     setNewSales(item.sales);
     setNewNoFaktur(item.noFaktur);
     setNewKeterangan(item.keterangan);
+    setNewLokasiStock(item.lokasiStock || lokasiOptions[0] || '01 - OFFICE');
+    setNewStsPrint(item.stsPrint || 'Not Yet');
+    setNewTglPrint(item.tglPrint);
+    setNewStsPost(item.stsPost || 'Posting');
+    setNewTglPost(item.tglPost);
     setIsAddOpen(true);
   };
 
@@ -173,15 +197,21 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
 
     try {
       setIsBusy(true);
+      const tglIso = toIsoDate(newTanggal) || todayIso();
       const payload = {
         no_bukti: newNoBukti.trim().toUpperCase(),
-        tanggal: toIsoDate(newTanggal) || todayIso(),
+        tanggal: tglIso,
         nama_customer: newCustomer.trim().toUpperCase(),
         no_so: newNoSo.trim().toUpperCase(),
         po_no: newPoNo.trim().toUpperCase(),
         sales: newSales.trim().toUpperCase(),
         no_faktur: newNoFaktur.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
+        lokasi_stock: newLokasiStock.trim().toUpperCase() || '01 - OFFICE',
+        sts_print: newStsPrint,
+        tgl_print: toIsoDate(newTglPrint) || (newStsPrint === 'Printed' ? todayIso() : null),
+        sts_post: newStsPost,
+        tgl_post: toIsoDate(newTglPost) || (newStsPost === 'Posting' ? tglIso : null),
       };
 
       if (editingId) {
@@ -196,9 +226,6 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
       } else {
         const saved = await erpCreate<any>('surat_jalans', {
           ...payload,
-          sts_print: 'Not Yet',
-          sts_post: 'Posting',
-          tgl_post: todayIso(),
           dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
           tgl_created: todayIso(),
         });
@@ -450,8 +477,8 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] flex flex-col overflow-hidden">
-            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[520px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Surat Jalan' : 'Tambah Surat Jalan Baru'}</span>
               <button
                 type="button"
@@ -464,7 +491,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs overflow-y-auto">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No. Bukti:</label>
                 <input
@@ -530,6 +557,63 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
                   onChange={(e) => setNewNoFaktur(e.target.value)}
                   className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
                 />
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Lokasi Stock:</label>
+                <div className="col-span-2">
+                  <input
+                    type="text"
+                    list="sj-lokasi-stock-list"
+                    value={newLokasiStock}
+                    onChange={(e) => setNewLokasiStock(e.target.value)}
+                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                  <datalist id="sj-lokasi-stock-list">
+                    {lokasiOptions.map((l) => (
+                      <option key={l} value={l} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Sts.Print / Tgl.Print:</label>
+                <div className="col-span-2 flex gap-2 items-center">
+                  <select
+                    value={newStsPrint}
+                    onChange={(e) => setNewStsPrint(e.target.value)}
+                    className="w-28 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Printed">Printed</option>
+                  </select>
+                  <div className="flex-1">
+                    <DatePickerInput
+                      value={newTglPrint}
+                      onChange={(formatted) => setNewTglPrint(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Sts.Post / Tgl.Post:</label>
+                <div className="col-span-2 flex gap-2 items-center">
+                  <select
+                    value={newStsPost}
+                    onChange={(e) => setNewStsPost(e.target.value)}
+                    className="w-28 px-2 py-1 bg-white border border-[#7A7A7A]"
+                  >
+                    <option value="Not Yet">Not Yet</option>
+                    <option value="Posting">Posting</option>
+                  </select>
+                  <div className="flex-1">
+                    <DatePickerInput
+                      value={newTglPost}
+                      onChange={(formatted) => setNewTglPost(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Keterangan:</label>
