@@ -9,7 +9,9 @@ import {
   erpList,
   erpUpdate,
   fetchActiveCompanyProfile,
+  formatMoney,
   nextUniqueCode,
+  parseNum,
   toDisplayDMyShort,
   todayIso,
   toIsoDate,
@@ -24,6 +26,7 @@ export interface SalesInquiryItem {
   tanggalDoIso: string;
   namaCustomer: string;
   namaSales: string;
+  qty: number;
   keterangan: string;
   follow: string;
   tglFollow: string;
@@ -48,6 +51,7 @@ function mapDbToInquiry(r: any): SalesInquiryItem {
     tanggalDoIso: toIsoDate(r.tanggal_do) || '',
     namaCustomer: r.nama_customer || '',
     namaSales: r.nama_sales || '',
+    qty: Number(r.qty ?? 0),
     keterangan: r.keterangan || '',
     follow: r.follow || 'Follow',
     tglFollow: toDisplayDMyShort(r.tgl_follow) || '-',
@@ -78,25 +82,65 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const [customerOptions, setCustomerOptions] = useState<string[]>([]);
+  const [salesOptions, setSalesOptions] = useState<string[]>([]);
+
   const [newNoBukti, setNewNoBukti] = useState<string>('');
   const [newTanggalDo, setNewTanggalDo] = useState<string>('');
   const [newCustomer, setNewCustomer] = useState<string>('');
   const [newSales, setNewSales] = useState<string>('');
+  const [newQty, setNewQty] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newFollow, setNewFollow] = useState<string>('Follow');
   const [newTglFollow, setNewTglFollow] = useState<string>('');
   const [newNoSq, setNewNoSq] = useState<string>('');
   const [newTglSq, setNewTglSq] = useState<string>('');
+  const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
+  const [newTglCreated, setNewTglCreated] = useState<string>('');
+  const [newDiupdateOleh, setNewDiupdateOleh] = useState<string>('');
+  const [newTglUpdate, setNewTglUpdate] = useState<string>('');
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadMasterReferences = async () => {
+    const [custRes, salesRes] = await Promise.allSettled([
+      erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
+      erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
+    ]);
+
+    if (custRes.status === 'fulfilled') {
+      const loadedCusts = Array.from(
+        new Set(
+          custRes.value
+            .map((c: any) => String(c.nama_customer || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setCustomerOptions(loadedCusts);
+    }
+
+    if (salesRes.status === 'fulfilled') {
+      const loadedSales = Array.from(
+        new Set(
+          salesRes.value
+            .map((s: any) => String(s.nama_sales || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setSalesOptions(loadedSales);
+    }
+  };
+
   const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('sales_inquiries', { orderBy: 'tanggal_do', asc: false });
+      const [rows] = await Promise.all([
+        erpList<any>('sales_inquiries', { orderBy: 'tanggal_do', asc: false }),
+        loadMasterReferences(),
+      ]);
       const mapped = rows.map(mapDbToInquiry);
       setInquiryList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
@@ -122,40 +166,57 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddNew = () => {
+  const handleAddNew = async () => {
     setEditingId(null);
     setModalError(null);
     const todayDisp = toDisplayDMyShort(todayIso());
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
     setNewNoBukti(nextUniqueCode(inquiryList.map((i) => i.noBukti), '2608-SI-', 3));
     setNewTanggalDo(todayDisp);
     setNewCustomer('');
     setNewSales('');
+    setNewQty('0');
     setNewKeterangan('');
     setNewFollow('Follow');
     setNewTglFollow(todayDisp);
     setNewNoSq('');
     setNewTglSq(todayDisp);
+    setNewDibuatOleh(currentUser);
+    setNewTglCreated(todayDisp);
+    setNewDiupdateOleh('-');
+    setNewTglUpdate('');
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const item = inquiryList.find((i) => i.id === selectedId);
     if (!item) {
       showFeedback('Pilih baris terlebih dahulu');
       return;
     }
+    const todayDisp = toDisplayDMyShort(todayIso());
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
     setEditingId(item.id);
     setModalError(null);
     setNewNoBukti(item.noBukti);
     setNewTanggalDo(item.tanggalDo);
     setNewCustomer(item.namaCustomer);
     setNewSales(item.namaSales);
+    setNewQty(String(item.qty ?? 0));
     setNewKeterangan(item.keterangan);
     setNewFollow(item.follow);
     setNewTglFollow(item.tglFollow === '-' ? '' : item.tglFollow);
     setNewNoSq(item.noSq === '-' ? '' : item.noSq);
     setNewTglSq(item.tglSq === '-' ? '' : item.tglSq);
+    setNewDibuatOleh(item.dibuatOleh || currentUser);
+    setNewTglCreated(!item.tglCreated || item.tglCreated === '-' ? todayDisp : item.tglCreated);
+    setNewDiupdateOleh(
+      item.diupdateOleh && item.diupdateOleh !== '-' ? item.diupdateOleh : currentUser
+    );
+    setNewTglUpdate(item.tglUpdate && item.tglUpdate !== '-' ? item.tglUpdate : todayDisp);
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
   const handleSaveNew = async (e: React.FormEvent) => {
@@ -168,23 +229,27 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
     try {
       setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const payload = {
         no_bukti: newNoBukti.trim().toUpperCase(),
         tanggal_do: toIsoDate(newTanggalDo) || todayIso(),
         nama_customer: newCustomer.trim().toUpperCase(),
         nama_sales: newSales.trim().toUpperCase(),
+        qty: parseNum(newQty),
         keterangan: newKeterangan.trim(),
         follow: newFollow.trim(),
         tgl_follow: toIsoDate(newTglFollow),
         no_sq: newNoSq.trim().toUpperCase(),
         tgl_sq: toIsoDate(newTglSq),
+        dibuat_oleh: newDibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(newTglCreated) || todayIso(),
       };
 
       if (editingId) {
         const saved = await erpUpdate<any>('sales_inquiries', editingId, {
           ...payload,
-          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_update: todayIso(),
+          diupdate_oleh: newDiupdateOleh.trim().toUpperCase() || currentUser,
+          tgl_update: toIsoDate(newTglUpdate) || todayIso(),
         });
         const mapped = mapDbToInquiry(saved);
         setInquiryList(inquiryList.map((item) => (item.id === editingId ? mapped : item)));
@@ -192,9 +257,8 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       } else {
         const saved = await erpCreate<any>('sales_inquiries', {
           ...payload,
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-          diupdate_oleh: '-',
+          diupdate_oleh: newDiupdateOleh.trim() ? newDiupdateOleh.trim().toUpperCase() : '-',
+          tgl_update: toIsoDate(newTglUpdate),
         });
         const mapped = mapDbToInquiry(saved);
         setInquiryList([mapped, ...inquiryList]);
@@ -251,6 +315,18 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     searchInputRef.current?.select();
   };
 
+  const modalCustomerChoices = Array.from(
+    new Set(
+      [...customerOptions, newCustomer.trim().toUpperCase()].filter(Boolean)
+    )
+  );
+
+  const modalSalesChoices = Array.from(
+    new Set(
+      [...salesOptions, newSales.trim().toUpperCase()].filter(Boolean)
+    )
+  );
+
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
     exportToExcel({
@@ -263,10 +339,15 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center' },
         { header: 'Nama Customer', accessor: 'namaCustomer' },
         { header: 'Nama Sales', accessor: 'namaSales' },
+        { header: 'Qty', accessor: 'qty', align: 'right' },
         { header: 'Keterangan', accessor: 'keterangan' },
         { header: 'Follow', accessor: 'follow' },
         { header: 'No. SQ', accessor: 'noSq' },
         { header: 'Tgl. SQ', accessor: 'tglSq', align: 'center' },
+        { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
+        { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center' },
+        { header: 'Diupdate Oleh', accessor: 'diupdateOleh' },
+        { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center' },
       ],
       rows: filteredList,
     });
@@ -325,7 +406,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       </div>
 
       <div className="flex-1 overflow-auto bg-white border border-[#7A7A7A] m-2 relative">
-        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1300px]">
+        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1380px]">
           <thead>
             <tr className="bg-[#ECE9D8] text-black border-b border-[#919191] text-[11px] font-semibold sticky top-0 z-10">
               <th className="border-r border-[#919191] px-2 py-1.5 w-8 text-center">▶</th>
@@ -333,6 +414,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
               <th className="border-r border-[#919191] px-3 py-1.5">Tanggal DO</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Nama Customer</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Nama Sales</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Qty</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Keterangan</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Follow</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tgl. Follow</th>
@@ -367,6 +449,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tanggalDo}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-medium">{item.namaCustomer}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.namaSales}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono text-right">{formatMoney(item.qty)}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.follow}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglFollow}</td>
@@ -381,7 +464,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
             })}
             {filteredList.length === 0 && (
               <tr>
-                <td colSpan={14} className="text-center py-6 text-gray-500">
+                <td colSpan={15} className="text-center py-6 text-gray-500">
                   Tidak ada data inquiry penjualan
                 </td>
               </tr>
@@ -424,7 +507,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[500px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[540px] max-w-[95vw] max-h-[92vh] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Sales Inquiry' : 'Tambah Sales Inquiry Baru'}</span>
               <button
@@ -438,7 +521,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs overflow-y-auto">
+            <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 text-xs overflow-y-auto">
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">No Bukti:</label>
                 <input
@@ -461,21 +544,44 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Nama Customer:</label>
-                <input
-                  type="text"
+                <select
                   value={newCustomer}
                   onChange={(e) => setNewCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
                   required
-                />
+                >
+                  <option value="">-- Pilih Customer --</option>
+                  {modalCustomerChoices.map((cust) => (
+                    <option key={cust} value={cust}>
+                      {cust}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="font-semibold">Nama Sales:</label>
-                <input
-                  type="text"
+                <select
                   value={newSales}
                   onChange={(e) => setNewSales(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                >
+                  <option value="">-- Pilih Sales --</option>
+                  {modalSalesChoices.map((sales) => (
+                    <option key={sales} value={sales}>
+                      {sales}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <label className="font-semibold">Qty:</label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={newQty}
+                  onChange={(e) => setNewQty(e.target.value)}
+                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
@@ -525,6 +631,42 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   />
                 </div>
               </div>
+              <div className="border-t border-[#D4D0C8] pt-2.5 grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-semibold mb-1">Dibuat Oleh:</label>
+                  <input
+                    type="text"
+                    value={newDibuatOleh}
+                    onChange={(e) => setNewDibuatOleh(e.target.value.toUpperCase())}
+                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Tgl Created:</label>
+                  <DatePickerInput
+                    value={newTglCreated}
+                    onChange={(formatted) => setNewTglCreated(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Diupdate Oleh:</label>
+                  <input
+                    type="text"
+                    value={newDiupdateOleh}
+                    onChange={(e) => setNewDiupdateOleh(e.target.value.toUpperCase())}
+                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Tgl Update:</label>
+                  <DatePickerInput
+                    value={newTglUpdate}
+                    onChange={(formatted) => setNewTglUpdate(formatted)}
+                    format="dMyShort"
+                  />
+                </div>
+              </div>
               {modalError && (
                 <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
                   ⚠ {modalError}
@@ -561,12 +703,13 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         subtitle={`Filter Tanggal: ${tanggalFilter}`}
         orientation="landscape"
         columns={[
-          { header: 'NoBukti', accessor: 'noBukti', width: '110px' },
-          { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center', width: '85px' },
+          { header: 'NoBukti', accessor: 'noBukti', width: '105px' },
+          { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center', width: '80px' },
           { header: 'Nama Customer', accessor: 'namaCustomer' },
-          { header: 'Sales', accessor: 'namaSales', width: '90px' },
-          { header: 'Follow', accessor: 'follow', width: '70px' },
-          { header: 'No. SQ', accessor: 'noSq', width: '100px' },
+          { header: 'Sales', accessor: 'namaSales', width: '85px' },
+          { header: 'Qty', accessor: (r) => formatMoney(r.qty), align: 'right', width: '60px' },
+          { header: 'Follow', accessor: 'follow', width: '65px' },
+          { header: 'No. SQ', accessor: 'noSq', width: '90px' },
           { header: 'Keterangan', accessor: 'keterangan' },
         ]}
         rows={filteredList}

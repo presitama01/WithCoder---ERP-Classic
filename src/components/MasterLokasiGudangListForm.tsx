@@ -202,7 +202,15 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
     if (searchField === 'Kode') return item.kode.toLowerCase().includes(term);
-    return item.namaLokasi.toLowerCase().includes(term) || item.kota.toLowerCase().includes(term);
+    if (searchField === 'Penanggung Jawab') return (item.pic || '').toLowerCase().includes(term);
+    return (
+      item.namaLokasi.toLowerCase().includes(term) ||
+      item.kota.toLowerCase().includes(term) ||
+      item.alamat.toLowerCase().includes(term) ||
+      (item.pic || '').toLowerCase().includes(term) ||
+      (item.fax || '').toLowerCase().includes(term) ||
+      (item.keterangan || '').toLowerCase().includes(term)
+    );
   });
 
   const handleExportExcel = async () => {
@@ -218,6 +226,9 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         { header: 'Kota', accessor: 'kota' },
         { header: 'Telepon 1', accessor: 'telepon1' },
         { header: 'Telepon 2', accessor: 'telepon2' },
+        { header: 'Fax', accessor: (r) => r.fax || '' },
+        { header: 'Penanggung Jawab', accessor: (r) => r.pic || '' },
+        { header: 'Keterangan', accessor: (r) => r.keterangan || '' },
       ],
       rows: filteredLokasi,
     });
@@ -271,6 +282,7 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
               >
                 <option value="Description">Description</option>
                 <option value="Kode">Kode</option>
+                <option value="Penanggung Jawab">Penanggung Jawab</option>
               </select>
               <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
             </div>
@@ -296,16 +308,19 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
             </div>
 
             <div id="master-lokasi-table-scroll" className="flex-1 overflow-auto bg-[#ECE9D8]">
-              <table className="border-collapse text-[11px] font-sans select-none bg-white w-full">
-                <thead>
+              <table className="border-collapse text-[11px] font-sans select-none bg-white w-full min-w-[1180px]">
+                <thead className="sticky top-0 z-10">
                   <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
                     <th className="w-[20px] min-w-[20px] max-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] p-0" />
                     <th className="w-[64px] min-w-[64px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Kode</th>
                     <th className="w-[150px] min-w-[150px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Nama Lokasi</th>
-                    <th className="w-[260px] min-w-[260px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Alamat</th>
-                    <th className="w-[140px] min-w-[140px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Kota</th>
-                    <th className="w-[110px] min-w-[110px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Telepon1</th>
-                    <th className="w-[110px] min-w-[110px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Telepon2</th>
+                    <th className="w-[230px] min-w-[230px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Alamat</th>
+                    <th className="w-[115px] min-w-[115px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Kota</th>
+                    <th className="w-[105px] min-w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Telepon1</th>
+                    <th className="w-[105px] min-w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Telepon2</th>
+                    <th className="w-[105px] min-w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Fax</th>
+                    <th className="w-[140px] min-w-[140px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Penanggung Jawab</th>
+                    <th className="min-w-[150px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Keterangan</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -329,9 +344,19 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold uppercase">{item.kota}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon1}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon2}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.fax || ''}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] uppercase">{item.pic || ''}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.keterangan || ''}</td>
                       </tr>
                     );
                   })}
+                  {filteredLokasi.length === 0 && (
+                    <tr>
+                      <td colSpan={10} className="text-center py-6 text-gray-500">
+                        Belum ada data lokasi gudang
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -497,14 +522,20 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         onClose={() => setIsPrintOpen(false)}
         title="LAPORAN MASTER LOKASI GUDANG"
         subtitle={`Total Record: ${filteredLokasi.length}`}
+        orientation="landscape"
         columns={[
-          { header: 'Kode', accessor: 'kode', width: '60px' },
-          { header: 'Nama Lokasi', accessor: 'namaLokasi', width: '130px' },
-          { header: 'Alamat', accessor: 'alamat' },
-          { header: 'Kota', accessor: 'kota', width: '100px' },
-          { header: 'Telepon', accessor: 'telepon1', width: '100px' },
+          { header: 'Kode', accessor: 'kode', width: '50px', align: 'center' },
+          { header: 'Nama Lokasi', accessor: 'namaLokasi', width: '125px' },
+          { header: 'Alamat', accessor: 'alamat', width: '190px' },
+          { header: 'Kota', accessor: 'kota', width: '85px' },
+          { header: 'Telepon 1', accessor: 'telepon1', width: '90px' },
+          { header: 'Telepon 2', accessor: 'telepon2', width: '90px' },
+          { header: 'Fax', accessor: (r) => r.fax || '-', width: '85px' },
+          { header: 'Penanggung Jawab', accessor: (r) => r.pic || '-', width: '115px' },
+          { header: 'Keterangan', accessor: (r) => r.keterangan || '-', width: '130px' },
         ]}
         rows={filteredLokasi}
+        summaryItems={[{ label: 'Total Lokasi Gudang', value: `${filteredLokasi.length} Lokasi` }]}
       />
     </div>
   );

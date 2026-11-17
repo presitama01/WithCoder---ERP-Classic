@@ -89,6 +89,11 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [newTglKirim, setNewTglKirim] = useState<string>('');
   const [newPersen, setNewPersen] = useState<string>('0');
   const [newPoClose, setNewPoClose] = useState<string>('Not Yet');
+  const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
+  const [newTglCreated, setNewTglCreated] = useState<string>('');
+  const [newDiupdateOleh, setNewDiupdateOleh] = useState<string>('');
+  const [newTglUpdate, setNewTglUpdate] = useState<string>('');
+  const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -102,10 +107,34 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadMasterSuppliers = async (): Promise<string[]> => {
+    try {
+      const rows = await erpList<any>('master_suppliers', {
+        orderBy: 'nama_supplier',
+        asc: true,
+        limit: 1000,
+      });
+      const uniqueNames = Array.from(
+        new Set(
+          rows
+            .map((r) => String(r.nama_supplier || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setSupplierOptions(uniqueNames);
+      return uniqueNames;
+    } catch {
+      return [];
+    }
+  };
+
   const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false });
+      const [rows] = await Promise.all([
+        erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false }),
+        loadMasterSuppliers(),
+      ]);
       const mapped = rows.map(mapDbToPo);
       setPoList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
@@ -131,11 +160,12 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddNew = () => {
+  const handleAddNew = async () => {
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisplay = toDisplayDMyShort(todayIso());
     setEditingId(null);
     setModalError(null);
     setNewNoBukti(nextUniqueCode(poList.map((p) => p.noBukti), '2608-PO-IMP-', 3));
-    const todayDisplay = toDisplayDMyShort(todayIso());
     setNewTanggal(todayDisplay);
     setNewSupplier('');
     setNewKeterangan('');
@@ -145,19 +175,26 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewTglKirim(todayDisplay);
     setNewPersen('0');
     setNewPoClose('Not Yet');
+    setNewDibuatOleh(currentUser);
+    setNewTglCreated(todayDisplay);
+    setNewDiupdateOleh('-');
+    setNewTglUpdate('');
     setIsAddOpen(true);
+    await loadMasterSuppliers();
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const item = poList.find((p) => p.id === selectedId);
     if (!item) {
       showFeedback('Pilih baris terlebih dahulu');
       return;
     }
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisplay = toDisplayDMyShort(todayIso());
     setEditingId(item.id);
     setModalError(null);
     setNewNoBukti(item.noBukti);
-    setNewTanggal(item.tanggal);
+    setNewTanggal(item.tanggal || todayDisplay);
     setNewSupplier(item.namaSupplier);
     setNewKeterangan(item.keterangan);
     setNewNilaiPo(String(item.nilaiPoNum));
@@ -166,7 +203,14 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
     setNewPersen(String(parseNum(item.persen)));
     setNewPoClose(item.poClose);
+    setNewDibuatOleh(item.dibuatOleh || currentUser);
+    setNewTglCreated(!item.tglCreated || item.tglCreated === '-' ? todayDisplay : item.tglCreated);
+    setNewDiupdateOleh(
+      item.diupdateOleh && item.diupdateOleh !== '-' ? item.diupdateOleh : currentUser
+    );
+    setNewTglUpdate(item.tglUpdate && item.tglUpdate !== '-' ? item.tglUpdate : todayDisplay);
     setIsAddOpen(true);
+    await loadMasterSuppliers();
   };
 
   const handleSaveNew = async (e: React.FormEvent) => {
@@ -179,6 +223,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
     try {
       setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const payload = {
         no_bukti: newNoBukti.trim().toUpperCase(),
         tanggal: toIsoDate(newTanggal) || todayIso(),
@@ -190,13 +235,15 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
         tgl_kirim: toIsoDate(newTglKirim),
         persen: parseNum(newPersen),
         po_close: newPoClose,
+        dibuat_oleh: newDibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(newTglCreated) || todayIso(),
       };
 
       if (editingId) {
         const saved = await erpUpdate<any>('purchase_orders', editingId, {
           ...payload,
-          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_update: todayIso(),
+          diupdate_oleh: newDiupdateOleh.trim().toUpperCase() || currentUser,
+          tgl_update: toIsoDate(newTglUpdate) || todayIso(),
         });
         const mapped = mapDbToPo(saved);
         setPoList(poList.map((p) => (p.id === editingId ? mapped : p)));
@@ -204,9 +251,8 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       } else {
         const saved = await erpCreate<any>('purchase_orders', {
           ...payload,
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-          diupdate_oleh: '-',
+          diupdate_oleh: newDiupdateOleh.trim() ? newDiupdateOleh.trim().toUpperCase() : '-',
+          tgl_update: toIsoDate(newTglUpdate),
         });
         const mapped = mapDbToPo(saved);
         setPoList([mapped, ...poList]);
@@ -280,6 +326,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
         { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center' },
         { header: 'PO.Close', accessor: 'poClose', align: 'center' },
         { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
+        { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center' },
+        { header: 'DiUpdate Oleh', accessor: 'diupdateOleh' },
+        { header: 'Tgl.Updated', accessor: 'tglUpdate', align: 'center' },
       ],
       rows: filteredPoList,
     });
@@ -351,8 +400,8 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center">PO.Close</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Dibuat Oleh</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Tgl.Created</th>
-                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Diupdate Oleh</th>
-                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Tgl.Update</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">DiUpdate Oleh</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Tgl.Updated</th>
                 <th className="px-2 py-1.5 text-center w-16">Aksi</th>
               </tr>
             </thead>
@@ -487,13 +536,23 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Nama Supplier:</label>
-                  <input
-                    type="text"
+                  <select
                     value={newSupplier}
                     onChange={(e) => setNewSupplier(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
-                  />
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Supplier --</option>
+                    {Array.from(
+                      new Set(
+                        [...supplierOptions, newSupplier.trim().toUpperCase()].filter(Boolean)
+                      )
+                    ).map((namaSupplier) => (
+                      <option key={namaSupplier} value={namaSupplier}>
+                        {namaSupplier}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-gray-700">Keterangan:</label>
@@ -563,6 +622,42 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     </select>
                   </div>
                 </div>
+                <div className="border-t border-[#D0D0D0] pt-2.5 grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Dibuat Oleh:</label>
+                    <input
+                      type="text"
+                      value={newDibuatOleh}
+                      onChange={(e) => setNewDibuatOleh(e.target.value.toUpperCase())}
+                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Tgl.Created:</label>
+                    <DatePickerInput
+                      value={newTglCreated}
+                      onChange={(formatted) => setNewTglCreated(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">DiUpdate Oleh:</label>
+                    <input
+                      type="text"
+                      value={newDiupdateOleh}
+                      onChange={(e) => setNewDiupdateOleh(e.target.value.toUpperCase())}
+                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Tgl.Updated:</label>
+                    <DatePickerInput
+                      value={newTglUpdate}
+                      onChange={(formatted) => setNewTglUpdate(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
                 {modalError && (
                   <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
                     ⚠ {modalError}
@@ -599,13 +694,17 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           subtitle={`Filter Tanggal: ${tanggalFilter}`}
           orientation="landscape"
           columns={[
-            { header: 'No.Bukti', accessor: 'noBukti', width: '115px' },
-            { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '85px' },
-            { header: 'Nama Supplier', accessor: 'namaSupplier' },
+            { header: 'No.Bukti', accessor: 'noBukti', width: '98px' },
+            { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '68px' },
+            { header: 'Nama Supplier', accessor: 'namaSupplier', width: '145px' },
             { header: 'Keterangan', accessor: 'keterangan' },
-            { header: 'Nilai PO', accessor: 'nilaiPo', align: 'right', width: '100px' },
-            { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '85px' },
-            { header: 'PO.Close', accessor: 'poClose', align: 'center', width: '70px' },
+            { header: 'Nilai PO', accessor: 'nilaiPo', align: 'right', width: '88px' },
+            { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '68px' },
+            { header: 'PO.Close', accessor: 'poClose', align: 'center', width: '58px' },
+            { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '74px' },
+            { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '70px' },
+            { header: 'DiUpdate Oleh', accessor: 'diupdateOleh', width: '78px' },
+            { header: 'Tgl.Updated', accessor: 'tglUpdate', align: 'center', width: '70px' },
           ]}
           rows={filteredPoList}
           summaryItems={[
