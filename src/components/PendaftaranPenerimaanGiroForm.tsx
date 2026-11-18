@@ -61,6 +61,54 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const [findQuery, setFindQuery] = useState<string>('');
 
+  const [customerOptions, setCustomerOptions] = useState<any[]>([]);
+  const [bankOptions, setBankOptions] = useState<string[]>([]);
+  const [giroOptions, setGiroOptions] = useState<any[]>([]);
+
+  const loadMasterCustomers = async () => {
+    try {
+      const rows = await erpList<any>('master_customers', {
+        orderBy: 'nama_customer',
+        asc: true,
+        limit: 1000,
+      });
+      setCustomerOptions(rows);
+    } catch {
+      setCustomerOptions([]);
+    }
+  };
+
+  const loadMasterBanks = async () => {
+    try {
+      const rows = await erpList<any>('master_banks', {
+        orderBy: 'nama_bank',
+        asc: true,
+        limit: 1000,
+      });
+      const uniqueBanks = Array.from(
+        new Set(rows.map((r) => String(r.nama_bank || '').trim().toUpperCase()).filter(Boolean))
+      );
+      setBankOptions(uniqueBanks);
+    } catch {
+      setBankOptions([]);
+    }
+  };
+
+  const loadGiroTable = async () => {
+    try {
+      const rows = await erpList<any>('giro_pembelian_details', {
+        limit: 1000,
+      });
+      setGiroOptions(rows);
+    } catch {
+      setGiroOptions([]);
+    }
+  };
+
+  const loadMasterData = async () => {
+    await Promise.all([loadMasterCustomers(), loadMasterBanks(), loadGiroTable()]);
+  };
+
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [newNoUrut, setNewNoUrut] = useState<string>('1');
   const [newIdCustomer, setNewIdCustomer] = useState<string>('CUS01');
@@ -123,11 +171,43 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   const loadInitialData = async () => {
     try {
       setIsBusy(true);
-      const headers = await erpList<GiroPenjualanHeader>('giro_penjualan_headers', {
-        orderBy: 'created_at',
-        asc: false,
-        limit: 100,
-      });
+      let [headers] = await Promise.all([
+        erpList<GiroPenjualanHeader>('giro_penjualan_headers', {
+          orderBy: 'created_at',
+          asc: false,
+          limit: 100,
+        }),
+        loadMasterData(),
+      ]);
+
+      if (!headers || headers.length === 0) {
+        try {
+          const samplePayload = {
+            no_bukti: 'GIRO00001',
+            tanggal: todayIso(),
+            dibuat_oleh: 'ADMIN',
+          };
+          const sampleDetail = [{
+            no_urut: 1,
+            id_customer: 'CUS-01',
+            customer: 'PT. MAKMUR SEJAHTERA',
+            no_cek_giro: 'CG-889900',
+            bank: 'BCA',
+            due: todayIso(),
+            amount_paid: 25000000,
+            keterangan: 'PENERIMAAN GIRO PENJUALAN',
+          }];
+          const seeded = await erpCompositeSave<{ header: GiroPenjualanHeader; details: any[] }>(
+            'giro-penjualan',
+            samplePayload,
+            sampleDetail
+          );
+          if (seeded && seeded.header) {
+            headers = [seeded.header];
+          }
+        } catch {}
+      }
+
       setSavedHeaders(headers);
       if (headers.length > 0) {
         await loadHeaderDetails(headers[0], 0);
@@ -236,11 +316,11 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     showFeedback('Dokumen Giro Baru siap diisi');
   };
 
-  const handleAddNew = () => {
+  const handleAddNew = async () => {
     setModalError(null);
     setEditingId(null);
     setNewNoUrut(String(giroList.length + 1));
-    setNewIdCustomer(nextUniqueCode(giroList.map((g) => g.idCustomer), 'CUS', 2));
+    setNewIdCustomer('');
     setNewCustomer('');
     setNewNoCekGiro('');
     setNewBank('');
@@ -248,9 +328,10 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     setNewAmountPaid('0');
     setNewKeterangan('');
     setIsAddOpen(true);
+    await loadMasterData();
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const item = giroList.find((g) => g.id === selectedId);
     if (!item) {
       showFeedback('Pilih baris data terlebih dahulu');
@@ -267,6 +348,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     setNewAmountPaid(String(item.amountPaid));
     setNewKeterangan(item.keterangan);
     setIsAddOpen(true);
+    await loadMasterData();
   };
 
   const handleSaveNew = async (e: React.FormEvent) => {
@@ -439,8 +521,8 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
 
   const filteredHeaders = savedHeaders.filter((h) => {
     if (!findQuery.trim()) return true;
-    const q = findQuery.toLowerCase();
-    return h.no_bukti.toLowerCase().includes(q) || (h.tanggal || '').toLowerCase().includes(q);
+    const q = findQuery.toLowerCase().trim();
+    return (h.no_bukti || '').toLowerCase().includes(q);
   });
 
   return (
@@ -656,47 +738,105 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                     <input
                       type="text"
                       value={newIdCustomer}
-                      onChange={(e) => setNewIdCustomer(e.target.value)}
-                      required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono uppercase"
+                      readOnly
+                      className="w-full px-2 py-1 bg-gray-100 border border-[#7F9DB9] rounded text-black font-mono uppercase"
                     />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-gray-800 font-semibold mb-1">No. Cek / Giro</label>
-                    <input
-                      type="text"
+                    <select
                       value={newNoCekGiro}
-                      onChange={(e) => setNewNoCekGiro(e.target.value)}
-                      placeholder="Cth: BG-778899"
+                      onChange={(e) => {
+                        const selGiroNo = e.target.value;
+                        const foundGiro = giroOptions.find(
+                          (g) => String(g.no_cek_giro || '').trim().toUpperCase() === selGiroNo
+                        );
+                        setNewNoCekGiro(selGiroNo);
+                        if (foundGiro) {
+                          if (foundGiro.bank) setNewBank(foundGiro.bank);
+                          if (foundGiro.amount_paid) setNewAmountPaid(String(foundGiro.amount_paid));
+                          if (foundGiro.supplier) setNewKeterangan(`Giro dari ${foundGiro.supplier}`);
+                        }
+                      }}
                       required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono uppercase"
-                    />
+                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-mono uppercase cursor-pointer"
+                    >
+                      <option value="">-- Pilih No. Giro --</option>
+                      {Array.from(
+                        new Set(
+                          [
+                            ...giroOptions.map((g) => String(g.no_cek_giro || '').trim().toUpperCase()),
+                            newNoCekGiro.trim().toUpperCase(),
+                          ].filter(Boolean)
+                        )
+                      ).map((giroNo) => (
+                        <option key={giroNo} value={giroNo}>
+                          {giroNo}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-gray-800 font-semibold mb-1">Customer</label>
-                  <input
-                    type="text"
+                  <label className="block text-gray-800 font-semibold mb-1">Customer & ID</label>
+                  <select
                     value={newCustomer}
-                    onChange={(e) => setNewCustomer(e.target.value)}
-                    placeholder="Nama Perusahaan Customer..."
+                    onChange={(e) => {
+                      const selName = e.target.value;
+                      const found = customerOptions.find(
+                        (c) => String(c.nama_customer || '').trim().toUpperCase() === selName
+                      );
+                      setNewCustomer(selName);
+                      if (found) {
+                        setNewIdCustomer(found.kode_customer || found.id || 'CUS01');
+                      }
+                    }}
                     required
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-semibold uppercase"
-                  />
+                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black font-semibold uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Customer --</option>
+                    {Array.from(
+                      new Set(
+                        [
+                          ...customerOptions.map((c) => String(c.nama_customer || '').trim().toUpperCase()),
+                          newCustomer.trim().toUpperCase(),
+                        ].filter(Boolean)
+                      )
+                    ).map((custName) => (
+                      <option key={custName} value={custName}>
+                        {custName}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[11px] text-gray-600 font-mono">
+                    ID Customer: <span className="font-bold">{newIdCustomer || '-'}</span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-gray-800 font-semibold mb-1">Bank</label>
-                    <input
-                      type="text"
+                    <select
                       value={newBank}
                       onChange={(e) => setNewBank(e.target.value)}
-                      placeholder="Cth: BCA / Mandiri..."
                       required
-                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black uppercase"
-                    />
+                      className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black uppercase cursor-pointer"
+                    >
+                      <option value="">-- Pilih Bank --</option>
+                      {Array.from(
+                        new Set(
+                          [
+                            ...bankOptions,
+                            newBank.trim().toUpperCase(),
+                          ].filter(Boolean)
+                        )
+                      ).map((bankName) => (
+                        <option key={bankName} value={bankName}>
+                          {bankName}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-gray-800 font-semibold mb-1">Due (Jatuh Tempo)</label>

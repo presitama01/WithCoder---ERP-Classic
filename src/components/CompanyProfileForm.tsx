@@ -82,10 +82,24 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
   const loadProfiles = async (targetCode?: string) => {
     try {
       setIsBusy(true);
-      const rows = await erpList<CompanyProfileData>('company_profiles', {
+      let rows = await erpList<CompanyProfileData>('company_profiles', {
         orderBy: 'profile_code',
         asc: true,
       });
+      if (!rows || rows.length === 0) {
+        try {
+          const seeded = await erpUpsert<CompanyProfileData>(
+            'company_profiles',
+            FALLBACK_COMPANY_PROFILE,
+            'profile_code'
+          );
+          if (seeded) {
+            rows = [seeded];
+          }
+        } catch {
+          rows = [FALLBACK_COMPANY_PROFILE as any];
+        }
+      }
       setProfiles(rows);
       const code = targetCode || formData.profileCode || '01';
       const found = rows.find((r) => r.profile_code === code) || rows[0];
@@ -219,15 +233,7 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
 
   const openFindModal = async () => {
     setIsFindOpen(true);
-    try {
-      const rows = await erpList<CompanyProfileData>('company_profiles', {
-        orderBy: 'profile_code',
-        asc: true,
-      });
-      setProfiles(rows);
-    } catch {
-      // keep existing
-    }
+    await loadProfiles();
     setTimeout(() => findInputRef.current?.focus(), 60);
   };
 
@@ -273,15 +279,19 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
 
   const filteredProfiles = profiles.filter((p) => {
     if (!findQuery.trim()) return true;
-    const q = findQuery.toLowerCase();
-    return (
-      (p.profile_code || '').toLowerCase().includes(q) ||
-      (p.company_name || '').toLowerCase().includes(q) ||
-      (p.no_npwp || '').toLowerCase().includes(q) ||
-      (p.address || '').toLowerCase().includes(q) ||
-      (p.phone || '').toLowerCase().includes(q) ||
-      (p.mail || '').toLowerCase().includes(q)
-    );
+    const qParts = findQuery.toLowerCase().trim().split(/\s+/);
+    const searchable = [
+      p.profile_code || '',
+      p.company_name || '',
+      p.no_npwp || '',
+      p.address || '',
+      p.phone || '',
+      p.mail || '',
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    return qParts.every((part) => searchable.includes(part));
   });
 
   const printRows = [
@@ -514,13 +524,33 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
                   type="text"
                   value={findQuery}
                   onChange={(e) => setFindQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      loadProfiles();
+                      showFeedback(`Pencarian selesai: ${filteredProfiles.length} profil ditemukan`);
+                    }
+                  }}
                   placeholder="Cari Kode, Nama Perusahaan, NPWP, Alamat, Telepon, Email..."
                   className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
                 />
                 <button
                   type="button"
-                  onClick={openFindModal}
-                  className="h-[24px] px-3 bg-[#ECE9D8] border border-[#7A7A7A] font-semibold cursor-pointer"
+                  onClick={() => {
+                    loadProfiles();
+                    showFeedback(`Pencarian selesai: ${filteredProfiles.length} profil ditemukan`);
+                  }}
+                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
+                >
+                  Cari
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFindQuery('');
+                    loadProfiles();
+                    showFeedback('Data di-refresh dari Supabase');
+                  }}
+                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
                 >
                   Refresh
                 </button>
