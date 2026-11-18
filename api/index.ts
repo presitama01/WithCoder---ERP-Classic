@@ -22,13 +22,16 @@ const ALLOWED_TABLES = new Set([
   'giro_pembelian_details',
   'purchase_requests',
   'purchase_orders',
+  'purchase_order_details',
   'pembelian_barangs',
   'retur_pembelians',
   'giro_penjualan_headers',
   'giro_penjualan_details',
   'sales_inquiries',
   'sales_quotations',
+  'sales_quotation_details',
   'sales_orders',
+  'sales_order_details',
   'sales_order_items',
   'surat_jalans',
   'surat_jalan_items',
@@ -322,6 +325,214 @@ export function registerErpApiRoutes(app: Express): void {
       return res.json({ header: headerRow });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan jurnal umum.' });
+    }
+  });
+
+  app.post('/api/erp/composite/purchase-order', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Purchase Order wajib diisi.' });
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('purchase_orders')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('purchase_order_details')
+          .delete()
+          .eq('po_id', id);
+        if (delErr) return res.status(400).json({ error: delErr.message });
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('purchase_orders')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          return {
+            ...rest,
+            po_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('purchase_order_details')
+          .insert(payload)
+          .select();
+        if (detErr) return res.status(400).json({ error: detErr.message });
+        savedDetails = detData || [];
+      }
+
+      return res.json({ header: headerRow, details: savedDetails });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Purchase Order.' });
+    }
+  });
+
+  app.post('/api/erp/composite/sales-quotation', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_sq) {
+        return res.status(400).json({ error: 'No. SQ wajib diisi.' });
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('sales_quotations')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('sales_quotation_details')
+          .delete()
+          .eq('sq_id', id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('sales_quotations')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          return {
+            ...rest,
+            sq_id: headerRow.id,
+            no_sq: headerRow.no_sq,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('sales_quotation_details')
+          .insert(payload)
+          .select();
+        if (detErr) return res.status(400).json({ error: detErr.message });
+        savedDetails = detData || [];
+      }
+
+      return res.json({ header: headerRow, details: savedDetails });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Sales Quotation.' });
+    }
+  });
+
+  app.post('/api/erp/composite/sales-order', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Sales Order wajib diisi.' });
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('sales_orders')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('sales_order_details')
+          .delete()
+          .eq('so_id', id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('sales_orders')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          return {
+            ...rest,
+            so_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('sales_order_details')
+          .insert(payload)
+          .select();
+        if (detErr) return res.status(400).json({ error: detErr.message });
+        savedDetails = detData || [];
+      }
+
+      return res.json({ header: headerRow, details: savedDetails });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Sales Order.' });
     }
   });
 

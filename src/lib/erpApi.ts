@@ -253,7 +253,13 @@ export async function erpDelete(table: string, id: string, matchCol = 'id'): Pro
 }
 
 export async function erpCompositeSave<T = any>(
-  endpoint: 'giro-pembelian' | 'giro-penjualan' | 'jurnal-umum',
+  endpoint:
+    | 'giro-pembelian'
+    | 'giro-penjualan'
+    | 'jurnal-umum'
+    | 'purchase-order'
+    | 'sales-quotation'
+    | 'sales-order',
   header: Record<string, any>,
   details?: Record<string, any>[]
 ): Promise<T> {

@@ -35,6 +35,7 @@ interface A4PrintPreviewModalProps<T = any> {
   orientation?: 'portrait' | 'landscape';
   printedBy?: string;
   fileName?: string;
+  toolbarExtra?: React.ReactNode;
 }
 
 function parseWidthPx(w?: string): number | null {
@@ -139,6 +140,7 @@ export function A4PrintPreviewModal<T = any>({
   orientation: requestedOrientation,
   printedBy,
   fileName,
+  toolbarExtra,
 }: A4PrintPreviewModalProps<T>) {
   const recommendedOrientation = useMemo(
     () => computeRecommendedOrientation(columns, rows, requestedOrientation),
@@ -309,6 +311,7 @@ export function A4PrintPreviewModal<T = any>({
         </div>
 
         <div className="flex items-center space-x-1.5 shrink-0">
+          {toolbarExtra}
           <button
             type="button"
             onClick={() =>
