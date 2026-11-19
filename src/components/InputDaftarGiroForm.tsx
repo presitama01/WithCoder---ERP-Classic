@@ -177,17 +177,27 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
     }
   };
 
-  const loadInitialData = async () => {
-    try {
-      setIsBusy(true);
-      let [headers] = await Promise.all([
-        erpList<GiroHeaderRecord>('giro_pembelian_headers', {
+  const fetchGiroHeaders = async (): Promise<GiroHeaderRecord[]> => {
+    for (const tbl of ['giro_pembelian_headers', 'giro_pembelian', 'giro_pembelians']) {
+      try {
+        const rows = await erpList<GiroHeaderRecord>(tbl, {
           orderBy: 'created_at',
           asc: false,
           limit: 100,
-        }),
-        loadMasterData(),
-      ]);
+        });
+        if (rows && rows.length > 0) {
+          return rows;
+        }
+      } catch {}
+    }
+    return [];
+  };
+
+  const loadInitialData = async () => {
+    try {
+      setIsBusy(true);
+      await loadMasterData();
+      let headers = await fetchGiroHeaders();
 
       if (!headers || headers.length === 0) {
         try {
@@ -538,11 +548,7 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
   const handleOpenFind = async () => {
     setIsFindOpen(true);
     try {
-      let headers = await erpList<GiroHeaderRecord>('giro_pembelian_headers', {
-        orderBy: 'created_at',
-        asc: false,
-        limit: 100,
-      });
+      let headers = await fetchGiroHeaders();
       if (!headers || headers.length === 0) {
         try {
           const samplePayload = {

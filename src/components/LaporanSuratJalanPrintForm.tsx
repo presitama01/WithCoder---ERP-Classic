@@ -41,6 +41,8 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const [salesCatalog, setSalesCatalog] = useState<{ kode: string; nama: string }[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [customerCatalog, setCustomerCatalog] = useState<string[]>([]);
+  const [soOptions, setSoOptions] = useState<string[]>([]);
+  const [poOptions, setPoOptions] = useState<string[]>([]);
 
   // Live Supabase table + Search state
   const [tableRows, setTableRows] = useState<any[]>([]);
@@ -57,7 +59,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const [formCustomer, setFormCustomer] = useState<string>('');
   const [formNoSo, setFormNoSo] = useState<string>('');
   const [formPoNo, setFormPoNo] = useState<string>('');
-  const [formSales, setFormSales] = useState<string>('01');
+  const [formSales, setFormSales] = useState<string>('');
   const [formNoFaktur, setFormNoFaktur] = useState<string>('');
   const [formKeterangan, setFormKeterangan] = useState<string>('');
   const [formLokasiStock, setFormLokasiStock] = useState<string>('01 - OFFICE');
@@ -65,6 +67,11 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const [formTglPrint, setFormTglPrint] = useState<string>('');
   const [formStsPost, setFormStsPost] = useState<string>('Posting');
   const [formTglPost, setFormTglPost] = useState<string>('');
+  const [formDibuatOleh, setFormDibuatOleh] = useState<string>('');
+  const [formTglCreated, setFormTglCreated] = useState<string>('');
+  const [formDiupdateOleh, setFormDiupdateOleh] = useState<string>('');
+  const [formTglUpdate, setFormTglUpdate] = useState<string>('');
+
   const [modalError, setModalError] = useState<string | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
@@ -109,15 +116,20 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     (async () => {
       try {
         setIsBusy(true);
-        const [sales, lokasis, customers] = await Promise.all([
-          erpList<any>('master_sales', { orderBy: 'kode_sales', asc: true }).catch(() => []),
+        const [sales, lokasis, customers, soRes, poRes] = await Promise.all([
+          erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true }).catch(() => []),
           erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
           erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true }).catch(() => []),
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }).catch(() => []),
+          erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false }).catch(() => []),
         ]);
         if (!active) return;
         setSalesCatalog(sales.map((s) => ({ kode: s.kode_sales || '', nama: s.nama_sales || '' })));
         setLokasiOptions(lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()));
         setCustomerCatalog(customers.map((c) => c.nama_customer || '').filter(Boolean));
+        setSoOptions(soRes.map((so: any) => so.no_bukti || '').filter(Boolean));
+        setPoOptions(poRes.map((po: any) => po.no_bukti || '').filter(Boolean));
+
         const rawPreset = localStorage.getItem('withcoder_preset_surat_jalan');
         if (rawPreset) {
           const v = JSON.parse(rawPreset);
@@ -140,7 +152,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
 
   useEffect(() => {
     const match = salesCatalog.find(
-      (s) => s.kode.toLowerCase() === salesCode.trim().toLowerCase()
+      (s) => s.kode.toLowerCase() === salesCode.trim().toLowerCase() || s.nama.toLowerCase() === salesCode.trim().toLowerCase()
     );
     setSalesDesc(match ? match.nama : '');
   }, [salesCode, salesCatalog]);
@@ -173,21 +185,27 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   });
 
   const handleBaru = () => {
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(null);
     setModalError(null);
     setFormNoBukti(nextUniqueCode(tableRows.map((r) => r.no_bukti), '2608-DO-INV-', 3));
-    setFormTanggal(toDisplayDMyShort(todayIso()));
+    setFormTanggal(todayDisp);
     setFormCustomer(customerFilter || '');
     setFormNoSo('');
     setFormPoNo('');
-    setFormSales(salesCode || '01');
+    setFormSales(salesCode || '');
     setFormNoFaktur('');
     setFormKeterangan('');
     setFormLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setFormStsPrint('Not Yet');
     setFormTglPrint('');
     setFormStsPost('Posting');
-    setFormTglPost(toDisplayDMyShort(todayIso()));
+    setFormTglPost(todayDisp);
+    setFormDibuatOleh(currentUser);
+    setFormTglCreated(todayDisp);
+    setFormDiupdateOleh('-');
+    setFormTglUpdate('');
     setIsCrudOpen(true);
   };
 
@@ -200,15 +218,17 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
       showFeedback('Pilih baris Surat Jalan terlebih dahulu (atau klik Baru)');
       return;
     }
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisp = toDisplayDMyShort(todayIso());
     setSelectedId(current.id);
     setEditingId(current.id);
     setModalError(null);
     setFormNoBukti(current.no_bukti);
-    setFormTanggal(current.tanggal_display || toDisplayDMyShort(todayIso()));
+    setFormTanggal(current.tanggal_display || todayDisp);
     setFormCustomer(current.nama_customer);
     setFormNoSo(current.no_so);
     setFormPoNo(current.po_no);
-    setFormSales(current.sales || '01');
+    setFormSales(current.sales || '');
     setFormNoFaktur(current.no_faktur);
     setFormKeterangan(current.keterangan);
     setFormLokasiStock(current.lokasi_stock || lokasiOptions[0] || '01 - OFFICE');
@@ -216,6 +236,12 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     setFormTglPrint(current.tgl_print_display || '');
     setFormStsPost(current.sts_post || 'Posting');
     setFormTglPost(current.tgl_post_display || '');
+    setFormDibuatOleh(current.dibuat_oleh || currentUser);
+    setFormTglCreated(!current.tgl_created || current.tgl_created === '-' ? todayDisp : toDisplayDMyShort(current.tgl_created));
+    setFormDiupdateOleh(
+      current.diupdate_oleh && current.diupdate_oleh !== '-' ? current.diupdate_oleh : currentUser
+    );
+    setFormTglUpdate(current.tgl_update && current.tgl_update !== '-' ? toDisplayDMyShort(current.tgl_update) : todayDisp);
     setIsCrudOpen(true);
   };
 
@@ -228,8 +254,9 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     }
     try {
       setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const tglIso = toIsoDate(formTanggal) || todayIso();
-      const payload = {
+      const payload: Record<string, any> = {
         no_bukti: formNoBukti.trim().toUpperCase(),
         tanggal: tglIso,
         nama_customer: formCustomer.trim().toUpperCase(),
@@ -243,20 +270,18 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
         tgl_print: toIsoDate(formTglPrint) || (formStsPrint === 'Printed' ? todayIso() : null),
         sts_post: formStsPost,
         tgl_post: toIsoDate(formTglPost) || (formStsPost === 'Posting' ? tglIso : null),
+        dibuat_oleh: formDibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(formTglCreated) || todayIso(),
       };
       if (editingId) {
-        await erpUpdate('surat_jalans', editingId, {
-          ...payload,
-          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_update: todayIso(),
-        });
+        payload.diupdate_oleh = formDiupdateOleh.trim().toUpperCase() || currentUser;
+        payload.tgl_update = toIsoDate(formTglUpdate) || todayIso();
+        await erpUpdate('surat_jalans', editingId, payload);
         showFeedback('Surat Jalan diperbarui di Supabase');
       } else {
-        const created = await erpCreate<any>('surat_jalans', {
-          ...payload,
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-        });
+        payload.diupdate_oleh = formDiupdateOleh.trim() ? formDiupdateOleh.trim().toUpperCase() : '-';
+        payload.tgl_update = toIsoDate(formTglUpdate);
+        const created = await erpCreate<any>('surat_jalans', payload);
         if (created?.id) setSelectedId(String(created.id));
         showFeedback('Surat Jalan tersimpan ke Supabase');
       }
@@ -361,8 +386,10 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
         po_no: r.po_no || '',
         sales: r.sales || '',
         no_faktur: r.no_faktur || '',
+        lokasi_stock: r.lokasi_stock || '01 - OFFICE',
         sts_post: r.sts_post || 'Posting',
         keterangan: r.keterangan || '',
+        dibuat_oleh: r.dibuat_oleh || 'ADMIN',
       }));
   };
 
@@ -396,7 +423,9 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           { header: 'PO.No', accessor: 'po_no' },
           { header: 'Sales', accessor: 'sales', align: 'center' },
           { header: 'No.Faktur', accessor: 'no_faktur' },
+          { header: 'Lokasi Stock', accessor: 'lokasi_stock' },
           { header: 'Status', accessor: 'sts_post', align: 'center' },
+          { header: 'Dibuat Oleh', accessor: 'dibuat_oleh' },
         ],
         rows: data,
       });
@@ -506,7 +535,8 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                     value={salesCode}
                     onChange={(e) => setSalesCode(e.target.value.toUpperCase())}
                     disabled={filterType !== 'sales'}
-                    className="bg-white border border-[#7A7A7A] px-2 py-0.5 w-24 text-[11px] font-mono disabled:bg-[#ECE9D8]"
+                    className="bg-white border border-[#7A7A7A] px-2 py-0.5 w-32 text-[11px] font-mono uppercase disabled:bg-[#ECE9D8]"
+                    placeholder="Pilih Sales..."
                   />
                   <datalist id="lap-sj-sales-list">
                     {salesCatalog.map((s) => (
@@ -519,7 +549,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                     type="text"
                     value={salesDesc}
                     readOnly
-                    className="bg-[#FFFFCC] border border-[#7A7A7A] px-2 py-0.5 flex-1 text-[11px] shadow-inner"
+                    className="bg-[#FFFFCC] border border-[#7A7A7A] px-2 py-0.5 flex-1 text-[11px] shadow-inner uppercase"
                   />
                 </div>
               </div>
@@ -535,23 +565,20 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                   />
                   <span>Customer</span>
                 </label>
-                {filterType === 'customer' && (
-                  <>
-                    <input
-                      type="text"
-                      list="lap-sj-cust-list"
-                      value={customerFilter}
-                      onChange={(e) => setCustomerFilter(e.target.value)}
-                      placeholder="Pilih / ketik customer..."
-                      className="flex-1 bg-white border border-[#7A7A7A] px-2 py-0.5 text-[11px] outline-none"
-                    />
-                    <datalist id="lap-sj-cust-list">
-                      {customerCatalog.map((c) => (
-                        <option key={c} value={c} />
-                      ))}
-                    </datalist>
-                  </>
-                )}
+                <input
+                  type="text"
+                  list="lap-sj-cust-list"
+                  value={customerFilter}
+                  onChange={(e) => setCustomerFilter(e.target.value)}
+                  disabled={filterType !== 'customer'}
+                  placeholder="Pilih / ketik customer..."
+                  className="flex-1 bg-white border border-[#7A7A7A] px-2 py-0.5 text-[11px] uppercase outline-none disabled:bg-[#ECE9D8]"
+                />
+                <datalist id="lap-sj-cust-list">
+                  {customerCatalog.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </div>
 
               <label className="flex items-center space-x-2 text-[11px] text-black cursor-pointer font-semibold">
@@ -577,7 +604,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                   <select
                     value={lokasiStock}
                     onChange={(e) => setLokasiStock(e.target.value)}
-                    className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer"
+                    className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer uppercase"
                   >
                     <option value="ALL">ALL</option>
                     {lokasiOptions.length > 0 ? (
@@ -689,13 +716,14 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                   <th className="border-r border-[#ACA899] px-2 py-1 text-left">PO.No</th>
                   <th className="border-r border-[#ACA899] px-2 py-1 text-center">Sales</th>
                   <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Faktur</th>
+                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Lokasi Stock</th>
                   <th className="px-2 py-1 text-center">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center py-5 text-gray-500 italic">
+                    <td colSpan={9} className="text-center py-5 text-gray-500 italic">
                       Belum ada data Surat Jalan. Klik "Baru" untuk menambah ke Supabase.
                     </td>
                   </tr>
@@ -715,7 +743,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                           setFormCustomer(r.nama_customer);
                           setFormNoSo(r.no_so);
                           setFormPoNo(r.po_no);
-                          setFormSales(r.sales || '01');
+                          setFormSales(r.sales || '');
                           setFormNoFaktur(r.no_faktur);
                           setFormKeterangan(r.keterangan);
                           setFormLokasiStock(r.lokasi_stock || lokasiOptions[0] || '01 - OFFICE');
@@ -723,6 +751,10 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                           setFormTglPrint(r.tgl_print_display || '');
                           setFormStsPost(r.sts_post || 'Posting');
                           setFormTglPost(r.tgl_post_display || '');
+                          setFormDibuatOleh(r.dibuat_oleh || 'ADMIN');
+                          setFormTglCreated(r.tgl_created ? toDisplayDMyShort(r.tgl_created) : toDisplayDMyShort(todayIso()));
+                          setFormDiupdateOleh(r.diupdate_oleh || '-');
+                          setFormTglUpdate(r.tgl_update ? toDisplayDMyShort(r.tgl_update) : '');
                           setIsCrudOpen(true);
                         }}
                         className={`cursor-pointer border-b border-[#E0E0E0] ${
@@ -734,8 +766,9 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                         <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_customer}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_so || '-'}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.po_no || '-'}</td>
-                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sales}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sales || '-'}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_faktur || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.lokasi_stock || '-'}</td>
                         <td className="px-2 py-1 text-center">{r.sts_post}</td>
                       </tr>
                     );
@@ -750,7 +783,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
       {/* Add / Edit Surat Jalan Modal */}
       {isCrudOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[500px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[540px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
             <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold shrink-0">
               <span>{editingId ? 'Koreksi Surat Jalan' : 'Tambah Surat Jalan Baru'}</span>
               <button
@@ -761,7 +794,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px] overflow-y-auto">
+            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2.5 text-[11px] overflow-y-auto">
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">No. Bukti SJ *</label>
@@ -784,47 +817,64 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
               </div>
               <div>
                 <label className="block font-bold mb-0.5">Nama Customer *</label>
-                <input
-                  type="text"
-                  list="sj-modal-cust"
+                <select
                   value={formCustomer}
                   onChange={(e) => setFormCustomer(e.target.value.toUpperCase())}
-                  className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
-                />
-                <datalist id="sj-modal-cust">
+                  className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                >
+                  <option value="">-- Pilih Customer --</option>
                   {customerCatalog.map((c) => (
-                    <option key={c} value={c} />
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
-                </datalist>
+                </select>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block font-bold mb-0.5">No. SO</label>
-                  <input
-                    type="text"
+                  <select
                     value={formNoSo}
                     onChange={(e) => setFormNoSo(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A] font-mono uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih SO --</option>
+                    {soOptions.map((so) => (
+                      <option key={so} value={so}>
+                        {so}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block font-bold mb-0.5">PO. No</label>
-                  <input
-                    type="text"
+                  <select
                     value={formPoNo}
                     onChange={(e) => setFormPoNo(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A] font-mono uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih PO --</option>
+                    {poOptions.map((po) => (
+                      <option key={po} value={po}>
+                        {po}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block font-bold mb-0.5">Sales</label>
-                  <input
-                    type="text"
-                    list="lap-sj-sales-list"
+                  <select
                     value={formSales}
                     onChange={(e) => setFormSales(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
+                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Sales --</option>
+                    {salesCatalog.map((s) => (
+                      <option key={s.kode} value={s.nama}>
+                        {s.nama}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -839,18 +889,17 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                 </div>
                 <div>
                   <label className="block font-bold mb-0.5">Lokasi Stock</label>
-                  <input
-                    type="text"
-                    list="lap-sj-lokasi-list"
+                  <select
                     value={formLokasiStock}
                     onChange={(e) => setFormLokasiStock(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
-                  />
-                  <datalist id="lap-sj-lokasi-list">
+                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                  >
                     {lokasiOptions.map((l) => (
-                      <option key={l} value={l} />
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
                     ))}
-                  </datalist>
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -905,6 +954,46 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                   onChange={(e) => setFormKeterangan(e.target.value)}
                   className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
                 />
+              </div>
+
+              {/* Audit Fields */}
+              <div className="border-t border-[#D0D0D0] pt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div>
+                  <label className="block font-semibold mb-0.5">Dibuat Oleh:</label>
+                  <input
+                    type="text"
+                    value={formDibuatOleh}
+                    onChange={(e) => setFormDibuatOleh(e.target.value.toUpperCase())}
+                    className="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] uppercase text-[10px]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-0.5">Tgl. Created:</label>
+                  <DatePickerInput
+                    value={formTglCreated}
+                    onChange={(formatted) => setFormTglCreated(formatted)}
+                    format="dMyShort"
+                    inputClassName="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] text-[10px]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-0.5">Diupdate Oleh:</label>
+                  <input
+                    type="text"
+                    value={formDiupdateOleh}
+                    onChange={(e) => setFormDiupdateOleh(e.target.value.toUpperCase())}
+                    className="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] uppercase text-[10px]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-0.5">Tgl. Update:</label>
+                  <DatePickerInput
+                    value={formTglUpdate}
+                    onChange={(formatted) => setFormTglUpdate(formatted)}
+                    format="dMyShort"
+                    inputClassName="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] text-[10px]"
+                  />
+                </div>
               </div>
 
               {modalError && (
@@ -988,14 +1077,16 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           { label: 'Bentuk Laporan', value: bentukLaporan },
         ]}
         columns={[
-          { header: 'No.Bukti SJ', accessor: 'no_bukti', width: '110px' },
-          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
+          { header: 'No.Bukti SJ', accessor: 'no_bukti', width: '100px' },
+          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '75px' },
           { header: 'Nama Customer', accessor: 'nama_customer' },
-          { header: 'No.SO', accessor: 'no_so', width: '105px' },
-          { header: 'PO.No', accessor: 'po_no', width: '95px' },
-          { header: 'Sales', accessor: 'sales', align: 'center', width: '55px' },
-          { header: 'No.Faktur', accessor: 'no_faktur', width: '105px' },
-          { header: 'Status', accessor: 'sts_post', align: 'center', width: '70px' },
+          { header: 'No.SO', accessor: 'no_so', width: '95px' },
+          { header: 'PO.No', accessor: 'po_no', width: '85px' },
+          { header: 'Sales', accessor: 'sales', align: 'center', width: '70px' },
+          { header: 'No.Faktur', accessor: 'no_faktur', width: '95px' },
+          { header: 'Lokasi Stock', accessor: 'lokasi_stock', width: '95px' },
+          { header: 'Status', accessor: 'sts_post', align: 'center', width: '65px' },
+          { header: 'Dibuat Oleh', accessor: 'dibuat_oleh', width: '75px' },
         ]}
         rows={previewRows}
         summaryItems={[
