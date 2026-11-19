@@ -40,6 +40,7 @@ const ALLOWED_TABLES = new Set([
   'surat_jalans',
   'surat_jalan_items',
   'faktur_penjualans',
+  'faktur_penjualan_details',
   'retur_penjualans',
   'stock_awal',
   'penerimaan_barang_lains',
@@ -540,6 +541,91 @@ export function registerErpApiRoutes(app: Express): void {
     }
   });
 
+  app.post('/api/erp/composite/faktur-penjualan', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Faktur Penjualan wajib diisi.' });
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('faktur_penjualans')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('faktur_penjualan_details')
+          .delete()
+          .eq('faktur_id', id);
+        if (delErr) {
+          const msg = String(delErr.message || '').toLowerCase();
+          const isMissingTable = msg.includes('faktur_penjualan_details') || msg.includes('schema cache') || msg.includes('does not exist');
+          if (!isMissingTable && (!Array.isArray(details) || details.length > 0)) {
+            return res.status(400).json({ error: delErr.message });
+          }
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('faktur_penjualans')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      let detailWarning: string | undefined;
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          return {
+            ...rest,
+            faktur_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_so: headerRow.no_so || d.no_so || '',
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('faktur_penjualan_details')
+          .insert(payload)
+          .select();
+        if (detErr) {
+          const msg = String(detErr.message || '').toLowerCase();
+          const isMissingTable = msg.includes('faktur_penjualan_details') || msg.includes('schema cache') || msg.includes('does not exist');
+          if (isMissingTable) {
+            detailWarning = 'Tabel faktur_penjualan_details belum dibuat di Supabase. Jalankan SQL Query terlebih dahulu.';
+          } else {
+            return res.status(400).json({ error: detErr.message });
+          }
+        } else {
+          savedDetails = detData || [];
+        }
+      }
+
+      return res.json({ header: headerRow, details: savedDetails, detailWarning });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Faktur Penjualan.' });
+    }
+  });
+
   // Generic READ endpoint for all tables and views
   app.get('/api/erp/:table', async (req: Request, res: Response) => {
     const { client: supabase, missingEnv } = getSupabaseClient();
@@ -573,7 +659,19 @@ export function registerErpApiRoutes(app: Express): void {
 
       const searchCol = req.query.searchCol as string | undefined;
       const searchVal = req.query.searchVal as string | undefined;
-      if (searchCol && searchVal) {
+      const orSearch = req.query.orSearch as string | undefined;
+      if (orSearch && searchVal) {
+        const cleanVal = searchVal.replace(/[%_,()]/g, ' ').trim();
+        if (cleanVal) {
+          const cols = orSearch
+            .split(',')
+            .map((c) => c.trim())
+            .filter((c) => /^[a-zA-Z0-9_]+$/.test(c));
+          if (cols.length > 0) {
+            query = query.or(cols.map((c) => `${c}.ilike.%${cleanVal}%`).join(','));
+          }
+        }
+      } else if (searchCol && searchVal) {
         query = query.ilike(searchCol, `%${searchVal}%`);
       }
 

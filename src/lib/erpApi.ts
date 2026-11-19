@@ -40,6 +40,7 @@ export interface ErpQueryOptions {
   asc?: boolean;
   searchCol?: string;
   searchVal?: string;
+  orSearch?: string;
   eq?: Record<string, string | number | boolean>;
   gte?: Record<string, string | number>;
   lte?: Record<string, string | number>;
@@ -56,6 +57,10 @@ function buildQueryParams(opts?: ErpQueryOptions): string {
   if (opts.asc !== undefined) params.set('asc', String(opts.asc));
   if (opts.searchCol && opts.searchVal) {
     params.set('searchCol', opts.searchCol);
+    params.set('searchVal', opts.searchVal);
+  }
+  if (opts.orSearch && opts.searchVal) {
+    params.set('orSearch', opts.orSearch);
     params.set('searchVal', opts.searchVal);
   }
   if (opts.limit) params.set('limit', String(opts.limit));
@@ -259,7 +264,8 @@ export async function erpCompositeSave<T = any>(
     | 'jurnal-umum'
     | 'purchase-order'
     | 'sales-quotation'
-    | 'sales-order',
+    | 'sales-order'
+    | 'faktur-penjualan',
   header: Record<string, any>,
   details?: Record<string, any>[]
 ): Promise<T> {
