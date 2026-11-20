@@ -561,19 +561,23 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                 <tr className="h-[24px]">
                   <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0" />
                   <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
-                  <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Pelanggan</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit Kredit</th>
-                  <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat Invoice</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
-                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Phone</th>
-                  <th className="w-[150px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Sales</th>
-                  <th className="w-[150px] px-2 py-0.5 font-bold bg-[#ECE9D8]">Expedisi</th>
+                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">NPWP</th>
+                  <th className="w-[200px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Customer</th>
+                  <th className="w-[180px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat Kirim</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Wilayah Area</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit Kredit</th>
+                  <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Contact Person</th>
+                  <th className="w-[140px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Handphone</th>
+                  <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode Sales</th>
+                  <th className="w-[130px] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Sales</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredCustomer.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-6 text-gray-500 italic">
+                    <td colSpan={13} className="text-center py-6 text-gray-500 italic">
                       Tidak ada data pelanggan yang cocok
                     </td>
                   </tr>
@@ -593,13 +597,17 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                           {isSelected ? <span className="text-[10px] font-bold text-black">▶</span> : null}
                         </td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold">{item.kodeCustomer}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.npwp}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-semibold">{item.namaCustomer}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.delAlamat || item.invAlamat}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.delKota || item.invKota}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.wilayah}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{formatMoney(item.limitKredit)}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.invAlamat}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.invKota}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.invTelepon}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.namaSales || item.sales}</td>
-                        <td className="px-2 py-0.5">{item.namaExpedisi}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.cpNama}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.email}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.handphone}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.kodeSales}</td>
+                        <td className="px-2 py-0.5">{item.namaSales || item.sales}</td>
                       </tr>
                     );
                   })
@@ -612,7 +620,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-[780px] max-w-[96vw] max-h-[94vh] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col text-[11px]">
+          <div className="w-[860px] max-w-[98vw] max-h-[96vh] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col text-[11px]">
             <div className="bg-[#000080] text-white px-2.5 py-1 font-bold text-[12px] flex justify-between items-center mb-3 shrink-0">
               <span>{editingId ? 'Koreksi Master Pelanggan' : 'Tambah Master Pelanggan Baru'}</span>
               <button type="button" onClick={() => { setModalError(null); setIsAddOpen(false); }} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
@@ -705,9 +713,12 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                       type="number"
                       value={newLimitKredit}
                       onChange={(e) => setNewLimitKredit(e.target.value)}
-                      className="w-28 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                      className="w-36 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
                     />
-                    <span className="font-semibold">Tmp Pembayaran :</span>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Tmp Pembayaran :</label>
                     <input
                       type="number"
                       value={newTmpPembayaran}
@@ -823,7 +834,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
               </div>
 
               {/* Bottom Grid: Invoice Address vs Delivery Address */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 mt-3 pt-2 border-t border-[#ACA899]">
                 {/* Invoice Address */}
                 <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
                   <legend className="font-bold px-1 text-black">Invoice Address</legend>
