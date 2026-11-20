@@ -17,6 +17,20 @@ import {
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
 
+export interface SalesOrderRef {
+  id: string;
+  noBukti: string;
+  namaCustomer: string;
+  sales: string;
+  poNo: string;
+  lokasiStock: string;
+}
+
+export interface FakturRef {
+  noBukti: string;
+  noSo: string;
+}
+
 export interface SuratJalanItem {
   id: string;
   noBukti: string;
@@ -93,7 +107,8 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [customerOptions, setCustomerOptions] = useState<string[]>([]);
-  const [soOptions, setSoOptions] = useState<string[]>([]);
+  const [soOptions, setSoOptions] = useState<SalesOrderRef[]>([]);
+  const [fakturOptions, setFakturOptions] = useState<FakturRef[]>([]);
   const [poOptions, setPoOptions] = useState<string[]>([]);
   const [salesOptions, setSalesOptions] = useState<string[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
@@ -124,12 +139,13 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   };
 
   const loadMasterReferences = async () => {
-    const [custRes, soRes, poRes, salesRes, lokasiRes] = await Promise.allSettled([
+    const [custRes, soRes, poRes, salesRes, lokasiRes, fakturRes] = await Promise.allSettled([
       erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
       erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }),
       erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }),
       erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
       erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 1000 }),
+      erpList<any>('faktur_penjualans', { orderBy: 'tanggal', asc: false, limit: 1000 }).catch(() => []),
     ]);
 
     if (custRes.status === 'fulfilled') {
@@ -144,14 +160,27 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
     }
 
     if (soRes.status === 'fulfilled') {
-      const sos = Array.from(
-        new Set(
-          soRes.value
-            .map((s: any) => String(s.no_bukti || '').trim().toUpperCase())
-            .filter(Boolean)
-        )
-      );
+      const sos: SalesOrderRef[] = soRes.value
+        .map((s: any) => ({
+          id: String(s.id || ''),
+          noBukti: String(s.no_bukti || '').trim().toUpperCase(),
+          namaCustomer: String(s.nama_customer || '').trim().toUpperCase(),
+          sales: String(s.sales || '').trim().toUpperCase(),
+          poNo: String(s.po_no || '').trim().toUpperCase(),
+          lokasiStock: String(s.lokasi_stock || '01 - OFFICE').trim().toUpperCase(),
+        }))
+        .filter((s: SalesOrderRef) => s.noBukti);
       setSoOptions(sos);
+    }
+
+    if (fakturRes.status === 'fulfilled') {
+      const fakts: FakturRef[] = fakturRes.value
+        .map((f: any) => ({
+          noBukti: String(f.no_bukti || '').trim().toUpperCase(),
+          noSo: String(f.no_so || '').trim().toUpperCase(),
+        }))
+        .filter((f: FakturRef) => f.noBukti && f.noSo);
+      setFakturOptions(fakts);
     }
 
     if (poRes.status === 'fulfilled') {
@@ -190,6 +219,25 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
         )
       );
       setLokasiOptions(lokasis);
+    }
+  };
+
+  const applySalesOrderAutoFill = (rawNoSo: string) => {
+    const cleanNoSo = rawNoSo.trim().toUpperCase();
+    setNewNoSo(cleanNoSo);
+    if (!cleanNoSo) return;
+
+    const matchedSo = soOptions.find((s) => s.noBukti === cleanNoSo);
+    if (matchedSo) {
+      if (matchedSo.namaCustomer) setNewCustomer(matchedSo.namaCustomer);
+      if (matchedSo.poNo) setNewPoNo(matchedSo.poNo);
+      if (matchedSo.sales) setNewSales(matchedSo.sales);
+      if (matchedSo.lokasiStock) setNewLokasiStock(matchedSo.lokasiStock);
+    }
+
+    const matchedFaktur = fakturOptions.find((f) => f.noSo === cleanNoSo);
+    if (matchedFaktur) {
+      setNewNoFaktur(matchedFaktur.noBukti);
     }
   };
 
@@ -449,7 +497,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
   );
 
   const soDropdownChoices = Array.from(
-    new Set([...soOptions, newNoSo.trim().toUpperCase()].filter(Boolean))
+    new Set([...soOptions.map((s) => s.noBukti), newNoSo.trim().toUpperCase()].filter(Boolean))
   );
 
   const poDropdownChoices = Array.from(
@@ -715,7 +763,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
                 <label className="font-semibold">No. SO:</label>
                 <select
                   value={newNoSo}
-                  onChange={(e) => setNewNoSo(e.target.value)}
+                  onChange={(e) => applySalesOrderAutoFill(e.target.value)}
                   className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
                 >
                   <option value="">-- Pilih Sales Order --</option>
