@@ -1118,21 +1118,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">PO.NO:</label>
-                  <select
+                  <input
+                    type="text"
                     value={newPoNo}
                     onChange={(e) => setNewPoNo(e.target.value)}
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
-                  >
-                    <option value="">-- Pilih Purchase Order --</option>
-                    {poDropdownChoices.map((poNo) => {
-                      const info = poOptions.find((p) => p.noBukti === poNo);
-                      return (
-                        <option key={poNo} value={poNo}>
-                          {info && info.namaSupplier ? `${poNo} - ${info.namaSupplier}` : poNo}
-                        </option>
-                      );
-                    })}
-                  </select>
+                    placeholder="Ketik No PO..."
+                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
+                  />
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">Lokasi Stock:</label>
