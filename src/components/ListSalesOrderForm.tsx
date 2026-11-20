@@ -34,6 +34,9 @@ export interface SalesOrderItem {
   persen: string;
   keterangan: string;
   ppn: string;
+  ppnPct: number;
+  nilaiPpn: string;
+  nilaiPpnNum: number;
   soClose: string;
   lokasiStock: string;
   dibuatOleh: string;
@@ -80,8 +83,21 @@ interface ListSalesOrderFormProps {
   onOpenDetail?: () => void;
 }
 
+function calcPpnDeduction(
+  grossTotal: number,
+  ppnPct: number
+): { nominalPpn: number; netNilaiSo: number } {
+  const safeGross = Math.max(0, Number(grossTotal || 0));
+  const safePct = Math.max(0, Number(ppnPct || 0));
+  const nominalPpn = Number(((safeGross * safePct) / 100).toFixed(2));
+  const netNilaiSo = Math.max(0, Number((safeGross - nominalPpn).toFixed(2)));
+  return { nominalPpn, netNilaiSo };
+}
+
 function mapDbToSo(r: any): SalesOrderItem {
   const nilaiNum = Number(r.nilai_so || 0);
+  const ppnPct = Number(r.ppn ?? 11);
+  const nilaiPpnNum = Number(r.nilai_ppn || 0);
   return {
     id: r.id,
     noBukti: r.no_bukti || '',
@@ -96,7 +112,10 @@ function mapDbToSo(r: any): SalesOrderItem {
     tglKirim: toDisplayDMyShort(r.tgl_kirim) || '-',
     persen: `${Number(r.persen || 0)}%`,
     keterangan: r.keterangan || '',
-    ppn: `${Number(r.ppn ?? 11)}%`,
+    ppn: `${ppnPct}%`,
+    ppnPct,
+    nilaiPpn: formatMoney(nilaiPpnNum),
+    nilaiPpnNum,
     soClose: r.so_close || 'Not Yet',
     lokasiStock: r.lokasi_stock || '01 - OFFICE',
     dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
@@ -183,6 +202,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const [newPersen, setNewPersen] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newPpn, setNewPpn] = useState<string>('11');
+  const [newNilaiPpn, setNewNilaiPpn] = useState<string>('0');
+  const [ppnManualOverride, setPpnManualOverride] = useState<boolean>(false);
   const [newSoClose, setNewSoClose] = useState<string>('Not Yet');
   const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
   const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
@@ -272,11 +293,50 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     }
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
+    'Nama Pelanggan': 'nama_customer',
+    'No.Bukti': 'no_bukti',
+    Sales: 'sales',
+    'PO.NO': 'po_no',
+    'Lokasi Stock': 'lokasi_stock',
+    Keterangan: 'keterangan',
+    'SO.Close': 'so_close',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<SalesOrderItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoDateFilter = activeTgl && activeTgl !== 'Semua' ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = {
+        orderBy: 'tanggal',
+        asc: false,
+        limit: 1000,
+      };
+      if (isoDateFilter) {
+        queryOpts.eq = { tanggal: isoDateFilter };
+      }
+      if (activeTerm) {
+        const dbCol = SEARCH_FIELD_TO_DB_COL[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch =
+            'no_bukti,nama_customer,sales,po_no,lokasi_stock,keterangan,so_close';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows, details] = await Promise.all([
-        erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('sales_orders', queryOpts),
         erpList<any>('sales_order_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
         loadMasterReferences(),
       ]);
@@ -294,19 +354,25 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const rows = await loadData({
+      field: searchField,
+      term: searchTerm,
+      tglFilter: tanggalFilter,
+    });
+    if (rows !== null) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -333,6 +399,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     [detailRows]
   );
 
+  const hasFilledDetailRows = useMemo(
+    () => detailRows.some((r) => r.kode.trim() !== '' || r.namaBarang.trim() !== ''),
+    [detailRows]
+  );
+
+  const modalNominalPpn = useMemo(() => parseNum(newNilaiPpn), [newNilaiPpn]);
+
   if (!isOpen) return null;
 
   const updateDetailRowsWithSync = (
@@ -343,10 +416,41 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       const hasFilledRow = next.some((r) => r.kode.trim() || r.namaBarang.trim());
       if (hasFilledRow) {
         const sum = next.reduce((acc, r) => acc + r.total, 0);
-        setNewNilaiSo(String(sum));
+        if (ppnManualOverride) {
+          const manualPpn = parseNum(newNilaiPpn);
+          setNewNilaiSo(String(Math.max(0, Number((sum - manualPpn).toFixed(2)))));
+        } else {
+          const { nominalPpn, netNilaiSo } = calcPpnDeduction(sum, parseNum(newPpn));
+          setNewNilaiPpn(String(nominalPpn));
+          setNewNilaiSo(String(netNilaiSo));
+        }
       }
       return next;
     });
+  };
+
+  const handlePpnPercentChange = (rawVal: string) => {
+    setNewPpn(rawVal);
+    setPpnManualOverride(false);
+    const pct = parseNum(rawVal);
+    if (hasFilledDetailRows) {
+      const { nominalPpn, netNilaiSo } = calcPpnDeduction(modalDetailTotal, pct);
+      setNewNilaiPpn(String(nominalPpn));
+      setNewNilaiSo(String(netNilaiSo));
+    } else {
+      const currentNilaiSo = parseNum(newNilaiSo);
+      const nominalPpn = Number(((Math.max(0, currentNilaiSo) * Math.max(0, pct)) / 100).toFixed(2));
+      setNewNilaiPpn(String(nominalPpn));
+    }
+  };
+
+  const handleManualNilaiPpnChange = (rawVal: string) => {
+    setNewNilaiPpn(rawVal);
+    setPpnManualOverride(true);
+    if (hasFilledDetailRows) {
+      const manualPpn = Math.max(0, parseNum(rawVal));
+      setNewNilaiSo(String(Math.max(0, Number((modalDetailTotal - manualPpn).toFixed(2)))));
+    }
   };
 
   const handleAddDetailRow = () => {
@@ -444,6 +548,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewPersen('0');
     setNewKeterangan('');
     setNewPpn('11');
+    setNewNilaiPpn('0');
+    setPpnManualOverride(false);
     setNewSoClose('Not Yet');
     setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setNewDibuatOleh(currentUser);
@@ -470,12 +576,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewCustomer(item.namaCustomer);
     setNewSales(item.sales);
     setNewPoNo(item.poNo);
-    setNewNilaiSo(String(item.nilaiSoNum));
     setNewDeposit(String(parseNum(item.deposit)));
     setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
     setNewPersen(String(parseNum(item.persen)));
     setNewKeterangan(item.keterangan);
-    setNewPpn(String(parseNum(item.ppn)));
+    const pctVal = parseNum(item.ppn);
+    setNewPpn(String(pctVal));
     setNewSoClose(item.soClose || 'Not Yet');
     setNewLokasiStock(item.lokasiStock || lokasiOptions[0] || '01 - OFFICE');
     setNewDibuatOleh(item.dibuatOleh || currentUser);
@@ -486,6 +592,25 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewTglUpdate(item.tglUpdate && item.tglUpdate !== '-' ? item.tglUpdate : todayDisp);
 
     const existingDetails = soDetailsMap[item.id] || [];
+    const existingDetailSum = existingDetails.reduce((acc, d) => acc + d.total, 0);
+    if (existingDetails.length > 0) {
+      const autoCalc = calcPpnDeduction(existingDetailSum, pctVal);
+      if (item.nilaiPpnNum > 0) {
+        const isManual = Math.abs(item.nilaiPpnNum - autoCalc.nominalPpn) > 1;
+        setNewNilaiPpn(String(item.nilaiPpnNum));
+        setNewNilaiSo(String(Math.max(0, Number((existingDetailSum - item.nilaiPpnNum).toFixed(2)))));
+        setPpnManualOverride(isManual);
+      } else {
+        setNewNilaiPpn(String(autoCalc.nominalPpn));
+        setNewNilaiSo(String(autoCalc.netNilaiSo));
+        setPpnManualOverride(false);
+      }
+    } else {
+      setNewNilaiPpn(String(item.nilaiPpnNum));
+      setNewNilaiSo(String(item.nilaiSoNum));
+      setPpnManualOverride(item.nilaiPpnNum > 0);
+    }
+
     setDetailRows(
       existingDetails.length > 0
         ? existingDetails.map((d, idx) => ({ ...d, noUrut: idx + 1 }))
@@ -508,7 +633,19 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       (d) => d.kode.trim() !== '' || d.namaBarang.trim() !== ''
     );
     const totalFromDetails = activeDetails.reduce((acc, d) => acc + d.total, 0);
-    const finalNilaiSo = activeDetails.length > 0 ? totalFromDetails : parseNum(newNilaiSo);
+    const ppnPct = Math.max(0, parseNum(newPpn));
+    let finalNilaiPpn = Math.max(0, parseNum(newNilaiPpn));
+    let finalNilaiSo = parseNum(newNilaiSo);
+
+    if (activeDetails.length > 0) {
+      if (ppnManualOverride) {
+        finalNilaiSo = Math.max(0, Number((totalFromDetails - finalNilaiPpn).toFixed(2)));
+      } else {
+        const calc = calcPpnDeduction(totalFromDetails, ppnPct);
+        finalNilaiPpn = calc.nominalPpn;
+        finalNilaiSo = calc.netNilaiSo;
+      }
+    }
 
     try {
       setIsBusy(true);
@@ -524,7 +661,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         tgl_kirim: toIsoDate(newTglKirim),
         persen: parseNum(newPersen),
         keterangan: newKeterangan.trim(),
-        ppn: parseNum(newPpn),
+        ppn: ppnPct,
+        nilai_ppn: finalNilaiPpn,
         so_close: newSoClose,
         lokasi_stock: newLokasiStock.trim().toUpperCase() || '01 - OFFICE',
         dibuat_oleh: newDibuatOleh.trim().toUpperCase() || currentUser,
@@ -565,11 +703,11 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
       if (editingId) {
         setSoList((prev) => prev.map((item) => (item.id === editingId ? savedHeader : item)));
-        showFeedback('Sales Order & S.O. Detail diperbarui');
+        showFeedback('Sales Order & S.O. Detail diperbarui (PPN tersimpan)');
       } else {
         setSoList((prev) => [savedHeader, ...prev]);
         setSelectedId(savedHeader.id);
-        showFeedback('Sales Order & S.O. Detail tersimpan');
+        showFeedback('Sales Order & S.O. Detail tersimpan (PPN tersimpan)');
       }
 
       setSoDetailsMap((prev) => ({
@@ -580,7 +718,11 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      const msg = err?.message || 'Gagal menyimpan Sales Order';
+      const rawMsg = err?.message || 'Gagal menyimpan Sales Order';
+      const msg =
+        rawMsg.includes('nilai_ppn') && rawMsg.toLowerCase().includes('schema cache')
+          ? `${rawMsg} — Jalankan SQL Query penambahan kolom "nilai_ppn" pada tabel sales_orders di Supabase SQL Editor.`
+          : rawMsg;
       setModalError(msg);
       showFeedback(`Gagal simpan: ${msg}`);
     } finally {
@@ -623,13 +765,15 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     if (searchField === 'PO.NO') return item.poNo.toLowerCase().includes(term);
     if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(term);
     if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
+    if (searchField === 'SO.Close') return item.soClose.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaCustomer.toLowerCase().includes(term) ||
       item.sales.toLowerCase().includes(term) ||
       item.poNo.toLowerCase().includes(term) ||
       item.lokasiStock.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term)
+      item.keterangan.toLowerCase().includes(term) ||
+      item.soClose.toLowerCase().includes(term)
     );
   });
 
@@ -644,6 +788,10 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       item.poNo,
       item.lokasiStock,
       item.keterangan,
+      item.soClose,
+      item.ppn,
+      item.nilaiPpn,
+      item.nilaiSo,
     ]
       .join(' ')
       .toLowerCase();
@@ -651,20 +799,68 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   });
 
   const totalNilaiSo = filteredList.reduce((acc, s) => acc + s.nilaiSoNum, 0);
+  const totalNilaiPpn = filteredList.reduce((acc, s) => acc + s.nilaiPpnNum, 0);
 
-  const handleExecuteToolbarSearch = () => {
-    if (filteredList.length > 0) {
-      setSelectedId(filteredList[0].id);
-      showFeedback(`Ditemukan ${filteredList.length} Sales Order`);
-    } else {
-      showFeedback('Data Sales Order tidak ditemukan');
+  const handleSearchTermChange = (val: string) => {
+    setSearchTerm(val);
+    const clean = val.trim().toLowerCase();
+    const matched = soList.filter((item) => {
+      if (filterIso && item.tanggalIso !== filterIso) return false;
+      if (!clean) return true;
+      if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(clean);
+      if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(clean);
+      if (searchField === 'Sales') return item.sales.toLowerCase().includes(clean);
+      if (searchField === 'PO.NO') return item.poNo.toLowerCase().includes(clean);
+      if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(clean);
+      if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(clean);
+      if (searchField === 'SO.Close') return item.soClose.toLowerCase().includes(clean);
+      return (
+        item.noBukti.toLowerCase().includes(clean) ||
+        item.namaCustomer.toLowerCase().includes(clean) ||
+        item.sales.toLowerCase().includes(clean) ||
+        item.poNo.toLowerCase().includes(clean) ||
+        item.lokasiStock.toLowerCase().includes(clean) ||
+        item.keterangan.toLowerCase().includes(clean) ||
+        item.soClose.toLowerCase().includes(clean)
+      );
+    });
+    if (matched.length > 0 && !matched.some((m) => m.id === selectedId)) {
+      setSelectedId(matched[0].id);
+    }
+  };
+
+  const handleExecuteToolbarSearch = async () => {
+    const rows = await loadData({
+      field: searchField,
+      term: searchTerm,
+      tglFilter: tanggalFilter,
+    });
+    if (rows && rows.length > 0) {
+      setSelectedId(rows[0].id);
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} Sales Order dari Supabase`
+          : `Menampilkan ${rows.length} Sales Order dari Supabase`
+      );
+    } else if (rows) {
+      setSelectedId('');
+      showFeedback('Data Sales Order tidak ditemukan di Supabase');
+    }
+  };
+
+  const handleResetSearch = async () => {
+    setSearchTerm('');
+    setSearchField('Semua');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: tanggalFilter });
+    if (rows) {
+      showFeedback(`Filter direset (${rows.length} Sales Order)`);
     }
   };
 
   const handleFind = async () => {
     setIsFindOpen(true);
     setFindQuery(searchTerm);
-    await loadData();
+    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
     setTimeout(() => {
       findInputRef.current?.focus();
       findInputRef.current?.select();
@@ -690,6 +886,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         { header: 'Sales', accessor: 'sales' },
         { header: 'PO.NO', accessor: 'poNo' },
         { header: 'Lokasi Stock', accessor: 'lokasiStock' },
+        { header: 'PPN', accessor: 'ppn', align: 'center' },
+        { header: 'Nominal PPN', accessor: 'nilaiPpnNum', align: 'right' },
         { header: 'Nilai SO', accessor: 'nilaiSoNum', align: 'right' },
         { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center' },
         { header: 'SO.Close', accessor: 'soClose', align: 'center' },
@@ -722,19 +920,21 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   );
 
   const listPrintColumns: PrintColumn<SalesOrderItem>[] = [
-    { header: 'No.Bukti', accessor: 'noBukti', width: '92px' },
-    { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '64px' },
-    { header: 'Nama Customer', accessor: 'namaCustomer', width: '140px' },
-    { header: 'Sales', accessor: 'sales', width: '74px' },
-    { header: 'PO.NO', accessor: 'poNo', width: '88px' },
-    { header: 'Lokasi Stock', accessor: 'lokasiStock', width: '88px' },
+    { header: 'No.Bukti', accessor: 'noBukti', width: '86px' },
+    { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '60px' },
+    { header: 'Nama Customer', accessor: 'namaCustomer', width: '126px' },
+    { header: 'Sales', accessor: 'sales', width: '68px' },
+    { header: 'PO.NO', accessor: 'poNo', width: '80px' },
+    { header: 'Lokasi Stock', accessor: 'lokasiStock', width: '80px' },
+    { header: 'PPN', accessor: 'ppn', align: 'center', width: '44px' },
+    { header: 'Nominal PPN', accessor: 'nilaiPpn', align: 'right', width: '78px' },
     { header: 'Nilai SO', accessor: 'nilaiSo', align: 'right', width: '82px' },
-    { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '64px' },
-    { header: 'SO.Close', accessor: 'soClose', align: 'center', width: '54px' },
-    { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '66px' },
-    { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '64px' },
-    { header: 'Diupdate Oleh', accessor: 'diupdateOleh', width: '68px' },
-    { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center', width: '64px' },
+    { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '60px' },
+    { header: 'SO.Close', accessor: 'soClose', align: 'center', width: '50px' },
+    { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '60px' },
+    { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '58px' },
+    { header: 'Diupdate Oleh', accessor: 'diupdateOleh', width: '60px' },
+    { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center', width: '58px' },
   ];
 
   const detailPrintColumns: PrintColumn<SalesOrderDetailItem>[] = [
@@ -783,7 +983,9 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         onClose={onClose}
         onFind={handleFind}
         onPrint={() => handleOpenPrint('list')}
-        onTableView={loadData}
+        onTableView={() =>
+          loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })
+        }
         onExportExcel={handleExportExcel}
       />
 
@@ -829,6 +1031,9 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
               Semua
             </button>
           </div>
+          <div className="text-xs font-semibold px-2.5 py-1 bg-[#FFF7E6] border border-[#C7A05A] text-[#7A4900] whitespace-nowrap">
+            PPN: {formatRupiah(totalNilaiPpn)}
+          </div>
           <div className="font-bold text-sm text-right px-3 py-0.5 bg-white border border-[#919191] min-w-[110px] shadow-inner">
             {formatRupiah(totalNilaiSo)}
           </div>
@@ -837,7 +1042,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
       {/* Upper Table: List Sales Order */}
       <div className="flex-[1.35] min-h-[160px] overflow-auto bg-white border border-[#7A7A7A] mx-2 mt-2 relative">
-        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1520px]">
+        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1620px]">
           <thead>
             <tr className="bg-[#ECE9D8] text-black border-b border-[#919191] text-[11px] font-semibold sticky top-0 z-10">
               <th className="border-r border-[#919191] px-2 py-1.5 w-8 text-center">▶</th>
@@ -847,12 +1052,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
               <th className="border-r border-[#919191] px-3 py-1.5">Sales</th>
               <th className="border-r border-[#919191] px-3 py-1.5">PO.NO</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Lokasi Stock</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Nilai SO</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Deposit</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nilai SO</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Deposit</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tgl.Kirim</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Persen</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-center">Persen</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Keterangan</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">PPN</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-center">PPN</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nominal PPN</th>
               <th className="border-r border-[#919191] px-3 py-1.5">SO.Close</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Dibuat Oleh</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tgl.Created</th>
@@ -885,12 +1091,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.sales}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.poNo}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.lokasiStock}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.nilaiSo}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono font-semibold">{item.nilaiSo}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.deposit}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglKirim}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.persen}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.ppn}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.nilaiPpn}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.soClose}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.dibuatOleh}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglCreated}</td>
@@ -901,7 +1108,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             })}
             {filteredList.length === 0 && (
               <tr>
-                <td colSpan={18} className="text-center py-6 text-gray-500">
+                <td colSpan={19} className="text-center py-6 text-gray-500">
                   Tidak ada data sales order
                 </td>
               </tr>
@@ -929,8 +1136,18 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[11px] font-bold text-gray-900 font-mono">
-              Total: {formatRupiah(selectedDetailTotal)}
+              Total Detail: {formatRupiah(selectedDetailTotal)}
             </span>
+            {selectedSo && (
+              <>
+                <span className="text-[11px] font-semibold text-[#9A3412] font-mono">
+                  Potongan PPN ({selectedSo.ppn}): -{formatRupiah(selectedSo.nilaiPpnNum)}
+                </span>
+                <span className="text-[11px] font-bold text-[#000084] font-mono">
+                  Nilai SO: {formatRupiah(selectedSo.nilaiSoNum)}
+                </span>
+              </>
+            )}
             {selectedSo && (
               <button
                 type="button"
@@ -1006,12 +1223,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             <option value="PO.NO">PO.NO</option>
             <option value="Lokasi Stock">Lokasi Stock</option>
             <option value="Keterangan">Keterangan</option>
+            <option value="SO.Close">SO.Close</option>
           </select>
           <input
             ref={searchInputRef}
             type="text"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => handleSearchTermChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleExecuteToolbarSearch();
             }}
@@ -1020,15 +1238,17 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
           />
           <button
             type="button"
+            disabled={isBusy}
             onClick={handleExecuteToolbarSearch}
             className="px-2.5 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs font-semibold cursor-pointer"
           >
             Cari
           </button>
-          {searchTerm && (
+          {(searchTerm || searchField !== 'Semua') && (
             <button
               type="button"
-              onClick={() => setSearchTerm('')}
+              disabled={isBusy}
+              onClick={handleResetSearch}
               className="px-2 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs cursor-pointer"
             >
               Reset
@@ -1141,32 +1361,60 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   </select>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Nilai SO (Rp):</label>
+                  <label className="font-semibold shrink-0">PPN (%) / Nominal PPN:</label>
+                  <div className="w-64 flex gap-2">
+                    <div className="w-20 relative">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={newPpn}
+                        onChange={(e) => handlePpnPercentChange(e.target.value)}
+                        className="w-full px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
+                        placeholder="PPN %"
+                        title="Persentase PPN (%) — Memotong Total S.O. Detail"
+                      />
+                    </div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newNilaiPpn}
+                      onChange={(e) => handleManualNilaiPpnChange(e.target.value)}
+                      className="flex-1 px-2 py-1 bg-[#FFFBEB] border border-[#7A7A7A] font-mono text-right font-semibold text-[#9A3412]"
+                      placeholder="Nominal PPN"
+                      title="Nominal Potongan PPN (Rp) tersimpan di tabel sales_orders"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold shrink-0">
+                    Nilai SO (Rp)
+                    {hasFilledDetailRows && (
+                      <span className="ml-1 text-[10px] font-normal text-[#0055EA]">
+                        (Detail - PPN)
+                      </span>
+                    )}
+                    :
+                  </label>
                   <input
                     type="number"
+                    step="0.01"
                     value={newNilaiSo}
                     onChange={(e) => setNewNilaiSo(e.target.value)}
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                    readOnly={hasFilledDetailRows}
+                    className={`w-64 px-2 py-1 border border-[#7A7A7A] font-mono text-right font-bold ${
+                      hasFilledDetailRows ? 'bg-[#F0F4FF] text-[#000084]' : 'bg-white'
+                    }`}
                   />
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Deposit / PPN (%):</label>
-                  <div className="w-64 flex gap-2">
-                    <input
-                      type="number"
-                      value={newDeposit}
-                      onChange={(e) => setNewDeposit(e.target.value)}
-                      className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
-                      placeholder="Deposit"
-                    />
-                    <input
-                      type="number"
-                      value={newPpn}
-                      onChange={(e) => setNewPpn(e.target.value)}
-                      className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
-                      placeholder="PPN"
-                    />
-                  </div>
+                  <label className="font-semibold shrink-0">Deposit (Rp):</label>
+                  <input
+                    type="number"
+                    value={newDeposit}
+                    onChange={(e) => setNewDeposit(e.target.value)}
+                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                    placeholder="Deposit"
+                  />
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">Tgl. Kirim:</label>
@@ -1348,13 +1596,21 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                     </tbody>
                   </table>
                 </div>
-                <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1 flex items-center justify-between text-[11px] font-bold">
+                <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold">
                   <span>
                     Jumlah Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}
                   </span>
-                  <span className="font-mono text-[#003C74]">
-                    Total S.O. Detail: {formatRupiah(modalDetailTotal)}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-4 font-mono">
+                    <span className="text-[#003C74]">
+                      Total S.O. Detail: {formatRupiah(modalDetailTotal)}
+                    </span>
+                    <span className="text-[#9A3412]">
+                      Potongan PPN ({parseNum(newPpn)}%): -{formatRupiah(modalNominalPpn)}
+                    </span>
+                    <span className="text-[#000084] bg-[#E8EEFF] px-2 py-0.5 border border-[#8BA4E8]">
+                      Nilai SO: {formatRupiah(parseNum(newNilaiSo))}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -1428,7 +1684,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       {/* Find Modal: Cari & Daftar Sales Order */}
       {isFindOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[840px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[940px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
             <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
               <span>Cari &amp; Daftar Sales Order (Supabase)</span>
               <button
@@ -1447,27 +1703,50 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   type="text"
                   value={findQuery}
                   onChange={(e) => setFindQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && findModalRows.length > 0) {
-                      const first = findModalRows[0];
-                      setSelectedId(first.id);
-                      setSearchTerm(findQuery);
-                      setIsFindOpen(false);
-                      showFeedback(`Sales Order [${first.noBukti}] dipilih`);
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter') {
+                      if (findModalRows.length > 0 && !findQuery.trim()) {
+                        const first = findModalRows[0];
+                        setSelectedId(first.id);
+                        setSearchTerm(findQuery);
+                        setIsFindOpen(false);
+                        showFeedback(`Sales Order [${first.noBukti}] dipilih`);
+                      } else {
+                        const rows = await loadData({
+                          field: 'Semua',
+                          term: findQuery,
+                          tglFilter: 'Semua',
+                        });
+                        setSearchField('Semua');
+                        setSearchTerm(findQuery);
+                        if (rows && rows.length > 0) {
+                          setSelectedId(rows[0].id);
+                          showFeedback(`Ditemukan ${rows.length} Sales Order dari Supabase`);
+                        } else if (rows) {
+                          showFeedback('Data Sales Order tidak ditemukan di Supabase');
+                        }
+                      }
                     }
                   }}
-                  placeholder="Cari No.Bukti, Nama Customer, Sales, PO.NO, Lokasi Stock..."
+                  placeholder="Cari No.Bukti, Nama Customer, Sales, PO.NO, Lokasi Stock, Keterangan..."
                   className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
                 />
                 <button
                   type="button"
-                  onClick={() => {
+                  disabled={isBusy}
+                  onClick={async () => {
+                    const rows = await loadData({
+                      field: 'Semua',
+                      term: findQuery,
+                      tglFilter: 'Semua',
+                    });
+                    setSearchField('Semua');
                     setSearchTerm(findQuery);
-                    if (findModalRows.length > 0) {
-                      setSelectedId(findModalRows[0].id);
-                      showFeedback(`Ditemukan ${findModalRows.length} Sales Order`);
-                    } else {
-                      showFeedback('Data Sales Order tidak ditemukan');
+                    if (rows && rows.length > 0) {
+                      setSelectedId(rows[0].id);
+                      showFeedback(`Ditemukan ${rows.length} Sales Order dari Supabase`);
+                    } else if (rows) {
+                      showFeedback('Data Sales Order tidak ditemukan di Supabase');
                     }
                   }}
                   className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
@@ -1476,10 +1755,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 </button>
                 <button
                   type="button"
+                  disabled={isBusy}
                   onClick={async () => {
                     setFindQuery('');
                     setSearchTerm('');
-                    await loadData();
+                    setSearchField('Semua');
+                    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
                     showFeedback('Data Sales Order di-refresh dari Supabase');
                   }}
                   className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
@@ -1495,15 +1776,17 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                       <th className="px-2 py-1 border-r border-[#ACA899] w-22">Tanggal</th>
                       <th className="px-2 py-1 border-r border-[#ACA899]">Nama Customer</th>
                       <th className="px-2 py-1 border-r border-[#ACA899] w-24">Sales</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">PO.NO</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">PO.NO</th>
                       <th className="px-2 py-1 border-r border-[#ACA899] w-28">Lokasi Stock</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899] text-center w-14">PPN</th>
+                      <th className="px-2 py-1 border-r border-[#ACA899] text-right w-24">Nominal PPN</th>
                       <th className="px-2 py-1 text-right w-24">Nilai SO</th>
                     </tr>
                   </thead>
                   <tbody>
                     {findModalRows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="text-center py-6 text-gray-500 italic">
+                        <td colSpan={9} className="text-center py-6 text-gray-500 italic">
                           Tidak ada data Sales Order yang cocok
                         </td>
                       </tr>
@@ -1527,7 +1810,9 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                           <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.sales || '-'}</td>
                           <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{s.poNo || '-'}</td>
                           <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.lokasiStock || '-'}</td>
-                          <td className="px-2 py-1 text-right font-mono">{s.nilaiSo}</td>
+                          <td className="px-2 py-1 text-center border-r border-[#E0E0E0]">{s.ppn}</td>
+                          <td className="px-2 py-1 text-right font-mono border-r border-[#E0E0E0]">{s.nilaiPpn}</td>
+                          <td className="px-2 py-1 text-right font-mono font-semibold">{s.nilaiSo}</td>
                         </tr>
                       ))
                     )}
@@ -1574,8 +1859,10 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 { label: 'Lokasi Stock', value: selectedSo.lokasiStock || '-' },
                 { label: 'Tgl. Kirim', value: selectedSo.tglKirim || '-' },
                 { label: 'SO. Close', value: selectedSo.soClose || '-' },
-                { label: 'PPN / Persen', value: `${selectedSo.ppn} / ${selectedSo.persen}` },
-                { label: 'Nilai SO', value: formatRupiah(selectedSo.nilaiSoNum) },
+                { label: 'PPN (%)', value: selectedSo.ppn },
+                { label: 'Nominal PPN', value: `-${formatRupiah(selectedSo.nilaiPpnNum)}` },
+                { label: 'Nilai SO (Net)', value: formatRupiah(selectedSo.nilaiSoNum) },
+                { label: 'Persen', value: selectedSo.persen },
                 { label: 'Keterangan', value: selectedSo.keterangan || '-' },
                 { label: 'Dibuat Oleh', value: selectedSo.dibuatOleh },
                 { label: 'Tgl. Created', value: selectedSo.tglCreated || '-' },
@@ -1603,9 +1890,18 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   label: 'Total S.O. Detail',
                   value: formatRupiah(selectedDetailTotal),
                 },
+                {
+                  label: `Potongan PPN (${selectedSo?.ppn || '0%'})`,
+                  value: `-${formatRupiah(selectedSo?.nilaiPpnNum || 0)}`,
+                },
+                {
+                  label: 'Nilai SO (Setelah PPN)',
+                  value: formatRupiah(selectedSo?.nilaiSoNum || 0),
+                },
               ]
             : [
                 { label: 'Total Sales Order', value: `${filteredList.length} Dokumen` },
+                { label: 'Total Nominal PPN', value: formatRupiah(totalNilaiPpn) },
                 { label: 'Total Nilai SO', value: formatRupiah(totalNilaiSo) },
               ]
         }

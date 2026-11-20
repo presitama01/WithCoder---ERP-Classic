@@ -266,6 +266,7 @@ export async function erpCompositeSave<T = any>(
     | 'sales-quotation'
     | 'sales-order'
     | 'faktur-penjualan'
+    | 'surat-jalan'
     | 'pembelian'
     | 'retur-pembelian',
   header: Record<string, any>,

@@ -23,13 +23,20 @@ import { WORLD_CURRENCIES } from '../lib/currencies';
 export interface PurchaseOrderItem {
   id: string;
   noBukti: string;
+  noPr: string;
   tanggal: string;
   tanggalIso: string;
   namaSupplier: string;
+  deliveryTo: string;
+  delivery: string;
   mataUang: string;
   keterangan: string;
   nilaiPo: string;
   nilaiPoNum: number;
+  ppn: string;
+  ppnPct: number;
+  nilaiPpn: string;
+  nilaiPpnNum: number;
   deposit: string;
   tglLunas: string;
   tglKirim: string;
@@ -62,23 +69,52 @@ interface MasterBarangOption {
   cost: number;
 }
 
+interface PurchaseRequestOption {
+  id: string;
+  noPr: string;
+  tanggal: string;
+  deliveryTo: string;
+  delivery: string;
+  noPo: string;
+}
+
 interface ListPurchaseOrderFormProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+function calcPpnDeduction(
+  grossTotal: number,
+  ppnPct: number
+): { nominalPpn: number; netNilaiPo: number } {
+  const safeGross = Math.max(0, Number(grossTotal || 0));
+  const safePct = Math.max(0, Number(ppnPct || 0));
+  const nominalPpn = Number(((safeGross * safePct) / 100).toFixed(2));
+  const netNilaiPo = Math.max(0, Number((safeGross - nominalPpn).toFixed(2)));
+  return { nominalPpn, netNilaiPo };
+}
+
 function mapDbToPo(r: any): PurchaseOrderItem {
   const nilaiNum = Number(r.nilai_po || 0);
+  const ppnPct = Number(r.ppn ?? 11);
+  const nilaiPpnNum = Number(r.nilai_ppn || 0);
   return {
     id: r.id,
     noBukti: r.no_bukti || '',
+    noPr: r.no_pr || '',
     tanggal: toDisplayDMyShort(r.tanggal),
     tanggalIso: toIsoDate(r.tanggal) || '',
     namaSupplier: r.nama_supplier || '',
+    deliveryTo: r.delivery_to || '',
+    delivery: r.delivery || '',
     mataUang: String(r.mata_uang || 'IDR').trim().toUpperCase() || 'IDR',
     keterangan: r.keterangan || '',
     nilaiPo: formatMoney(nilaiNum),
     nilaiPoNum: nilaiNum,
+    ppn: `${ppnPct}%`,
+    ppnPct,
+    nilaiPpn: formatMoney(nilaiPpnNum),
+    nilaiPpnNum,
     deposit: Number(r.deposit || 0) > 0 ? formatMoney(r.deposit) : '-',
     tglLunas: toDisplayDMyShort(r.tgl_lunas) || '-',
     tglKirim: toDisplayDMyShort(r.tgl_kirim) || '-',
@@ -134,16 +170,26 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [poDetailsMap, setPoDetailsMap] = useState<Record<string, PurchaseOrderDetailItem[]>>({});
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Supplier');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
+
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
+  const [findQuery, setFindQuery] = useState<string>('');
+  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [newNoBukti, setNewNoBukti] = useState<string>('');
+  const [newNoPr, setNewNoPr] = useState<string>('');
   const [newTanggal, setNewTanggal] = useState<string>('');
   const [newSupplier, setNewSupplier] = useState<string>('');
+  const [newDeliveryTo, setNewDeliveryTo] = useState<string>('');
+  const [newDelivery, setNewDelivery] = useState<string>('Darat');
   const [newMataUang, setNewMataUang] = useState<string>('IDR');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newNilaiPo, setNewNilaiPo] = useState<string>('0');
+  const [newPpn, setNewPpn] = useState<string>('11');
+  const [newNilaiPpn, setNewNilaiPpn] = useState<string>('0');
+  const [ppnManualOverride, setPpnManualOverride] = useState<boolean>(false);
   const [newDeposit, setNewDeposit] = useState<string>('0');
   const [newTglLunas, setNewTglLunas] = useState<string>('');
   const [newTglKirim, setNewTglKirim] = useState<string>('');
@@ -157,6 +203,8 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
+  const [prOptions, setPrOptions] = useState<PurchaseRequestOption[]>([]);
+  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -171,57 +219,112 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadMasterSuppliers = async (): Promise<string[]> => {
-    try {
-      const rows = await erpList<any>('master_suppliers', {
-        orderBy: 'nama_supplier',
-        asc: true,
-        limit: 1000,
-      });
+  const loadMasterReferences = async () => {
+    const [suppRes, barangRes, prRes, lokasiRes] = await Promise.allSettled([
+      erpList<any>('master_suppliers', { orderBy: 'nama_supplier', asc: true, limit: 1000 }),
+      erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
+      erpList<any>('purchase_requests', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      erpList<any>('master_lokasi_gudangs', { orderBy: 'nama_lokasi', asc: true, limit: 1000 }),
+    ]);
+
+    if (suppRes.status === 'fulfilled') {
       const uniqueNames = Array.from(
         new Set(
-          rows
-            .map((r) => String(r.nama_supplier || '').trim().toUpperCase())
+          suppRes.value
+            .map((r: any) => String(r.nama_supplier || '').trim().toUpperCase())
             .filter(Boolean)
         )
       );
       setSupplierOptions(uniqueNames);
-      return uniqueNames;
-    } catch {
-      return [];
     }
-  };
 
-  const loadMasterBarangs = async (): Promise<MasterBarangOption[]> => {
-    try {
-      const rows = await erpList<any>('master_barangs', {
-        orderBy: 'kode',
-        asc: true,
-        limit: 2000,
-      });
-      const mapped: MasterBarangOption[] = rows
-        .map((r) => ({
+    if (barangRes.status === 'fulfilled') {
+      const mapped: MasterBarangOption[] = barangRes.value
+        .map((r: any) => ({
           kode: String(r.kode || '').trim().toUpperCase(),
           namaBarang: String(r.nama_barang || '').trim(),
           unit: String(r.unit || 'PCS').trim().toUpperCase(),
           cost: Number(r.cost || 0),
         }))
-        .filter((b) => b.kode);
+        .filter((b: MasterBarangOption) => b.kode);
       setBarangOptions(mapped);
-      return mapped;
-    } catch {
-      return [];
+    }
+
+    if (prRes.status === 'fulfilled') {
+      const prMap = new Map<string, PurchaseRequestOption>();
+      for (const r of prRes.value) {
+        const noPr = String(r.no_pr || '').trim().toUpperCase();
+        if (!noPr) continue;
+        prMap.set(noPr, {
+          id: String(r.id),
+          noPr,
+          tanggal: toDisplayDMyShort(r.tanggal),
+          deliveryTo: String(r.delivery_to || '').trim().toUpperCase(),
+          delivery: String(r.delivery || '').trim(),
+          noPo: String(r.no_po || '').trim().toUpperCase(),
+        });
+      }
+      setPrOptions(Array.from(prMap.values()));
+    }
+
+    if (lokasiRes.status === 'fulfilled') {
+      const lokasis = Array.from(
+        new Set(
+          lokasiRes.value
+            .map((l: any) => String(l.nama_lokasi || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setLokasiOptions(lokasis);
     }
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
+    'No.PR': 'no_pr',
+    'Nama Supplier': 'nama_supplier',
+    'No.Bukti': 'no_bukti',
+    'Delivery To': 'delivery_to',
+    'Mata Uang': 'mata_uang',
+    Keterangan: 'keterangan',
+    'PO.Close': 'po_close',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<PurchaseOrderItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoDateFilter = activeTgl && activeTgl !== 'Semua' ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = {
+        orderBy: 'tanggal',
+        asc: false,
+        limit: 1000,
+      };
+      if (isoDateFilter) {
+        queryOpts.eq = { tanggal: isoDateFilter };
+      }
+      if (activeTerm) {
+        const dbCol = SEARCH_FIELD_TO_DB_COL[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch =
+            'no_bukti,no_pr,nama_supplier,delivery_to,delivery,mata_uang,keterangan,po_close';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows, details] = await Promise.all([
-        erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('purchase_orders', queryOpts),
         erpList<any>('purchase_order_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
-        loadMasterSuppliers(),
-        loadMasterBarangs(),
+        loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToPo);
       setPoList(mapped);
@@ -237,19 +340,25 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const rows = await loadData({
+      field: searchField,
+      term: searchTerm,
+      tglFilter: tanggalFilter,
+    });
+    if (rows !== null) showFeedback('Data tersinkronisasi dengan database Supabase');
   };
 
   useEffect(() => {
@@ -276,6 +385,13 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     [detailRows]
   );
 
+  const hasFilledDetailRows = useMemo(
+    () => detailRows.some((r) => r.kode.trim() !== '' || r.namaBarang.trim() !== ''),
+    [detailRows]
+  );
+
+  const modalNominalPpn = useMemo(() => parseNum(newNilaiPpn), [newNilaiPpn]);
+
   if (!isOpen) return null;
 
   const updateDetailRowsWithSync = (
@@ -286,10 +402,73 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       const hasFilledRow = next.some((r) => r.kode.trim() || r.namaBarang.trim());
       if (hasFilledRow) {
         const sum = next.reduce((acc, r) => acc + r.total, 0);
-        setNewNilaiPo(String(sum));
+        if (ppnManualOverride) {
+          const manualPpn = parseNum(newNilaiPpn);
+          setNewNilaiPo(String(Math.max(0, Number((sum - manualPpn).toFixed(2)))));
+        } else {
+          const { nominalPpn, netNilaiPo } = calcPpnDeduction(sum, parseNum(newPpn));
+          setNewNilaiPpn(String(nominalPpn));
+          setNewNilaiPo(String(netNilaiPo));
+        }
       }
       return next;
     });
+  };
+
+  const handlePpnPercentChange = (rawVal: string) => {
+    setNewPpn(rawVal);
+    setPpnManualOverride(false);
+    const pct = parseNum(rawVal);
+    if (hasFilledDetailRows) {
+      const { nominalPpn, netNilaiPo } = calcPpnDeduction(modalDetailTotal, pct);
+      setNewNilaiPpn(String(nominalPpn));
+      setNewNilaiPo(String(netNilaiPo));
+    } else {
+      const currentNilaiPo = parseNum(newNilaiPo);
+      const nominalPpn = Number(((Math.max(0, currentNilaiPo) * Math.max(0, pct)) / 100).toFixed(2));
+      setNewNilaiPpn(String(nominalPpn));
+    }
+  };
+
+  const handleManualNilaiPpnChange = (rawVal: string) => {
+    setNewNilaiPpn(rawVal);
+    setPpnManualOverride(true);
+    if (hasFilledDetailRows) {
+      const manualPpn = Math.max(0, parseNum(rawVal));
+      setNewNilaiPo(String(Math.max(0, Number((modalDetailTotal - manualPpn).toFixed(2)))));
+    }
+  };
+
+  const handleSelectNoPr = (selectedNoPr: string) => {
+    const cleanPr = selectedNoPr.trim().toUpperCase();
+    setNewNoPr(cleanPr);
+    if (!cleanPr) return;
+
+    const matchedPr = prOptions.find((p) => p.noPr === cleanPr);
+    if (!matchedPr) return;
+
+    if (matchedPr.deliveryTo) setNewDeliveryTo(matchedPr.deliveryTo);
+    if (matchedPr.delivery) setNewDelivery(matchedPr.delivery);
+    if (
+      !editingId &&
+      matchedPr.noPo &&
+      matchedPr.noPo !== '-' &&
+      !poList.some((po) => po.noBukti.toUpperCase() === matchedPr.noPo)
+    ) {
+      setNewNoBukti(matchedPr.noPo);
+    }
+    if (!newKeterangan.trim()) {
+      setNewKeterangan(
+        `Ref PR: ${matchedPr.noPr}${matchedPr.deliveryTo ? ` | ${matchedPr.deliveryTo}` : ''}${
+          matchedPr.delivery ? ` (${matchedPr.delivery})` : ''
+        }`
+      );
+    }
+    showFeedback(
+      `Field otomatis diisi dari PR [${matchedPr.noPr}] (${matchedPr.deliveryTo || '-'} / ${
+        matchedPr.delivery || '-'
+      })`
+    );
   };
 
   const handleAddDetailRow = () => {
@@ -368,11 +547,17 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setEditingId(null);
     setModalError(null);
     setNewNoBukti(nextUniqueCode(poList.map((p) => p.noBukti), '2608-PO-IMP-', 3));
+    setNewNoPr('');
     setNewTanggal(todayDisplay);
     setNewSupplier('');
+    setNewDeliveryTo('');
+    setNewDelivery('Darat');
     setNewMataUang('IDR');
     setNewKeterangan('');
     setNewNilaiPo('0');
+    setNewPpn('11');
+    setNewNilaiPpn('0');
+    setPpnManualOverride(false);
     setNewDeposit('0');
     setNewTglLunas('');
     setNewTglKirim(todayDisplay);
@@ -384,7 +569,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    await Promise.all([loadMasterSuppliers(), loadMasterBarangs()]);
+    await loadMasterReferences();
   };
 
   const handleEdit = async () => {
@@ -398,11 +583,15 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setEditingId(item.id);
     setModalError(null);
     setNewNoBukti(item.noBukti);
+    setNewNoPr(item.noPr || '');
     setNewTanggal(item.tanggal || todayDisplay);
     setNewSupplier(item.namaSupplier);
+    setNewDeliveryTo(item.deliveryTo || '');
+    setNewDelivery(item.delivery || 'Darat');
     setNewMataUang(item.mataUang || 'IDR');
     setNewKeterangan(item.keterangan);
-    setNewNilaiPo(String(item.nilaiPoNum));
+    const pctVal = parseNum(item.ppn);
+    setNewPpn(String(pctVal));
     setNewDeposit(String(parseNum(item.deposit)));
     setNewTglLunas(item.tglLunas === '-' ? '' : item.tglLunas);
     setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
@@ -416,6 +605,25 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewTglUpdate(item.tglUpdate && item.tglUpdate !== '-' ? item.tglUpdate : todayDisplay);
 
     const existingDetails = poDetailsMap[item.id] || [];
+    const existingDetailSum = existingDetails.reduce((acc, d) => acc + d.total, 0);
+    if (existingDetails.length > 0) {
+      const autoCalc = calcPpnDeduction(existingDetailSum, pctVal);
+      if (item.nilaiPpnNum > 0) {
+        const isManual = Math.abs(item.nilaiPpnNum - autoCalc.nominalPpn) > 1;
+        setNewNilaiPpn(String(item.nilaiPpnNum));
+        setNewNilaiPo(String(Math.max(0, Number((existingDetailSum - item.nilaiPpnNum).toFixed(2)))));
+        setPpnManualOverride(isManual);
+      } else {
+        setNewNilaiPpn(String(autoCalc.nominalPpn));
+        setNewNilaiPo(String(autoCalc.netNilaiPo));
+        setPpnManualOverride(false);
+      }
+    } else {
+      setNewNilaiPpn(String(item.nilaiPpnNum));
+      setNewNilaiPo(String(item.nilaiPoNum));
+      setPpnManualOverride(item.nilaiPpnNum > 0);
+    }
+
     setDetailRows(
       existingDetails.length > 0
         ? existingDetails.map((d, idx) => ({ ...d, noUrut: idx + 1 }))
@@ -423,7 +631,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     );
 
     setIsAddOpen(true);
-    await Promise.all([loadMasterSuppliers(), loadMasterBarangs()]);
+    await loadMasterReferences();
   };
 
   const handleSaveNew = async (e: React.FormEvent) => {
@@ -438,18 +646,35 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       (d) => d.kode.trim() !== '' || d.namaBarang.trim() !== ''
     );
     const totalFromDetails = activeDetails.reduce((acc, d) => acc + d.total, 0);
-    const finalNilaiPo = activeDetails.length > 0 ? totalFromDetails : parseNum(newNilaiPo);
+    const ppnPct = Math.max(0, parseNum(newPpn));
+    let finalNilaiPpn = Math.max(0, parseNum(newNilaiPpn));
+    let finalNilaiPo = parseNum(newNilaiPo);
+
+    if (activeDetails.length > 0) {
+      if (ppnManualOverride) {
+        finalNilaiPo = Math.max(0, Number((totalFromDetails - finalNilaiPpn).toFixed(2)));
+      } else {
+        const calc = calcPpnDeduction(totalFromDetails, ppnPct);
+        finalNilaiPpn = calc.nominalPpn;
+        finalNilaiPo = calc.netNilaiPo;
+      }
+    }
 
     try {
       setIsBusy(true);
       const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const baseHeader: Record<string, any> = {
         no_bukti: newNoBukti.trim().toUpperCase(),
+        no_pr: newNoPr.trim().toUpperCase() || null,
         tanggal: toIsoDate(newTanggal) || todayIso(),
         nama_supplier: newSupplier.trim().toUpperCase(),
+        delivery_to: newDeliveryTo.trim().toUpperCase(),
+        delivery: newDelivery.trim(),
         mata_uang: newMataUang.trim().toUpperCase() || 'IDR',
         keterangan: newKeterangan.trim(),
         nilai_po: finalNilaiPo,
+        ppn: ppnPct,
+        nilai_ppn: finalNilaiPpn,
         deposit: parseNum(newDeposit),
         tgl_lunas: toIsoDate(newTglLunas),
         tgl_kirim: toIsoDate(newTglKirim),
@@ -493,11 +718,11 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
       if (editingId) {
         setPoList((prev) => prev.map((p) => (p.id === editingId ? savedHeader : p)));
-        showFeedback('Purchase Order & Detail diperbarui');
+        showFeedback('Purchase Order & P.O. Detail diperbarui (PPN tersimpan)');
       } else {
         setPoList((prev) => [savedHeader, ...prev]);
         setSelectedId(savedHeader.id);
-        showFeedback('Purchase Order & Detail tersimpan');
+        showFeedback('Purchase Order & P.O. Detail tersimpan (PPN tersimpan)');
       }
 
       setPoDetailsMap((prev) => ({
@@ -508,7 +733,12 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      const msg = err?.message || 'Gagal menyimpan Purchase Order';
+      const rawMsg = err?.message || 'Gagal menyimpan Purchase Order';
+      const msg =
+        (rawMsg.includes('nilai_ppn') || rawMsg.includes('no_pr') || rawMsg.includes('delivery_to')) &&
+        rawMsg.toLowerCase().includes('schema cache')
+          ? `${rawMsg} — Jalankan SQL Query migrasi tabel purchase_orders di Supabase SQL Editor.`
+          : rawMsg;
       setModalError(msg);
       showFeedback(`Gagal simpan: ${msg}`);
     } finally {
@@ -544,24 +774,116 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const filteredPoList = poList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
     if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'No.PR') return item.noPr.toLowerCase().includes(term);
     if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'Delivery To') return item.deliveryTo.toLowerCase().includes(term);
     if (searchField === 'Mata Uang') return item.mataUang.toLowerCase().includes(term);
     if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
+    if (searchField === 'PO.Close') return item.poClose.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
+      item.noPr.toLowerCase().includes(term) ||
       item.namaSupplier.toLowerCase().includes(term) ||
+      item.deliveryTo.toLowerCase().includes(term) ||
+      item.delivery.toLowerCase().includes(term) ||
       item.mataUang.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term)
+      item.keterangan.toLowerCase().includes(term) ||
+      item.poClose.toLowerCase().includes(term)
     );
   });
 
-  const totalNilaiPo = filteredPoList.reduce((acc, r) => acc + r.nilaiPoNum, 0);
+  const findModalRows = poList.filter((item) => {
+    if (!findQuery.trim()) return true;
+    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
+    const searchable = [
+      item.noBukti,
+      item.noPr,
+      item.tanggal,
+      item.namaSupplier,
+      item.deliveryTo,
+      item.delivery,
+      item.mataUang,
+      item.keterangan,
+      item.poClose,
+      item.ppn,
+      item.nilaiPpn,
+      item.nilaiPo,
+    ]
+      .join(' ')
+      .toLowerCase();
+    return tokens.every((t) => searchable.includes(t));
+  });
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const totalNilaiPo = filteredPoList.reduce((acc, r) => acc + r.nilaiPoNum, 0);
+  const totalNilaiPpn = filteredPoList.reduce((acc, r) => acc + r.nilaiPpnNum, 0);
+
+  const handleSearchTermChange = (val: string) => {
+    setSearchTerm(val);
+    const clean = val.trim().toLowerCase();
+    const matched = poList.filter((item) => {
+      if (filterIso && item.tanggalIso !== filterIso) return false;
+      if (!clean) return true;
+      if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(clean);
+      if (searchField === 'No.PR') return item.noPr.toLowerCase().includes(clean);
+      if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(clean);
+      if (searchField === 'Delivery To') return item.deliveryTo.toLowerCase().includes(clean);
+      if (searchField === 'Mata Uang') return item.mataUang.toLowerCase().includes(clean);
+      if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(clean);
+      if (searchField === 'PO.Close') return item.poClose.toLowerCase().includes(clean);
+      return (
+        item.noBukti.toLowerCase().includes(clean) ||
+        item.noPr.toLowerCase().includes(clean) ||
+        item.namaSupplier.toLowerCase().includes(clean) ||
+        item.deliveryTo.toLowerCase().includes(clean) ||
+        item.delivery.toLowerCase().includes(clean) ||
+        item.mataUang.toLowerCase().includes(clean) ||
+        item.keterangan.toLowerCase().includes(clean) ||
+        item.poClose.toLowerCase().includes(clean)
+      );
+    });
+    if (matched.length > 0 && !matched.some((m) => m.id === selectedId)) {
+      setSelectedId(matched[0].id);
+    }
+  };
+
+  const handleExecuteToolbarSearch = async () => {
+    const rows = await loadData({
+      field: searchField,
+      term: searchTerm,
+      tglFilter: tanggalFilter,
+    });
+    if (rows && rows.length > 0) {
+      setSelectedId(rows[0].id);
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} Purchase Order dari Supabase`
+          : `Menampilkan ${rows.length} Purchase Order dari Supabase`
+      );
+    } else if (rows) {
+      setSelectedId('');
+      showFeedback('Data Purchase Order tidak ditemukan di Supabase');
+    }
+  };
+
+  const handleResetSearch = async () => {
+    setSearchTerm('');
+    setSearchField('Semua');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: tanggalFilter });
+    if (rows) {
+      showFeedback(`Filter direset (${rows.length} Purchase Order)`);
+    }
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    setFindQuery(searchTerm);
+    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+    setTimeout(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    }, 60);
   };
 
   const handleOpenPrint = (mode: 'list' | 'detail' = 'list') => {
@@ -578,10 +900,15 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       companyProfile: company,
       columns: [
         { header: 'No.Bukti', accessor: 'noBukti' },
+        { header: 'No.PR', accessor: 'noPr' },
         { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
         { header: 'Nama Supplier', accessor: 'namaSupplier' },
+        { header: 'Delivery To', accessor: 'deliveryTo' },
+        { header: 'Delivery', accessor: 'delivery' },
         { header: 'Mata Uang', accessor: 'mataUang', align: 'center' },
         { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'PPN', accessor: 'ppn', align: 'center' },
+        { header: 'Nominal PPN', accessor: 'nilaiPpnNum', align: 'right' },
         { header: 'Nilai PO', accessor: 'nilaiPoNum', align: 'right' },
         { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center' },
         { header: 'PO.Close', accessor: 'poClose', align: 'center' },
@@ -602,19 +929,28 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     ].filter(Boolean))
   );
 
+  const prDropdownChoices = Array.from(
+    new Set([...prOptions.map((p) => p.noPr), newNoPr.trim().toUpperCase()].filter(Boolean))
+  );
+
+  const deliveryToChoices = Array.from(
+    new Set([...lokasiOptions, newDeliveryTo.trim().toUpperCase()].filter(Boolean))
+  );
+
   const listPrintColumns: PrintColumn<PurchaseOrderItem>[] = [
-    { header: 'No.Bukti', accessor: 'noBukti', width: '92px' },
-    { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '64px' },
-    { header: 'Nama Supplier', accessor: 'namaSupplier', width: '132px' },
-    { header: 'Mata Uang', accessor: 'mataUang', align: 'center', width: '56px' },
-    { header: 'Keterangan', accessor: 'keterangan' },
-    { header: 'Nilai PO', accessor: 'nilaiPo', align: 'right', width: '82px' },
-    { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '64px' },
-    { header: 'PO.Close', accessor: 'poClose', align: 'center', width: '54px' },
-    { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '68px' },
-    { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '64px' },
-    { header: 'DiUpdate Oleh', accessor: 'diupdateOleh', width: '72px' },
-    { header: 'Tgl.Updated', accessor: 'tglUpdate', align: 'center', width: '64px' },
+    { header: 'No.Bukti', accessor: 'noBukti', width: '82px' },
+    { header: 'No.PR', accessor: 'noPr', width: '80px' },
+    { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '58px' },
+    { header: 'Nama Supplier', accessor: 'namaSupplier', width: '116px' },
+    { header: 'Delivery To', accessor: 'deliveryTo', width: '90px' },
+    { header: 'MU', accessor: 'mataUang', align: 'center', width: '38px' },
+    { header: 'PPN', accessor: 'ppn', align: 'center', width: '42px' },
+    { header: 'Nominal PPN', accessor: 'nilaiPpn', align: 'right', width: '74px' },
+    { header: 'Nilai PO', accessor: 'nilaiPo', align: 'right', width: '78px' },
+    { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '58px' },
+    { header: 'PO.Close', accessor: 'poClose', align: 'center', width: '48px' },
+    { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '58px' },
+    { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '56px' },
   ];
 
   const detailPrintColumns: PrintColumn<PurchaseOrderDetailItem>[] = [
@@ -664,7 +1000,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => handleOpenPrint('list')}
-          onTableView={loadData}
+          onTableView={() =>
+            loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })
+          }
           onExportExcel={handleExportExcel}
         />
 
@@ -698,20 +1036,30 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
             </div>
           </div>
 
-          <div className="font-bold text-sm text-gray-900 pr-2">{formatRupiah(totalNilaiPo)}</div>
+          <div className="flex items-center gap-3 pr-2 shrink-0">
+            <div className="text-xs font-semibold px-2.5 py-1 bg-[#FFF7E6] border border-[#C7A05A] text-[#7A4900] whitespace-nowrap">
+              PPN: {formatRupiah(totalNilaiPpn)}
+            </div>
+            <div className="font-bold text-sm text-gray-900">{formatRupiah(totalNilaiPo)}</div>
+          </div>
         </div>
 
         {/* Upper Table: List Purchase Order */}
         <div className="flex-[1.35] min-h-[160px] overflow-auto bg-white border border-[#999999] mx-1.5 mt-1.5 relative shadow-inner">
-          <table className="w-full border-collapse text-left min-w-[1520px]">
+          <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1780px]">
             <thead className="sticky top-0 bg-[#F0F0F0] text-gray-800 font-semibold border-b border-[#C0C0C0] z-10">
               <tr>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center w-10">No</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0]">No.Bukti</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">No.PR</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Tanggal</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Nama Supplier</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Delivery To</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Delivery</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center">Mata Uang</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0]">Keterangan</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center">PPN</th>
+                <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-right">Nominal PPN</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-right">Nilai PO</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center">Deposit</th>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center">Tgl. Lunas</th>
@@ -728,7 +1076,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
             <tbody>
               {filteredPoList.length === 0 ? (
                 <tr>
-                  <td colSpan={17} className="text-center py-6 text-gray-500 italic">
+                  <td colSpan={22} className="text-center py-6 text-gray-500 italic">
                     Tidak ada data Purchase Order
                   </td>
                 </tr>
@@ -750,13 +1098,18 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     >
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{idx + 1}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] font-mono font-medium">{item.noBukti}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0] font-mono">{item.noPr || '-'}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.tanggal}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] font-semibold">{item.namaSupplier}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.deliveryTo || '-'}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.delivery || '-'}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center font-mono font-bold">
                         {item.mataUang}
                       </td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.keterangan}</td>
-                      <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono">{item.nilaiPo}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{item.ppn}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono">{item.nilaiPpn}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono font-semibold">{item.nilaiPo}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{item.deposit}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{item.tglLunas}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.tglKirim}</td>
@@ -797,8 +1150,10 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
               <span className="font-bold text-[#003C74] whitespace-nowrap">P.O. Detail</span>
               {selectedPo ? (
                 <span className="text-[11px] text-gray-800 truncate">
-                  No.Bukti: <b className="font-mono">{selectedPo.noBukti}</b> | Supplier:{' '}
-                  <b>{selectedPo.namaSupplier}</b> | Mata Uang:{' '}
+                  No.Bukti: <b className="font-mono">{selectedPo.noBukti}</b> | No.PR:{' '}
+                  <b className="font-mono text-[#000084]">{selectedPo.noPr || '-'}</b> | Supplier:{' '}
+                  <b>{selectedPo.namaSupplier}</b> | Delivery To:{' '}
+                  <b>{selectedPo.deliveryTo || '-'}</b> | MU:{' '}
                   <b className="font-mono text-[#0055EA]">{selectedPo.mataUang}</b>
                 </span>
               ) : (
@@ -809,8 +1164,18 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <span className="text-[11px] font-bold text-gray-900 font-mono">
-                Total: {selectedPo?.mataUang || 'IDR'} {formatMoney(selectedDetailTotal)}
+                Total Detail: {selectedPo?.mataUang || 'IDR'} {formatMoney(selectedDetailTotal)}
               </span>
+              {selectedPo && (
+                <>
+                  <span className="text-[11px] font-semibold text-[#9A3412] font-mono">
+                    Potongan PPN ({selectedPo.ppn}): -{selectedPo.mataUang} {formatMoney(selectedPo.nilaiPpnNum)}
+                  </span>
+                  <span className="text-[11px] font-bold text-[#000084] font-mono">
+                    Nilai PO: {selectedPo.mataUang} {formatMoney(selectedPo.nilaiPoNum)}
+                  </span>
+                </>
+              )}
               {selectedPo && (
                 <button
                   type="button"
@@ -870,32 +1235,61 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           </div>
         </div>
 
-        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
-          <div className="flex items-center space-x-2">
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0] gap-2 overflow-x-auto">
+          <div className="flex items-center space-x-2 shrink-0">
             <span className="font-semibold text-gray-800">Search :</span>
             <select
               value={searchField}
               onChange={(e) => setSearchField(e.target.value)}
               className="bg-white border border-[#7A7A7A] px-1.5 py-0.5 rounded-xs text-xs"
             >
+              <option value="Semua">Semua</option>
+              <option value="No.PR">No.PR</option>
               <option value="Nama Supplier">Nama Supplier</option>
               <option value="No.Bukti">No.Bukti</option>
+              <option value="Delivery To">Delivery To</option>
               <option value="Mata Uang">Mata Uang</option>
               <option value="Keterangan">Keterangan</option>
+              <option value="PO.Close">PO.Close</option>
             </select>
             <input
               ref={searchInputRef}
               type="text"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => handleSearchTermChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleExecuteToolbarSearch();
+              }}
               placeholder="Cari data..."
-              className="w-64 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
+              className="w-56 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
             />
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handleExecuteToolbarSearch}
+              className="px-2.5 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs font-semibold cursor-pointer"
+            >
+              Cari
+            </button>
+            {(searchTerm || searchField !== 'Semua') && (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={handleResetSearch}
+                className="px-2 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-4 shrink-0">
             <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
-              {selectedPo ? `${selectedPo.namaSupplier} (${selectedPo.mataUang})` : ''}
+              {selectedPo
+                ? `${selectedPo.noBukti}${selectedPo.noPr ? ` (PR: ${selectedPo.noPr})` : ''} - ${
+                    selectedPo.namaSupplier
+                  }`
+                : ''}
             </div>
             <div className="text-gray-800 font-medium">Record : {filteredPoList.length}</div>
           </div>
@@ -903,7 +1297,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[920px] max-w-[97vw] max-h-[93vh] flex flex-col overflow-hidden">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[940px] max-w-[97vw] max-h-[93vh] flex flex-col overflow-hidden">
               <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Purchase Order' : 'Tambah Purchase Order Baru'}</span>
                 <button
@@ -927,7 +1321,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                       value={newNoBukti}
                       onChange={(e) => setNewNoBukti(e.target.value)}
                       required
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase font-mono"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -939,6 +1333,26 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                         format="dMyShort"
                       />
                     </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-semibold text-[#000084] shrink-0">
+                      No. PR (Purchase Request):
+                    </label>
+                    <select
+                      value={newNoPr}
+                      onChange={(e) => handleSelectNoPr(e.target.value)}
+                      className="w-64 px-2 py-1 bg-[#FFFBEB] border border-[#7A7A7A] rounded text-xs uppercase font-mono cursor-pointer"
+                    >
+                      <option value="">-- Pilih No. PR (Opsional) --</option>
+                      {prDropdownChoices.map((prNo) => {
+                        const info = prOptions.find((p) => p.noPr === prNo);
+                        return (
+                          <option key={prNo} value={prNo}>
+                            {info ? `${prNo} (${info.deliveryTo || '-'})` : prNo}
+                          </option>
+                        );
+                      })}
+                    </select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <label className="text-xs font-semibold text-gray-700 shrink-0">Nama Supplier:</label>
@@ -961,30 +1375,94 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     </select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-gray-700 shrink-0">Mata Uang:</label>
+                    <label className="text-xs font-semibold text-gray-700 shrink-0">Delivery To:</label>
                     <select
-                      value={newMataUang}
-                      onChange={(e) => setNewMataUang(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs cursor-pointer"
+                      value={newDeliveryTo}
+                      onChange={(e) => setNewDeliveryTo(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase cursor-pointer"
                     >
-                      {currencyOptionCodes.map((code) => {
-                        const info = WORLD_CURRENCIES.find((c) => c.code === code);
-                        return (
-                          <option key={code} value={code}>
-                            {info ? `${info.code} - ${info.name}` : code}
-                          </option>
-                        );
-                      })}
+                      <option value="">-- Pilih Lokasi Gudang --</option>
+                      {deliveryToChoices.map((lok) => (
+                        <option key={lok} value={lok}>
+                          {lok}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-gray-700 shrink-0">Nilai PO ({newMataUang}):</label>
+                    <label className="text-xs font-semibold text-gray-700 shrink-0">Delivery / Mata Uang:</label>
+                    <div className="w-64 flex gap-2">
+                      <select
+                        value={newDelivery}
+                        onChange={(e) => setNewDelivery(e.target.value)}
+                        className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs cursor-pointer"
+                      >
+                        <option value="Darat">Darat</option>
+                        <option value="Laut">Laut</option>
+                        <option value="Udara">Udara</option>
+                        <option value="Ambil Sendiri">Ambil Sendiri</option>
+                      </select>
+                      <select
+                        value={newMataUang}
+                        onChange={(e) => setNewMataUang(e.target.value)}
+                        className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs cursor-pointer"
+                      >
+                        {currencyOptionCodes.map((code) => {
+                          const info = WORLD_CURRENCIES.find((c) => c.code === code);
+                          return (
+                            <option key={code} value={code}>
+                              {info ? `${info.code} - ${info.name}` : code}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-semibold text-gray-700 shrink-0">
+                      PPN (%) / Nominal PPN:
+                    </label>
+                    <div className="w-64 flex gap-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={newPpn}
+                        onChange={(e) => handlePpnPercentChange(e.target.value)}
+                        className="w-20 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-center"
+                        placeholder="PPN %"
+                        title="Persentase PPN (%) — Memotong Total P.O. Detail"
+                      />
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={newNilaiPpn}
+                        onChange={(e) => handleManualNilaiPpnChange(e.target.value)}
+                        className="flex-1 px-2 py-1 bg-[#FFFBEB] border border-[#7A7A7A] rounded text-xs font-mono text-right font-semibold text-[#9A3412]"
+                        placeholder="Nominal PPN"
+                        title="Nominal Potongan PPN tersimpan di tabel purchase_orders"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-semibold text-gray-700 shrink-0">
+                      Nilai PO ({newMataUang})
+                      {hasFilledDetailRows && (
+                        <span className="ml-1 text-[10px] font-normal text-[#0055EA]">
+                          (Detail - PPN)
+                        </span>
+                      )}
+                      :
+                    </label>
                     <input
                       type="number"
+                      step="0.01"
                       value={newNilaiPo}
                       onChange={(e) => setNewNilaiPo(e.target.value)}
+                      readOnly={hasFilledDetailRows}
                       required
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-right"
+                      className={`w-64 px-2 py-1 border border-[#7A7A7A] rounded text-xs font-mono text-right font-bold ${
+                        hasFilledDetailRows ? 'bg-[#F0F4FF] text-[#000084]' : 'bg-white'
+                      }`}
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -997,23 +1475,24 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-gray-700 shrink-0">Tgl.Lunas:</label>
-                    <div className="w-64">
-                      <DatePickerInput
-                        value={newTglLunas}
-                        onChange={(formatted) => setNewTglLunas(formatted)}
-                        format="dMyShort"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-gray-700 shrink-0">Tgl.Kirim:</label>
-                    <div className="w-64">
-                      <DatePickerInput
-                        value={newTglKirim}
-                        onChange={(formatted) => setNewTglKirim(formatted)}
-                        format="dMyShort"
-                      />
+                    <label className="text-xs font-semibold text-gray-700 shrink-0">Tgl.Lunas / Tgl.Kirim:</label>
+                    <div className="w-64 flex gap-2">
+                      <div className="w-1/2">
+                        <DatePickerInput
+                          value={newTglLunas}
+                          onChange={(formatted) => setNewTglLunas(formatted)}
+                          format="dMyShort"
+                          placeholder="Tgl Lunas"
+                        />
+                      </div>
+                      <div className="w-1/2">
+                        <DatePickerInput
+                          value={newTglKirim}
+                          onChange={(formatted) => setNewTglKirim(formatted)}
+                          format="dMyShort"
+                          placeholder="Tgl Kirim"
+                        />
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -1186,11 +1665,19 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                       </tbody>
                     </table>
                   </div>
-                  <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1 flex items-center justify-between text-[11px] font-bold">
+                  <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold">
                     <span>Jumlah Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}</span>
-                    <span className="font-mono text-[#003C74]">
-                      Total P.O Detail: {newMataUang} {formatMoney(modalDetailTotal)}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-4 font-mono">
+                      <span className="text-[#003C74]">
+                        Total P.O Detail: {newMataUang} {formatMoney(modalDetailTotal)}
+                      </span>
+                      <span className="text-[#9A3412]">
+                        Potongan PPN ({parseNum(newPpn)}%): -{newMataUang} {formatMoney(modalNominalPpn)}
+                      </span>
+                      <span className="text-[#000084] bg-[#E8EEFF] px-2 py-0.5 border border-[#8BA4E8]">
+                        Nilai PO: {newMataUang} {formatMoney(parseNum(newNilaiPo))}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -1261,26 +1748,189 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           </div>
         )}
 
+        {/* Find Modal: Cari & Daftar Purchase Order */}
+        {isFindOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[960px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
+              <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
+                <span>Cari &amp; Daftar Purchase Order (Supabase)</span>
+                <button
+                  type="button"
+                  onClick={() => setIsFindOpen(false)}
+                  className="px-1.5 bg-[#C00000] text-white cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold whitespace-nowrap">Cari :</span>
+                  <input
+                    ref={findInputRef}
+                    type="text"
+                    value={findQuery}
+                    onChange={(e) => setFindQuery(e.target.value)}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter') {
+                        if (findModalRows.length > 0 && !findQuery.trim()) {
+                          const first = findModalRows[0];
+                          setSelectedId(first.id);
+                          setSearchTerm(findQuery);
+                          setIsFindOpen(false);
+                          showFeedback(`Purchase Order [${first.noBukti}] dipilih`);
+                        } else {
+                          const rows = await loadData({
+                            field: 'Semua',
+                            term: findQuery,
+                            tglFilter: 'Semua',
+                          });
+                          setSearchField('Semua');
+                          setSearchTerm(findQuery);
+                          if (rows && rows.length > 0) {
+                            setSelectedId(rows[0].id);
+                            showFeedback(`Ditemukan ${rows.length} Purchase Order dari Supabase`);
+                          } else if (rows) {
+                            showFeedback('Data Purchase Order tidak ditemukan di Supabase');
+                          }
+                        }
+                      }
+                    }}
+                    placeholder="Cari No.Bukti, No.PR, Nama Supplier, Delivery To, Mata Uang, Keterangan..."
+                    className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={async () => {
+                      const rows = await loadData({
+                        field: 'Semua',
+                        term: findQuery,
+                        tglFilter: 'Semua',
+                      });
+                      setSearchField('Semua');
+                      setSearchTerm(findQuery);
+                      if (rows && rows.length > 0) {
+                        setSelectedId(rows[0].id);
+                        showFeedback(`Ditemukan ${rows.length} Purchase Order dari Supabase`);
+                      } else if (rows) {
+                        showFeedback('Data Purchase Order tidak ditemukan di Supabase');
+                      }
+                    }}
+                    className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
+                  >
+                    Cari
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={async () => {
+                      setFindQuery('');
+                      setSearchTerm('');
+                      setSearchField('Semua');
+                      await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+                      showFeedback('Data Purchase Order di-refresh dari Supabase');
+                    }}
+                    className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
+                      <tr>
+                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.Bukti</th>
+                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.PR</th>
+                        <th className="px-2 py-1 border-r border-[#ACA899] w-22">Tanggal</th>
+                        <th className="px-2 py-1 border-r border-[#ACA899]">Nama Supplier</th>
+                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">Delivery To</th>
+                        <th className="px-2 py-1 border-r border-[#ACA899] text-center w-14">PPN</th>
+                        <th className="px-2 py-1 border-r border-[#ACA899] text-right w-24">Nominal PPN</th>
+                        <th className="px-2 py-1 text-right w-24">Nilai PO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {findModalRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="text-center py-6 text-gray-500 italic">
+                            Tidak ada data Purchase Order yang cocok
+                          </td>
+                        </tr>
+                      ) : (
+                        findModalRows.map((p) => (
+                          <tr
+                            key={p.id}
+                            onClick={() => {
+                              setSelectedId(p.id);
+                              setSearchTerm(findQuery);
+                              setIsFindOpen(false);
+                              showFeedback(`Purchase Order [${p.noBukti} - ${p.namaSupplier}] dipilih`);
+                            }}
+                            className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
+                              p.id === selectedId ? 'bg-[#FFFF99]' : ''
+                            }`}
+                          >
+                            <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">{p.noBukti}</td>
+                            <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{p.noPr || '-'}</td>
+                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{p.tanggal}</td>
+                            <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">{p.namaSupplier}</td>
+                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{p.deliveryTo || '-'}</td>
+                            <td className="px-2 py-1 text-center border-r border-[#E0E0E0]">{p.ppn}</td>
+                            <td className="px-2 py-1 text-right font-mono border-r border-[#E0E0E0]">{p.nilaiPpn}</td>
+                            <td className="px-2 py-1 text-right font-mono font-semibold">{p.nilaiPo}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-between items-center pt-1">
+                  <span className="text-[11px] text-[#555]">
+                    Menampilkan {findModalRows.length} dari {poList.length} Purchase Order. Klik baris untuk memilih record.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsFindOpen(false)}
+                    className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <A4PrintPreviewModal
           isOpen={isPrintOpen}
           onClose={() => setIsPrintOpen(false)}
           title={printMode === 'detail' ? 'PURCHASE ORDER DETAIL' : 'LAPORAN LIST PURCHASE ORDER'}
           subtitle={
             printMode === 'detail'
-              ? `No. Bukti: ${selectedPo?.noBukti || '-'} | Mata Uang: ${selectedPo?.mataUang || 'IDR'}`
+              ? `No. Bukti: ${selectedPo?.noBukti || '-'} | No. PR: ${selectedPo?.noPr || '-'} | Mata Uang: ${
+                  selectedPo?.mataUang || 'IDR'
+                }`
               : `Filter Tanggal: ${tanggalFilter}`
           }
           metaLines={
             printMode === 'detail' && selectedPo
               ? [
                   { label: 'No. Bukti', value: selectedPo.noBukti },
+                  { label: 'No. PR', value: selectedPo.noPr || '-' },
                   { label: 'Tanggal', value: selectedPo.tanggal },
                   { label: 'Nama Supplier', value: selectedPo.namaSupplier },
+                  { label: 'Delivery To', value: selectedPo.deliveryTo || '-' },
+                  { label: 'Delivery', value: selectedPo.delivery || '-' },
                   { label: 'Mata Uang', value: selectedPo.mataUang },
                   { label: 'Tgl. Kirim', value: selectedPo.tglKirim },
                   { label: 'Status PO', value: selectedPo.poClose },
+                  { label: 'PPN (%)', value: selectedPo.ppn },
+                  {
+                    label: 'Nominal PPN',
+                    value: `-${selectedPo.mataUang} ${selectedPo.nilaiPpn}`,
+                  },
+                  { label: 'Nilai PO (Net)', value: `${selectedPo.mataUang} ${selectedPo.nilaiPo}` },
                   { label: 'Keterangan', value: selectedPo.keterangan || '-' },
-                  { label: 'Nilai PO', value: `${selectedPo.mataUang} ${selectedPo.nilaiPo}` },
                   { label: 'Dibuat Oleh', value: selectedPo.dibuatOleh },
                   { label: 'Tgl. Created', value: selectedPo.tglCreated || '-' },
                   { label: 'DiUpdate Oleh', value: selectedPo.diupdateOleh },
@@ -1300,12 +1950,21 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     value: formatMoney(selectedPoDetails.reduce((acc, d) => acc + d.qty, 0)),
                   },
                   {
-                    label: `Total (${selectedPo?.mataUang || 'IDR'})`,
+                    label: `Total P.O. Detail (${selectedPo?.mataUang || 'IDR'})`,
                     value: `${selectedPo?.mataUang || 'IDR'} ${formatMoney(selectedDetailTotal)}`,
+                  },
+                  {
+                    label: `Potongan PPN (${selectedPo?.ppn || '0%'})`,
+                    value: `-${selectedPo?.mataUang || 'IDR'} ${formatMoney(selectedPo?.nilaiPpnNum || 0)}`,
+                  },
+                  {
+                    label: `Nilai PO (Setelah PPN)`,
+                    value: `${selectedPo?.mataUang || 'IDR'} ${formatMoney(selectedPo?.nilaiPoNum || 0)}`,
                   },
                 ]
               : [
                   { label: 'Total Record', value: `${filteredPoList.length} Dokumen` },
+                  { label: 'Total Nominal PPN', value: formatRupiah(totalNilaiPpn) },
                   { label: 'Total Nilai PO', value: formatRupiah(totalNilaiPo) },
                 ]
           }
