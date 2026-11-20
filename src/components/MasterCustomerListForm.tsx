@@ -9,6 +9,7 @@ import {
   erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
+  parseNum,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 
@@ -16,14 +17,41 @@ export interface CustomerItem {
   id: string;
   kodeCustomer: string;
   namaCustomer: string;
+  ppn: boolean;
+  hitung: boolean;
+  npwp: string;
+  alamatNpwp: string;
+  wilayah: string;
+  limitKredit: number;
+  tmpPembayaran: number;
+  rubahKode: string;
+  kodeSales: string;
+  namaSales: string;
+  kodeExpedisi: string;
+  namaExpedisi: string;
+  cpNama: string;
+  email: string;
+  handphone: string;
+  invAlamat: string;
+  invKota: string;
+  invTelepon: string;
+  invFax: string;
+  delAlamat: string;
+  delKota: string;
+  delTelepon: string;
+  delFax: string;
   piutang: number;
   piutangGiro: number;
-  alamat: string;
-  kota: string;
-  phone: string;
-  email: string;
-  groupArea: string;
-  sales: string;
+}
+
+export interface SalesRef {
+  kodeSales: string;
+  namaSales: string;
+}
+
+export interface ExpedisiRef {
+  kodeExpedisi: string;
+  namaExpedisi: string;
 }
 
 interface MasterCustomerListFormProps {
@@ -36,14 +64,31 @@ function mapDbToItem(r: any): CustomerItem {
     id: r.id,
     kodeCustomer: r.kode_customer || '',
     namaCustomer: r.nama_customer || '',
+    ppn: r.ppn ?? true,
+    hitung: r.hitung ?? true,
+    npwp: r.npwp || '',
+    alamatNpwp: r.alamat_npwp || '',
+    wilayah: r.wilayah || '',
+    limitKredit: Number(r.limit_kredit || 0),
+    tmpPembayaran: Number(r.tmp_pembayaran || 0),
+    rubahKode: r.rubah_kode || '',
+    kodeSales: r.kode_sales || '',
+    namaSales: r.nama_sales || '',
+    kodeExpedisi: r.kode_expedisi || '',
+    namaExpedisi: r.nama_expedisi || '',
+    cpNama: r.contact_nama || '',
+    email: r.email || '',
+    handphone: r.handphone || '',
+    invAlamat: r.inv_alamat || r.alamat || '',
+    invKota: r.inv_kota || r.kota || '',
+    invTelepon: r.inv_telepon || r.phone || '',
+    invFax: r.inv_fax || '',
+    delAlamat: r.del_alamat || '',
+    delKota: r.del_kota || '',
+    delTelepon: r.del_telepon || '',
+    delFax: r.del_fax || '',
     piutang: Number(r.piutang || 0),
     piutangGiro: Number(r.piutang_giro || 0),
-    alamat: r.alamat || '',
-    kota: r.kota || '',
-    phone: r.phone || '',
-    email: r.email || '',
-    groupArea: r.group_area || '',
-    sales: r.sales || '',
   };
 }
 
@@ -56,22 +101,46 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
 
+  const [salesOptions, setSalesOptions] = useState<SalesRef[]>([]);
+  const [expedisiOptions, setExpedisiOptions] = useState<ExpedisiRef[]>([]);
+  const [wilayahOptions, setWilayahOptions] = useState<string[]>([]);
+
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
-  const [newPiutang, setNewPiutang] = useState('0');
-  const [newPiutangGiro, setNewPiutangGiro] = useState('0');
-  const [newAlamat, setNewAlamat] = useState('');
-  const [newKota, setNewKota] = useState('');
-  const [newPhone, setNewPhone] = useState('');
+  const [newPpn, setNewPpn] = useState(true);
+  const [newHitung, setNewHitung] = useState(true);
+  const [newNpwp, setNewNpwp] = useState('');
+  const [newAlamatNpwp, setNewAlamatNpwp] = useState('');
+  const [newWilayah, setNewWilayah] = useState('');
+  const [newLimitKredit, setNewLimitKredit] = useState('0');
+  const [newTmpPembayaran, setNewTmpPembayaran] = useState('0');
+  const [newRubahKode, setNewRubahKode] = useState('');
+
+  const [newKodeSales, setNewKodeSales] = useState('');
+  const [newNamaSales, setNewNamaSales] = useState('');
+  const [newKodeExpedisi, setNewKodeExpedisi] = useState('');
+  const [newNamaExpedisi, setNewNamaExpedisi] = useState('');
+
+  const [newCpNama, setNewCpNama] = useState('');
   const [newEmail, setNewEmail] = useState('');
-  const [newGroupArea, setNewGroupArea] = useState('');
-  const [newSales, setNewSales] = useState('');
+  const [newHandphone, setNewHandphone] = useState('');
+
+  const [newInvAlamat, setNewInvAlamat] = useState('');
+  const [newInvKota, setNewInvKota] = useState('');
+  const [newInvTelepon, setNewInvTelepon] = useState('');
+  const [newInvFax, setNewInvFax] = useState('');
+
+  const [newDelAlamat, setNewDelAlamat] = useState('');
+  const [newDelKota, setNewDelKota] = useState('');
+  const [newDelTelepon, setNewDelTelepon] = useState('');
+  const [newDelFax, setNewDelFax] = useState('');
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -84,10 +153,53 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadMasterReferences = async () => {
+    const [salesRes, expRes, wilRes] = await Promise.allSettled([
+      erpList<any>('master_sales', { orderBy: 'kode_sales', asc: true, limit: 1000 }),
+      erpList<any>('master_expedisis', { orderBy: 'kode_expedisi', asc: true, limit: 1000 }),
+      erpList<any>('master_wilayahs', { orderBy: 'kode', asc: true, limit: 1000 }),
+    ]);
+
+    if (salesRes.status === 'fulfilled') {
+      const sList: SalesRef[] = salesRes.value.map((s: any) => ({
+        kodeSales: String(s.kode_sales || '').trim().toUpperCase(),
+        namaSales: String(s.nama_sales || '').trim().toUpperCase(),
+      })).filter((s: SalesRef) => s.kodeSales);
+      setSalesOptions(sList);
+    }
+
+    if (expRes.status === 'fulfilled') {
+      const eList: ExpedisiRef[] = expRes.value.map((e: any) => ({
+        kodeExpedisi: String(e.kode_expedisi || '').trim().toUpperCase(),
+        namaExpedisi: String(e.nama_expedisi || '').trim().toUpperCase(),
+      })).filter((e: ExpedisiRef) => e.kodeExpedisi);
+      setExpedisiOptions(eList);
+    }
+
+    if (wilRes.status === 'fulfilled') {
+      const wList = Array.from(
+        new Set(
+          wilRes.value
+            .map((w: any) => {
+              const kode = String(w.kode || '').trim().toUpperCase();
+              const nama = String(w.nama_wilayah || '').trim().toUpperCase();
+              if (kode && nama) return `${kode} - ${nama}`;
+              return nama || kode;
+            })
+            .filter(Boolean)
+        )
+      );
+      setWilayahOptions(wList);
+    }
+  };
+
   const loadData = async () => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('master_customers', { orderBy: 'kode_customer', asc: true });
+      const [rows] = await Promise.all([
+        erpList<any>('master_customers', { orderBy: 'kode_customer', asc: true }),
+        loadMasterReferences(),
+      ]);
       const mapped = rows.map(mapDbToItem);
       setCustomerList(mapped);
       if (mapped.length > 0 && !mapped.some((c) => c.id === selectedId)) {
@@ -113,23 +225,57 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddNew = () => {
+  const handleSalesChange = (kode: string) => {
+    const clean = kode.trim().toUpperCase();
+    setNewKodeSales(clean);
+    const found = salesOptions.find((s) => s.kodeSales === clean);
+    if (found) {
+      setNewNamaSales(found.namaSales);
+    }
+  };
+
+  const handleExpedisiChange = (kode: string) => {
+    const clean = kode.trim().toUpperCase();
+    setNewKodeExpedisi(clean);
+    const found = expedisiOptions.find((e) => e.kodeExpedisi === clean);
+    if (found) {
+      setNewNamaExpedisi(found.namaExpedisi);
+    }
+  };
+
+  const handleAddNew = async () => {
     setEditingId(null);
     setModalError(null);
     setNewKode('');
     setNewNama('');
-    setNewPiutang('0');
-    setNewPiutangGiro('0');
-    setNewAlamat('');
-    setNewKota('');
-    setNewPhone('');
+    setNewPpn(true);
+    setNewHitung(true);
+    setNewNpwp('');
+    setNewAlamatNpwp('');
+    setNewWilayah('');
+    setNewLimitKredit('0');
+    setNewTmpPembayaran('0');
+    setNewRubahKode('');
+    setNewKodeSales('');
+    setNewNamaSales('');
+    setNewKodeExpedisi('');
+    setNewNamaExpedisi('');
+    setNewCpNama('');
     setNewEmail('');
-    setNewGroupArea('');
-    setNewSales('');
+    setNewHandphone('');
+    setNewInvAlamat('');
+    setNewInvKota('');
+    setNewInvTelepon('');
+    setNewInvFax('');
+    setNewDelAlamat('');
+    setNewDelKota('');
+    setNewDelTelepon('');
+    setNewDelFax('');
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const item = customerList.find((c) => c.id === selectedId);
     if (!item) {
       showFeedback('Pilih baris terlebih dahulu');
@@ -139,15 +285,31 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     setModalError(null);
     setNewKode(item.kodeCustomer);
     setNewNama(item.namaCustomer);
-    setNewPiutang(String(item.piutang));
-    setNewPiutangGiro(String(item.piutangGiro));
-    setNewAlamat(item.alamat);
-    setNewKota(item.kota);
-    setNewPhone(item.phone);
-    setNewEmail(item.email || '');
-    setNewGroupArea(item.groupArea);
-    setNewSales(item.sales);
+    setNewPpn(item.ppn);
+    setNewHitung(item.hitung);
+    setNewNpwp(item.npwp);
+    setNewAlamatNpwp(item.alamatNpwp);
+    setNewWilayah(item.wilayah);
+    setNewLimitKredit(String(item.limitKredit));
+    setNewTmpPembayaran(String(item.tmpPembayaran));
+    setNewRubahKode(item.rubahKode);
+    setNewKodeSales(item.kodeSales);
+    setNewNamaSales(item.namaSales);
+    setNewKodeExpedisi(item.kodeExpedisi);
+    setNewNamaExpedisi(item.namaExpedisi);
+    setNewCpNama(item.cpNama);
+    setNewEmail(item.email);
+    setNewHandphone(item.handphone);
+    setNewInvAlamat(item.invAlamat);
+    setNewInvKota(item.invKota);
+    setNewInvTelepon(item.invTelepon);
+    setNewInvFax(item.invFax);
+    setNewDelAlamat(item.delAlamat);
+    setNewDelKota(item.delKota);
+    setNewDelTelepon(item.delTelepon);
+    setNewDelFax(item.delFax);
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
   const handleDelete = async () => {
@@ -182,14 +344,33 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
       const dbPayload = {
         kode_customer: newKode.trim().toUpperCase(),
         nama_customer: newNama.trim().toUpperCase(),
-        piutang: parseFloat(newPiutang) || 0,
-        piutang_giro: parseFloat(newPiutangGiro) || 0,
-        alamat: newAlamat.trim(),
-        kota: newKota.trim().toUpperCase(),
-        phone: newPhone.trim(),
+        ppn: newPpn,
+        hitung: newHitung,
+        npwp: newNpwp.trim(),
+        alamat_npwp: newAlamatNpwp.trim(),
+        wilayah: newWilayah.trim().toUpperCase(),
+        limit_kredit: parseNum(newLimitKredit),
+        tmp_pembayaran: parseInt(newTmpPembayaran) || 0,
+        rubah_kode: newRubahKode.trim().toUpperCase(),
+        kode_sales: newKodeSales.trim().toUpperCase(),
+        nama_sales: newNamaSales.trim().toUpperCase(),
+        kode_expedisi: newKodeExpedisi.trim().toUpperCase(),
+        nama_expedisi: newNamaExpedisi.trim().toUpperCase(),
+        contact_nama: newCpNama.trim(),
         email: newEmail.trim(),
-        group_area: newGroupArea.trim().toUpperCase(),
-        sales: newSales.trim().toUpperCase(),
+        handphone: newHandphone.trim(),
+        inv_alamat: newInvAlamat.trim(),
+        inv_kota: newInvKota.trim().toUpperCase(),
+        inv_telepon: newInvTelepon.trim(),
+        inv_fax: newInvFax.trim(),
+        del_alamat: newDelAlamat.trim(),
+        del_kota: newDelKota.trim().toUpperCase(),
+        del_telepon: newDelTelepon.trim(),
+        del_fax: newDelFax.trim(),
+        alamat: newInvAlamat.trim(),
+        kota: newInvKota.trim().toUpperCase(),
+        phone: newInvTelepon.trim(),
+        sales: newNamaSales.trim().toUpperCase(),
       };
       if (editingId) {
         const saved = await erpUpdate<any>('master_customers', editingId, dbPayload);
@@ -219,20 +400,17 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     const term = searchTerm.trim().toLowerCase();
     if (searchField === 'Kode') return item.kodeCustomer.toLowerCase().includes(term);
     if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'Kota') return item.kota.toLowerCase().includes(term);
-    if (searchField === 'Phone') return item.phone.toLowerCase().includes(term);
+    if (searchField === 'Kota') return item.invKota.toLowerCase().includes(term) || item.kota.toLowerCase().includes(term);
+    if (searchField === 'Phone') return item.invTelepon.toLowerCase().includes(term) || item.phone.toLowerCase().includes(term);
     if (searchField === 'Email') return item.email.toLowerCase().includes(term);
-    if (searchField === 'Group Area') return item.groupArea.toLowerCase().includes(term);
-    if (searchField === 'Sales') return item.sales.toLowerCase().includes(term);
+    if (searchField === 'Sales') return item.namaSales.toLowerCase().includes(term) || item.sales.toLowerCase().includes(term);
     return (
       item.kodeCustomer.toLowerCase().includes(term) ||
       item.namaCustomer.toLowerCase().includes(term) ||
-      item.alamat.toLowerCase().includes(term) ||
-      item.kota.toLowerCase().includes(term) ||
-      item.phone.toLowerCase().includes(term) ||
+      item.invAlamat.toLowerCase().includes(term) ||
+      item.invKota.toLowerCase().includes(term) ||
       item.email.toLowerCase().includes(term) ||
-      item.groupArea.toLowerCase().includes(term) ||
-      item.sales.toLowerCase().includes(term)
+      item.namaSales.toLowerCase().includes(term)
     );
   });
 
@@ -242,12 +420,12 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     const searchable = [
       item.kodeCustomer,
       item.namaCustomer,
-      item.alamat,
-      item.kota,
-      item.phone,
+      item.invAlamat,
+      item.invKota,
+      item.invTelepon,
       item.email,
-      item.groupArea,
-      item.sales,
+      item.namaSales,
+      item.namaExpedisi,
     ]
       .join(' ')
       .toLowerCase();
@@ -263,14 +441,13 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
       columns: [
         { header: 'Kode', accessor: 'kodeCustomer' },
         { header: 'Nama Pelanggan', accessor: 'namaCustomer' },
-        { header: 'Piutang', accessor: 'piutang', align: 'right' },
-        { header: 'Piutang Giro', accessor: 'piutangGiro', align: 'right' },
-        { header: 'Alamat', accessor: 'alamat' },
-        { header: 'Kota', accessor: 'kota' },
-        { header: 'Phone', accessor: 'phone' },
+        { header: 'Limit Kredit', accessor: 'limitKredit', align: 'right' },
+        { header: 'Alamat', accessor: 'invAlamat' },
+        { header: 'Kota', accessor: 'invKota' },
+        { header: 'Phone', accessor: 'invTelepon' },
         { header: 'Email', accessor: 'email' },
-        { header: 'Group Area', accessor: 'groupArea' },
-        { header: 'Sales', accessor: 'sales' },
+        { header: 'Sales', accessor: 'namaSales' },
+        { header: 'Expedisi', accessor: 'namaExpedisi' },
       ],
       rows: filteredCustomer,
     });
@@ -344,7 +521,6 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
               <option value="Kota">Kota</option>
               <option value="Phone">Phone</option>
               <option value="Email">Email</option>
-              <option value="Group Area">Group Area</option>
               <option value="Sales">Sales</option>
             </select>
             <input
@@ -386,20 +562,18 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                   <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0" />
                   <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
                   <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Pelanggan</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Piutang</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Piutang Giro</th>
-                  <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat</th>
+                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit Kredit</th>
+                  <th className="w-[220px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat Invoice</th>
                   <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
                   <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Phone</th>
-                  <th className="w-[170px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
-                  <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Group Area</th>
-                  <th className="w-[140px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Sales</th>
+                  <th className="w-[150px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Sales</th>
+                  <th className="w-[150px] px-2 py-0.5 font-bold bg-[#ECE9D8]">Expedisi</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredCustomer.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="text-center py-6 text-gray-500 italic">
+                    <td colSpan={9} className="text-center py-6 text-gray-500 italic">
                       Tidak ada data pelanggan yang cocok
                     </td>
                   </tr>
@@ -420,14 +594,12 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                         </td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold">{item.kodeCustomer}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-semibold">{item.namaCustomer}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{item.piutang.toLocaleString('id-ID')}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{item.piutangGiro.toLocaleString('id-ID')}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.alamat}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.kota}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.phone}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.email}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.groupArea}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.sales}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{formatMoney(item.limitKredit)}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.invAlamat}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.invKota}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.invTelepon}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.namaSales || item.sales}</td>
+                        <td className="px-2 py-0.5">{item.namaExpedisi}</td>
                       </tr>
                     );
                   })
@@ -440,133 +612,312 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
 
       {isAddOpen && (
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-[480px] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
-            <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
+          <div className="w-[780px] max-w-[96vw] max-h-[94vh] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col text-[11px]">
+            <div className="bg-[#000080] text-white px-2.5 py-1 font-bold text-[12px] flex justify-between items-center mb-3 shrink-0">
               <span>{editingId ? 'Koreksi Master Pelanggan' : 'Tambah Master Pelanggan Baru'}</span>
               <button type="button" onClick={() => { setModalError(null); setIsAddOpen(false); }} className="text-white hover:bg-red-600 px-1 font-bold cursor-pointer">✕</button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-1">Kode:</label>
-                  <input
-                    type="text"
-                    required
-                    value={newKode}
-                    onChange={(e) => setNewKode(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                    placeholder="CUST01"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-1">Nama Pelanggan:</label>
-                  <input
-                    type="text"
-                    required
-                    value={newNama}
-                    onChange={(e) => setNewNama(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                  />
+
+            <form noValidate onSubmit={handleSaveNew} className="space-y-3 overflow-y-auto flex-1 pr-1">
+              {/* Top Grid: Customer Description vs Sales & Expedisi & Contact */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Left Box: Customer Description */}
+                <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-2">
+                  <legend className="font-bold px-1 text-black">Customer Description</legend>
+                  
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Kode Customer* :</label>
+                    <input
+                      type="text"
+                      required
+                      value={newKode}
+                      onChange={(e) => setNewKode(e.target.value)}
+                      className="w-32 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase font-mono font-bold"
+                    />
+                    <div className="flex items-center space-x-3 ml-2">
+                      <label className="flex items-center space-x-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={newPpn}
+                          onChange={(e) => setNewPpn(e.target.checked)}
+                        />
+                        <span>PPN</span>
+                      </label>
+                      <label className="flex items-center space-x-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={newHitung}
+                          onChange={(e) => setNewHitung(e.target.checked)}
+                        />
+                        <span>Hitung</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">NPWP # :</label>
+                    <input
+                      type="text"
+                      value={newNpwp}
+                      onChange={(e) => setNewNpwp(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Alamat NPWP :</label>
+                    <input
+                      type="text"
+                      value={newAlamatNpwp}
+                      onChange={(e) => setNewAlamatNpwp(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2"
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Nama Customer* :</label>
+                    <input
+                      type="text"
+                      required
+                      value={newNama}
+                      onChange={(e) => setNewNama(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase font-semibold"
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Wilayah/Area :</label>
+                    <select
+                      value={newWilayah}
+                      onChange={(e) => setNewWilayah(e.target.value)}
+                      className="w-36 h-[22px] bg-white border border-[#7F9DB9] px-1 uppercase cursor-pointer"
+                    >
+                      <option value="">-- Pilih Wilayah --</option>
+                      {wilayahOptions.map((w) => (
+                        <option key={w} value={w}>{w}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Limit Kredit :</label>
+                    <input
+                      type="number"
+                      value={newLimitKredit}
+                      onChange={(e) => setNewLimitKredit(e.target.value)}
+                      className="w-28 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                    />
+                    <span className="font-semibold">Tmp Pembayaran :</span>
+                    <input
+                      type="number"
+                      value={newTmpPembayaran}
+                      onChange={(e) => setNewTmpPembayaran(e.target.value)}
+                      className="w-16 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-center"
+                    />
+                    <span>Hari</span>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <label className="w-28 font-semibold">Rubah Kode :</label>
+                    <input
+                      type="text"
+                      value={newRubahKode}
+                      onChange={(e) => setNewRubahKode(e.target.value)}
+                      className="w-32 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase"
+                    />
+                  </div>
+                </fieldset>
+
+                {/* Right Box: Sales, Expedisi, Contact Person */}
+                <div className="space-y-3">
+                  {/* Sales */}
+                  <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
+                    <legend className="font-bold px-1 text-black">Sales</legend>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Kode Sales :</label>
+                      <select
+                        value={newKodeSales}
+                        onChange={(e) => handleSalesChange(e.target.value)}
+                        className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-1 uppercase cursor-pointer"
+                      >
+                        <option value="">-- Pilih Sales --</option>
+                        {salesOptions.map((s) => (
+                          <option key={s.kodeSales} value={s.kodeSales}>
+                            {s.kodeSales} - {s.namaSales}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Nama Sales :</label>
+                      <input
+                        type="text"
+                        value={newNamaSales}
+                        readOnly
+                        className="flex-1 h-[22px] bg-[#FFFFE1] border border-[#7F9DB9] px-2 uppercase"
+                      />
+                    </div>
+                  </fieldset>
+
+                  {/* Expedisi */}
+                  <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
+                    <legend className="font-bold px-1 text-black">Expedisi</legend>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Kode Expedisi :</label>
+                      <select
+                        value={newKodeExpedisi}
+                        onChange={(e) => handleExpedisiChange(e.target.value)}
+                        className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-1 uppercase cursor-pointer"
+                      >
+                        <option value="">-- Pilih Expedisi --</option>
+                        {expedisiOptions.map((ex) => (
+                          <option key={ex.kodeExpedisi} value={ex.kodeExpedisi}>
+                            {ex.kodeExpedisi} - {ex.namaExpedisi}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Nama Expedisi :</label>
+                      <input
+                        type="text"
+                        value={newNamaExpedisi}
+                        readOnly
+                        className="flex-1 h-[22px] bg-[#FFFFE1] border border-[#7F9DB9] px-2 uppercase"
+                      />
+                    </div>
+                  </fieldset>
+
+                  {/* Contact Person */}
+                  <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
+                    <legend className="font-bold px-1 text-black">Contact Person</legend>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Nama :</label>
+                      <input
+                        type="text"
+                        value={newCpNama}
+                        onChange={(e) => setNewCpNama(e.target.value)}
+                        className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2"
+                      />
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Email :</label>
+                      <input
+                        type="email"
+                        value={newEmail}
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2"
+                      />
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <label className="w-24 font-semibold">Handphone :</label>
+                      <input
+                        type="text"
+                        value={newHandphone}
+                        onChange={(e) => setNewHandphone(e.target.value)}
+                        className="w-36 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                      />
+                    </div>
+                  </fieldset>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-1">Piutang (Rp):</label>
-                  <input
-                    type="number"
-                    value={newPiutang}
-                    onChange={(e) => setNewPiutang(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-1">Piutang Giro (Rp):</label>
-                  <input
-                    type="number"
-                    value={newPiutangGiro}
-                    onChange={(e) => setNewPiutangGiro(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
-                  />
-                </div>
-              </div>
+              {/* Bottom Grid: Invoice Address vs Delivery Address */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Invoice Address */}
+                <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
+                  <legend className="font-bold px-1 text-black">Invoice Address</legend>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 font-semibold">Alamat :</label>
+                    <input
+                      type="text"
+                      value={newInvAlamat}
+                      onChange={(e) => setNewInvAlamat(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 font-semibold">Kota :</label>
+                    <input
+                      type="text"
+                      value={newInvKota}
+                      onChange={(e) => setNewInvKota(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 font-semibold">Telepon :</label>
+                    <input
+                      type="text"
+                      value={newInvTelepon}
+                      onChange={(e) => setNewInvTelepon(e.target.value)}
+                      className="w-40 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                    />
+                    <span>-</span>
+                    <input
+                      type="text"
+                      value={newInvFax}
+                      onChange={(e) => setNewInvFax(e.target.value)}
+                      placeholder="Fax"
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                    />
+                  </div>
+                </fieldset>
 
-              <div>
-                <label className="block font-bold mb-1">Alamat:</label>
-                <input
-                  type="text"
-                  value={newAlamat}
-                  onChange={(e) => setNewAlamat(e.target.value)}
-                  className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-1">Kota:</label>
-                  <input
-                    type="text"
-                    value={newKota}
-                    onChange={(e) => setNewKota(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-1">Phone:</label>
-                  <input
-                    type="text"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold mb-1">Email:</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="contoh@perusahaan.com"
-                  className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-1">Group Area:</label>
-                  <input
-                    type="text"
-                    value={newGroupArea}
-                    onChange={(e) => setNewGroupArea(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-1">Sales:</label>
-                  <input
-                    type="text"
-                    value={newSales}
-                    onChange={(e) => setNewSales(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                  />
-                </div>
+                {/* Delivery Address */}
+                <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
+                  <legend className="font-bold px-1 text-black">Delivery Address</legend>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 font-semibold">Alamat :</label>
+                    <input
+                      type="text"
+                      value={newDelAlamat}
+                      onChange={(e) => setNewDelAlamat(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 font-semibold">Kota :</label>
+                    <input
+                      type="text"
+                      value={newDelKota}
+                      onChange={(e) => setNewDelKota(e.target.value)}
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <label className="w-20 font-semibold">Telepon :</label>
+                    <input
+                      type="text"
+                      value={newDelTelepon}
+                      onChange={(e) => setNewDelTelepon(e.target.value)}
+                      className="w-40 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                    />
+                    <span>-</span>
+                    <input
+                      type="text"
+                      value={newDelFax}
+                      onChange={(e) => setNewDelFax(e.target.value)}
+                      placeholder="Fax"
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                    />
+                  </div>
+                </fieldset>
               </div>
 
               {modalError && (
-                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1 text-[11px] font-semibold">
                   ⚠ {modalError}
                 </div>
               )}
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
                   disabled={isBusy}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] font-bold cursor-pointer"
+                  className="px-5 py-1 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#D4D0C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] font-bold text-black rounded-[2px] cursor-pointer"
                 >
-                  Simpan
+                  Save
                 </button>
                 <button
                   type="button"
@@ -574,9 +925,9 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                     setModalError(null);
                     setIsAddOpen(false);
                   }}
-                  className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] cursor-pointer"
+                  className="px-5 py-1 bg-[#ECE9D8] hover:bg-[#F5F2E6] active:bg-[#D4D0C8] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] text-black rounded-[2px] cursor-pointer"
                 >
-                  Batal
+                  Close
                 </button>
               </div>
             </form>
@@ -684,10 +1035,10 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                           <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">
                             {c.namaCustomer}
                           </td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.kota || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.phone || '-'}</td>
+                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.invKota || '-'}</td>
+                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.invTelepon || '-'}</td>
                           <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.email || '-'}</td>
-                          <td className="px-2 py-1">{c.sales || '-'}</td>
+                          <td className="px-2 py-1">{c.namaSales || '-'}</td>
                         </tr>
                       ))
                     )}
@@ -720,22 +1071,18 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         columns={[
           { header: 'Kode', accessor: 'kodeCustomer', width: '78px' },
           { header: 'Nama Pelanggan', accessor: 'namaCustomer' },
-          { header: 'Piutang', accessor: (r) => formatMoney(r.piutang), align: 'right', width: '88px' },
-          { header: 'Piutang Giro', accessor: (r) => formatMoney(r.piutangGiro), align: 'right', width: '88px' },
-          { header: 'Kota', accessor: 'kota', width: '85px' },
-          { header: 'Phone', accessor: 'phone', width: '90px' },
-          { header: 'Email', accessor: 'email', width: '135px' },
-          { header: 'Sales', accessor: 'sales', width: '90px' },
+          { header: 'Limit Kredit', accessor: (r) => formatMoney(r.limitKredit), align: 'right', width: '95px' },
+          { header: 'Alamat Invoice', accessor: 'invAlamat' },
+          { header: 'Kota', accessor: 'invKota', width: '85px' },
+          { header: 'Phone', accessor: 'invTelepon', width: '90px' },
+          { header: 'Sales', accessor: 'namaSales', width: '110px' },
+          { header: 'Expedisi', accessor: 'namaExpedisi', width: '110px' },
         ]}
         rows={filteredCustomer}
         summaryItems={[
           {
-            label: 'Total Piutang',
-            value: formatMoney(filteredCustomer.reduce((a, b) => a + b.piutang, 0)),
-          },
-          {
-            label: 'Total Piutang Giro',
-            value: formatMoney(filteredCustomer.reduce((a, b) => a + b.piutangGiro, 0)),
+            label: 'Total Limit Kredit',
+            value: formatMoney(filteredCustomer.reduce((a, b) => a + b.limitKredit, 0)),
           },
         ]}
       />

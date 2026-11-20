@@ -22,8 +22,8 @@ import { getCurrentUser } from '../lib/authService';
 export interface SalesInquiryItem {
   id: string;
   noBukti: string;
-  tanggalDo: string;
-  tanggalDoIso: string;
+  tanggalSi: string;
+  tanggalSiIso: string;
   namaCustomer: string;
   namaSales: string;
   qty: number;
@@ -47,8 +47,8 @@ function mapDbToInquiry(r: any): SalesInquiryItem {
   return {
     id: r.id,
     noBukti: r.no_bukti || '',
-    tanggalDo: toDisplayDMyShort(r.tanggal_do),
-    tanggalDoIso: toIsoDate(r.tanggal_do) || '',
+    tanggalSi: toDisplayDMyShort(r.tanggal_si || r.tanggal_do),
+    tanggalSiIso: toIsoDate(r.tanggal_si || r.tanggal_do) || '',
     namaCustomer: r.nama_customer || '',
     namaSales: r.nama_sales || '',
     qty: Number(r.qty ?? 0),
@@ -86,7 +86,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [salesOptions, setSalesOptions] = useState<string[]>([]);
 
   const [newNoBukti, setNewNoBukti] = useState<string>('');
-  const [newTanggalDo, setNewTanggalDo] = useState<string>('');
+  const [newTanggalSi, setNewTanggalSi] = useState<string>('');
   const [newCustomer, setNewCustomer] = useState<string>('');
   const [newSales, setNewSales] = useState<string>('');
   const [newQty, setNewQty] = useState<string>('0');
@@ -138,7 +138,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     try {
       setIsBusy(true);
       const [rows] = await Promise.all([
-        erpList<any>('sales_inquiries', { orderBy: 'tanggal_do', asc: false }),
+        erpList<any>('sales_inquiries', { orderBy: 'tanggal_si', asc: false }),
         loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToInquiry);
@@ -172,7 +172,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     const todayDisp = toDisplayDMyShort(todayIso());
     const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
     setNewNoBukti(nextUniqueCode(inquiryList.map((i) => i.noBukti), '2608-SI-', 3));
-    setNewTanggalDo(todayDisp);
+    setNewTanggalSi(todayDisp);
     setNewCustomer('');
     setNewSales('');
     setNewQty('0');
@@ -200,7 +200,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     setEditingId(item.id);
     setModalError(null);
     setNewNoBukti(item.noBukti);
-    setNewTanggalDo(item.tanggalDo);
+    setNewTanggalSi(item.tanggalSi);
     setNewCustomer(item.namaCustomer);
     setNewSales(item.namaSales);
     setNewQty(String(item.qty ?? 0));
@@ -232,7 +232,8 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const payload = {
         no_bukti: newNoBukti.trim().toUpperCase(),
-        tanggal_do: toIsoDate(newTanggalDo) || todayIso(),
+        tanggal_si: toIsoDate(newTanggalSi) || todayIso(),
+        tanggal_do: toIsoDate(newTanggalSi) || todayIso(), // fallback
         nama_customer: newCustomer.trim().toUpperCase(),
         nama_sales: newSales.trim().toUpperCase(),
         qty: parseNum(newQty),
@@ -296,7 +297,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
   const filteredList = inquiryList.filter((item) => {
-    if (filterIso && item.tanggalDoIso !== filterIso) return false;
+    if (filterIso && item.tanggalSiIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
     if (searchField === 'NoBukti') return item.noBukti.toLowerCase().includes(term);
@@ -336,7 +337,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
       companyProfile: company,
       columns: [
         { header: 'NoBukti', accessor: 'noBukti' },
-        { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center' },
+        { header: 'Tanggal SI', accessor: 'tanggalSi', align: 'center' },
         { header: 'Nama Customer', accessor: 'namaCustomer' },
         { header: 'Nama Sales', accessor: 'namaSales' },
         { header: 'Qty', accessor: 'qty', align: 'right' },
@@ -411,7 +412,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
             <tr className="bg-[#ECE9D8] text-black border-b border-[#919191] text-[11px] font-semibold sticky top-0 z-10">
               <th className="border-r border-[#919191] px-2 py-1.5 w-8 text-center">▶</th>
               <th className="border-r border-[#919191] px-3 py-1.5">NoBukti</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">Tanggal DO</th>
+              <th className="border-r border-[#919191] px-3 py-1.5">Tanggal SI</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Nama Customer</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Nama Sales</th>
               <th className="border-r border-[#919191] px-3 py-1.5 text-right">Qty</th>
@@ -446,7 +447,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                     {isSelected ? '▶' : ''}
                   </td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noBukti}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tanggalDo}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tanggalSi}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-medium">{item.namaCustomer}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.namaSales}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono text-right">{formatMoney(item.qty)}</td>
@@ -533,11 +534,11 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                 />
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Tanggal DO:</label>
+                <label className="font-semibold">Tanggal SI:</label>
                 <div className="col-span-2">
                   <DatePickerInput
-                    value={newTanggalDo}
-                    onChange={(formatted) => setNewTanggalDo(formatted)}
+                    value={newTanggalSi}
+                    onChange={(formatted) => setNewTanggalSi(formatted)}
                     format="dMyShort"
                   />
                 </div>
@@ -704,7 +705,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         orientation="landscape"
         columns={[
           { header: 'NoBukti', accessor: 'noBukti', width: '105px' },
-          { header: 'Tanggal DO', accessor: 'tanggalDo', align: 'center', width: '80px' },
+          { header: 'Tanggal SI', accessor: 'tanggalSi', align: 'center', width: '80px' },
           { header: 'Nama Customer', accessor: 'namaCustomer' },
           { header: 'Sales', accessor: 'namaSales', width: '85px' },
           { header: 'Qty', accessor: (r) => formatMoney(r.qty), align: 'right', width: '60px' },
