@@ -26,7 +26,9 @@ const ALLOWED_TABLES = new Set([
   'purchase_orders',
   'purchase_order_details',
   'pembelian_barangs',
+  'pembelian_barang_details',
   'retur_pembelians',
+  'retur_pembelian_details',
   'giro_penjualan_headers',
   'giro_penjualan_details',
   'giro_penjualan',
@@ -398,6 +400,146 @@ export function registerErpApiRoutes(app: Express): void {
       return res.json({ header: headerRow, details: savedDetails });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan Purchase Order.' });
+    }
+  });
+
+  app.post('/api/erp/composite/pembelian', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Pembelian wajib diisi.' });
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('pembelian_barangs')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('pembelian_barang_details')
+          .delete()
+          .eq('pembelian_id', id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('pembelian_barangs')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, ...rest } = d;
+          return {
+            ...rest,
+            pembelian_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('pembelian_barang_details')
+          .insert(payload)
+          .select();
+        if (detErr) return res.status(400).json({ error: detErr.message });
+        savedDetails = detData || [];
+      }
+
+      return res.json({ header: headerRow, details: savedDetails });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Pembelian Barang.' });
+    }
+  });
+
+  app.post('/api/erp/composite/retur-pembelian', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Retur Pembelian wajib diisi.' });
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('retur_pembelians')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('retur_pembelian_details')
+          .delete()
+          .eq('retur_id', id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('retur_pembelians')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, ...rest } = d;
+          return {
+            ...rest,
+            retur_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('retur_pembelian_details')
+          .insert(payload)
+          .select();
+        if (detErr) return res.status(400).json({ error: detErr.message });
+        savedDetails = detData || [];
+      }
+
+      return res.json({ header: headerRow, details: savedDetails });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Retur Pembelian.' });
     }
   });
 

@@ -4,10 +4,9 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import {
-  erpCreate,
+  erpCompositeSave,
   erpDelete,
   erpList,
-  erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
@@ -20,12 +19,28 @@ import {
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
 
+export interface ReturPembelianDetailItem {
+  id: string;
+  returId?: string;
+  noUrut: number;
+  kode: string;
+  namaBarang: string;
+  unit: string;
+  terima: number;
+  qty: number;
+  harga: number;
+  jumlah: number;
+  total: number;
+}
+
 export interface ReturPembelianItem {
   id: string;
   noBukti: string;
   tanggal: string;
   tanggalIso: string;
   namaSupplier: string;
+  noPo: string;
+  noFaktur: string;
   nilaiRetur: string;
   nilaiReturNum: number;
   keterangan: string;
@@ -42,6 +57,15 @@ export interface ReturPembelianItem {
   tglUpdate: string;
 }
 
+export interface PembelianOrderRef {
+  id: string;
+  noBukti: string;
+  namaSupplier: string;
+  noFaktur: string;
+  keterangan: string;
+  nilaiPembelian: number;
+}
+
 interface ListReturPembelianFormProps {
   isOpen: boolean;
   onClose: () => void;
@@ -55,12 +79,14 @@ function mapDbToReturPembelian(r: any): ReturPembelianItem {
     tanggal: toDisplayDMyShort(r.tanggal),
     tanggalIso: toIsoDate(r.tanggal) || '',
     namaSupplier: r.nama_supplier || '',
+    noPo: r.no_po || '-',
+    noFaktur: r.no_faktur || '-',
     nilaiRetur: formatMoney(valNum),
     nilaiReturNum: valNum,
     keterangan: r.keterangan || '',
     mataUang: r.mata_uang || 'IDR',
     disc: `${Number(r.disc || 0)}%`,
-    ppn: `${Number(r.ppn || 0)}%`,
+    ppn: `${Number(r.ppn || 11)}%`,
     stsPrint: r.sts_print || 'Not Yet',
     tglPrint: toDisplayDMyShort(r.tgl_print) || '-',
     stsPost: r.sts_post || 'Posted',
@@ -72,20 +98,62 @@ function mapDbToReturPembelian(r: any): ReturPembelianItem {
   };
 }
 
+function mapDbToDetail(d: any, idx = 0): ReturPembelianDetailItem {
+  const qty = Number(d.qty || 0);
+  const harga = Number(d.harga || 0);
+  const jumlah = d.jumlah !== undefined && d.jumlah !== null ? Number(d.jumlah) : qty * harga;
+  const total = d.total !== undefined && d.total !== null ? Number(d.total) : jumlah;
+  return {
+    id: d.id || `det-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+    returId: d.retur_id,
+    noUrut: Number(d.no_urut ?? idx + 1),
+    kode: String(d.kode || '').trim().toUpperCase(),
+    namaBarang: String(d.nama_barang || '').trim(),
+    unit: String(d.unit || 'PCS').trim().toUpperCase(),
+    terima: Number(d.terima || 0),
+    qty,
+    harga,
+    jumlah,
+    total,
+  };
+}
+
+function createBlankDetailRow(noUrut: number): ReturPembelianDetailItem {
+  return {
+    id: `new-${Date.now()}-${noUrut}-${Math.random().toString(36).slice(2, 6)}`,
+    noUrut,
+    kode: '',
+    namaBarang: '',
+    unit: 'PCS',
+    terima: 0,
+    qty: 1,
+    harga: 0,
+    jumlah: 0,
+    total: 0,
+  };
+}
+
 export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   isOpen,
   onClose,
 }) => {
   const [returList, setReturList] = useState<ReturPembelianItem[]>([]);
+  const [returDetailsMap, setReturDetailsMap] = useState<Record<string, ReturPembelianDetailItem[]>>({});
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Supplier');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
+
+  const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  const [pembelianOptions, setPembelianOptions] = useState<PembelianOrderRef[]>([]);
+  const [pembelianDetailsByNoPoMap, setPembelianDetailsByNoPoMap] = useState<Record<string, ReturPembelianDetailItem[]>>({});
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [newNoBukti, setNewNoBukti] = useState<string>('');
   const [newTanggal, setNewTanggal] = useState<string>('');
   const [newSupplier, setNewSupplier] = useState<string>('');
+  const [newNoPo, setNewNoPo] = useState<string>('');
+  const [newNoFaktur, setNewNoFaktur] = useState<string>('');
   const [newNilaiRetur, setNewNilaiRetur] = useState<string>('0');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newMataUang, setNewMataUang] = useState<string>('IDR');
@@ -95,6 +163,13 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   const [newTglPrint, setNewTglPrint] = useState<string>('');
   const [newStsPost, setNewStsPost] = useState<string>('Posted');
   const [newTglPost, setNewTglPost] = useState<string>('');
+
+  const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
+  const [newTglCreated, setNewTglCreated] = useState<string>('');
+  const [newDiupdateOleh, setNewDiupdateOleh] = useState<string>('');
+  const [newTglUpdate, setNewTglUpdate] = useState<string>('');
+
+  const [detailRows, setDetailRows] = useState<ReturPembelianDetailItem[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -108,10 +183,81 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadMasterReferences = async () => {
+    const [suppRes, pembRes, pembDetRes] = await Promise.allSettled([
+      erpList<any>('master_suppliers', { orderBy: 'nama_supplier', asc: true, limit: 1000 }),
+      erpList<any>('pembelian_barangs', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      erpList<any>('pembelian_barang_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
+    ]);
+
+    if (suppRes.status === 'fulfilled') {
+      const supps = Array.from(
+        new Set(
+          suppRes.value
+            .map((s: any) => String(s.nama_supplier || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setSupplierOptions(supps);
+    }
+
+    const pembIdToNoBukti = new Map<string, string>();
+    if (pembRes.status === 'fulfilled') {
+      const pems: PembelianOrderRef[] = pembRes.value
+        .map((p: any) => {
+          const noBukti = String(p.no_bukti || '').trim().toUpperCase();
+          if (noBukti) pembIdToNoBukti.set(String(p.id), noBukti);
+          return {
+            id: String(p.id || ''),
+            noBukti,
+            namaSupplier: String(p.nama_supplier || '').trim().toUpperCase(),
+            noFaktur: String(p.no_faktur || '').trim().toUpperCase(),
+            keterangan: String(p.keterangan || '').trim(),
+            nilaiPembelian: Number(p.nilai_pembelian || 0),
+          };
+        })
+        .filter((p: PembelianOrderRef) => p.noBukti);
+      setPembelianOptions(pems);
+    }
+
+    if (pembDetRes.status === 'fulfilled') {
+      const grouped: Record<string, ReturPembelianDetailItem[]> = {};
+      for (const raw of pembDetRes.value) {
+        const mapped = mapDbToDetail(raw, 0);
+        const keys = Array.from(
+          new Set(
+            [
+              String(raw.no_bukti || '').trim().toUpperCase(),
+              pembIdToNoBukti.get(String(raw.pembelian_id || '')) || '',
+            ].filter(Boolean)
+          )
+        );
+        for (const k of keys) {
+          if (!grouped[k]) grouped[k] = [];
+          grouped[k].push({ ...mapped, noUrut: grouped[k].length + 1 });
+        }
+      }
+      setPembelianDetailsByNoPoMap(grouped);
+    }
+  };
+
   const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('retur_pembelians', { orderBy: 'tanggal', asc: false });
+      const [rows, detRows] = await Promise.all([
+        erpList<any>('retur_pembelians', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('retur_pembelian_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
+        loadMasterReferences(),
+      ]);
+
+      const mappedDetails: Record<string, ReturPembelianDetailItem[]> = {};
+      for (const d of detRows) {
+        const rId = String(d.retur_id || '');
+        if (!mappedDetails[rId]) mappedDetails[rId] = [];
+        mappedDetails[rId].push(mapDbToDetail(d, mappedDetails[rId].length));
+      }
+      setReturDetailsMap(mappedDetails);
+
       const mapped = rows.map(mapDbToReturPembelian);
       setReturList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
@@ -137,12 +283,48 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddNew = () => {
+  const applyPembelianAutoFill = (rawNoPo: string) => {
+    const cleanNoPo = rawNoPo.trim().toUpperCase();
+    setNewNoPo(cleanNoPo);
+    if (!cleanNoPo) return;
+
+    const matchedPem = pembelianOptions.find((p) => p.noBukti === cleanNoPo);
+    if (matchedPem) {
+      if (matchedPem.namaSupplier) setNewSupplier(matchedPem.namaSupplier);
+      if (matchedPem.noFaktur) setNewNoFaktur(matchedPem.noFaktur);
+      if (matchedPem.keterangan && !newKeterangan.trim()) {
+        setNewKeterangan(matchedPem.keterangan);
+      }
+    }
+
+    const items = (pembelianDetailsByNoPoMap[cleanNoPo] || []).map((d, idx) => ({
+      ...d,
+      id: `pemb-fill-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      noUrut: idx + 1,
+    }));
+
+    if (items.length > 0) {
+      setDetailRows(items);
+      const sum = items.reduce((acc, item) => acc + item.total, 0);
+      setNewNilaiRetur(String(sum > 0 ? sum : matchedPem?.nilaiPembelian || 0));
+    } else {
+      setDetailRows([createBlankDetailRow(1)]);
+      if (matchedPem) {
+        setNewNilaiRetur(String(matchedPem.nilaiPembelian || 0));
+      }
+    }
+  };
+
+  const handleAddNew = async () => {
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(null);
     setModalError(null);
     setNewNoBukti(nextUniqueCode(returList.map((r) => r.noBukti), '2608-RP-IMP-', 3));
-    setNewTanggal(toDisplayDMyShort(todayIso()));
+    setNewTanggal(todayDisp);
     setNewSupplier('');
+    setNewNoPo('');
+    setNewNoFaktur('');
     setNewNilaiRetur('0');
     setNewKeterangan('');
     setNewMataUang('IDR');
@@ -151,21 +333,31 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setNewStsPrint('Not Yet');
     setNewTglPrint('');
     setNewStsPost('Posted');
-    setNewTglPost(toDisplayDMyShort(todayIso()));
+    setNewTglPost(todayDisp);
+    setNewDibuatOleh(currentUser);
+    setNewTglCreated(todayDisp);
+    setNewDiupdateOleh('-');
+    setNewTglUpdate('');
+    setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const item = returList.find((r) => r.id === selectedId);
     if (!item) {
       showFeedback('Pilih baris terlebih dahulu');
       return;
     }
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(item.id);
     setModalError(null);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewSupplier(item.namaSupplier);
+    setNewNoPo(item.noPo);
+    setNewNoFaktur(item.noFaktur);
     setNewNilaiRetur(String(item.nilaiReturNum));
     setNewKeterangan(item.keterangan);
     setNewMataUang(item.mataUang);
@@ -175,7 +367,20 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setNewTglPrint(item.tglPrint === '-' ? '' : item.tglPrint);
     setNewStsPost(item.stsPost || 'Posted');
     setNewTglPost(item.tglPost === '-' ? '' : item.tglPost);
+    setNewDibuatOleh(item.dibuatOleh || currentUser);
+    setNewTglCreated(!item.tglCreated || item.tglCreated === '-' ? todayDisp : item.tglCreated);
+    setNewDiupdateOleh(item.diupdateOleh && item.diupdateOleh !== '-' ? item.diupdateOleh : currentUser);
+    setNewTglUpdate(item.tglUpdate && item.tglUpdate !== '-' ? item.tglUpdate : todayDisp);
+
+    const existingDet = returDetailsMap[item.id] || [];
+    setDetailRows(
+      existingDet.length > 0
+        ? existingDet
+        : [createBlankDetailRow(1)]
+    );
+
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
   const handleSaveNew = async (e: React.FormEvent) => {
@@ -188,12 +393,18 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
     try {
       setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const tglIso = toIsoDate(newTanggal) || todayIso();
-      const payload = {
+      const totalDetailSum = detailRows.reduce((acc, r) => acc + r.total, 0);
+      const finalNilai = totalDetailSum > 0 ? totalDetailSum : parseNum(newNilaiRetur);
+
+      const headerPayload: Record<string, any> = {
         no_bukti: newNoBukti.trim().toUpperCase(),
         tanggal: tglIso,
         nama_supplier: newSupplier.trim().toUpperCase(),
-        nilai_retur: parseNum(newNilaiRetur),
+        no_po: newNoPo.trim().toUpperCase() || '-',
+        no_faktur: newNoFaktur.trim().toUpperCase() || '-',
+        nilai_retur: finalNilai,
         keterangan: newKeterangan.trim(),
         mata_uang: newMataUang.trim().toUpperCase(),
         disc: parseNum(newDisc),
@@ -205,23 +416,43 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       };
 
       if (editingId) {
-        const saved = await erpUpdate<any>('retur_pembelians', editingId, {
-          ...payload,
-          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_update: todayIso(),
-        });
-        const mapped = mapDbToReturPembelian(saved);
+        headerPayload.diupdate_oleh = newDiupdateOleh.trim().toUpperCase() || currentUser;
+        headerPayload.tgl_update = toIsoDate(newTglUpdate) || todayIso();
+        headerPayload.id = editingId;
+      } else {
+        headerPayload.dibuat_oleh = newDibuatOleh.trim().toUpperCase() || currentUser;
+        headerPayload.tgl_created = toIsoDate(newTglCreated) || todayIso();
+        headerPayload.diupdate_oleh = '-';
+      }
+
+      const detailsPayload = detailRows.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 1),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+
+      const saved = await erpCompositeSave<{ header: any; details: any[] }>(
+        'retur-pembelian',
+        headerPayload,
+        detailsPayload
+      );
+
+      const mapped = mapDbToReturPembelian(saved.header);
+      const mappedDet = (saved.details || []).map((d: any, idx: number) => mapDbToDetail(d, idx));
+
+      if (editingId) {
         setReturList(returList.map((r) => (r.id === editingId ? mapped : r)));
+        setReturDetailsMap({ ...returDetailsMap, [editingId]: mappedDet });
         showFeedback('Retur Pembelian diperbarui');
       } else {
-        const saved = await erpCreate<any>('retur_pembelians', {
-          ...payload,
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-          diupdate_oleh: '-',
-        });
-        const mapped = mapDbToReturPembelian(saved);
         setReturList([mapped, ...returList]);
+        setReturDetailsMap({ ...returDetailsMap, [mapped.id]: mappedDet });
         setSelectedId(mapped.id);
         showFeedback('Retur Pembelian tersimpan');
       }
@@ -239,6 +470,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
   const handleDelete = async (id: string) => {
     try {
       setIsBusy(true);
+      await erpDelete('retur_pembelian_details', id, 'retur_id').catch(() => {});
       await erpDelete('retur_pembelians', id);
       const updated = returList.filter((item) => item.id !== id);
       setReturList(updated);
@@ -259,12 +491,16 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
     if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'No.PO') return item.noPo.toLowerCase().includes(term);
+    if (searchField === 'No.Faktur Pembelian') return item.noFaktur.toLowerCase().includes(term);
     if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaSupplier.toLowerCase().includes(term) ||
+      item.noPo.toLowerCase().includes(term) ||
+      item.noFaktur.toLowerCase().includes(term) ||
       item.keterangan.toLowerCase().includes(term)
     );
   });
@@ -287,16 +523,25 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
         { header: 'No.Bukti', accessor: 'noBukti' },
         { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
         { header: 'Nama Supplier', accessor: 'namaSupplier' },
+        { header: 'No.PO', accessor: 'noPo' },
+        { header: 'No.Faktur Pembelian', accessor: 'noFaktur' },
         { header: 'Nilai Retur', accessor: 'nilaiReturNum', align: 'right' },
         { header: 'Keterangan', accessor: 'keterangan' },
         { header: 'Mata Uang', accessor: 'mataUang', align: 'center' },
-        { header: 'PPN', accessor: 'ppn', align: 'center' },
-        { header: 'Sts.Post', accessor: 'stsPost', align: 'center' },
+        { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
       ],
       rows: filteredList,
     });
     showFeedback('Export Excel selesai');
   };
+
+  const supplierDropdownChoices = Array.from(
+    new Set([...supplierOptions, newSupplier.trim().toUpperCase()].filter(Boolean))
+  );
+
+  const pembelianDropdownChoices = Array.from(
+    new Set([...pembelianOptions.map((p) => p.noBukti), newNoPo.trim().toUpperCase()].filter(Boolean))
+  );
 
   return (
     <div
@@ -347,13 +592,15 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
         </div>
 
         <div className="flex-1 overflow-auto bg-white border border-[#7F9DB9] m-2 shadow-inner relative">
-          <table className="w-full border-collapse text-xs whitespace-nowrap">
+          <table className="w-full border-collapse text-xs whitespace-nowrap min-w-[1700px]">
             <thead>
               <tr className="bg-[#EBE9ED] text-black font-semibold sticky top-0 z-10 border-b border-[#919B9C] select-none">
                 <th className="px-2 py-1.5 text-center border-r border-[#C0C0C0] w-[45px]">No</th>
                 <th className="px-2.5 py-1.5 text-left border-r border-[#C0C0C0] min-w-[130px]">No.Bukti</th>
                 <th className="px-2.5 py-1.5 text-center border-r border-[#C0C0C0] min-w-[95px]">Tanggal</th>
                 <th className="px-2.5 py-1.5 text-left border-r border-[#C0C0C0] min-w-[190px]">Nama Supplier</th>
+                <th className="px-2.5 py-1.5 text-left border-r border-[#C0C0C0] min-w-[130px]">No.PO</th>
+                <th className="px-2.5 py-1.5 text-left border-r border-[#C0C0C0] min-w-[130px]">No.Faktur Pembelian</th>
                 <th className="px-2.5 py-1.5 text-right border-r border-[#C0C0C0] min-w-[100px]">Nilai Retur</th>
                 <th className="px-2.5 py-1.5 text-left border-r border-[#C0C0C0] min-w-[200px]">Keterangan</th>
                 <th className="px-2.5 py-1.5 text-center border-r border-[#C0C0C0] min-w-[70px]">Mata Uang</th>
@@ -367,7 +614,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                 <th className="px-2.5 py-1.5 text-center border-r border-[#C0C0C0] min-w-[95px]">Tgl.Created</th>
                 <th className="px-2.5 py-1.5 text-left border-r border-[#C0C0C0] min-w-[110px]">DiUpdate Oleh</th>
                 <th className="px-2.5 py-1.5 text-center border-r border-[#C0C0C0] min-w-[95px]">Tgl.Update</th>
-                <th className="px-2 py-1.5 text-center min-w-[70px]">Aksi</th>
+                <th className="px-2.5 py-1.5 text-center min-w-[70px]">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -390,6 +637,8 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                     <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-mono font-medium">{item.noBukti}</td>
                     <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.tanggal}</td>
                     <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-medium">{item.namaSupplier}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-mono">{item.noPo}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] font-mono">{item.noFaktur}</td>
                     <td className="px-2.5 py-1 text-right border-r border-[#E0E0E0] font-mono">{item.nilaiRetur}</td>
                     <td className="px-2.5 py-1 border-r border-[#E0E0E0]">{item.keterangan}</td>
                     <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.mataUang}</td>
@@ -434,7 +683,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
               })}
               {filteredList.length === 0 && (
                 <tr>
-                  <td colSpan={18} className="text-center py-8 text-gray-500 italic">
+                  <td colSpan={20} className="text-center py-8 text-gray-500 italic">
                     Tidak ada data Retur Pembelian yang ditemukan.
                   </td>
                 </tr>
@@ -445,37 +694,43 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
           <div className="flex items-center space-x-2">
-            <span className="font-medium text-gray-800">Cari Berdasarkan:</span>
+            <span className="font-semibold text-gray-800">Search :</span>
             <select
               value={searchField}
               onChange={(e) => setSearchField(e.target.value)}
-              className="px-1.5 py-0.5 bg-white border border-[#7F9DB9] rounded-[2px] text-black"
+              className="bg-white border border-[#7A7A7A] px-1.5 py-0.5 rounded-xs text-xs"
             >
-              <option>Nama Supplier</option>
-              <option>No.Bukti</option>
-              <option>Keterangan</option>
+              <option value="Semua">Semua</option>
+              <option value="Nama Supplier">Nama Supplier</option>
+              <option value="No.Bukti">No.Bukti</option>
+              <option value="No.PO">No.PO</option>
+              <option value="No.Faktur Pembelian">No.Faktur Pembelian</option>
+              <option value="Keterangan">Keterangan</option>
             </select>
             <input
               ref={searchInputRef}
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Ketik kata kunci..."
-              className="w-[180px] px-2 py-0.5 bg-white border border-[#7F9DB9] rounded-[2px] text-black"
+              placeholder="Cari data..."
+              className="w-64 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
             />
           </div>
 
           <div className="flex items-center space-x-4 text-gray-700">
-            <span>Record: {filteredList.length} of {returList.length}</span>
+            <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
+              {returList.find((r) => r.id === selectedId)?.namaSupplier || ''}
+            </div>
+            <span>Record: {filteredList.length}</span>
           </div>
         </div>
       </div>
 
       {isAddOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-[500px] max-w-[95vw] max-h-[90vh] bg-[#ECE9D8] border-2 border-[#0055EA] rounded-[3px] shadow-[4px_4px_12px_rgba(0,0,0,0.4)] flex flex-col overflow-hidden font-sans text-xs">
+          <div className="w-[820px] max-w-[95vw] max-h-[92vh] bg-[#ECE9D8] border-2 border-[#0055EA] rounded-[3px] shadow-[4px_4px_12px_rgba(0,0,0,0.4)] flex flex-col overflow-hidden font-sans text-xs">
             <div className="flex items-center justify-between h-[28px] bg-gradient-to-r from-[#0055EA] to-[#1E90FF] text-white px-2 font-bold shrink-0">
-              <span>{editingId ? 'Koreksi Retur Pembelian Barang' : 'Form Input Retur Pembelian Barang'}</span>
+              <span>{editingId ? 'Koreksi Retur Pembelian Barang' : 'Tambah Retur Pembelian Barang Baru'}</span>
               <button
                 type="button"
                 onClick={() => {
@@ -489,132 +744,343 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
             </div>
 
             <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 bg-[#ECE9D8] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">No. Bukti Retur:</label>
+                    <input
+                      type="text"
+                      value={newNoBukti}
+                      onChange={(e) => setNewNoBukti(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] font-mono uppercase"
+                      required
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Tanggal:</label>
+                    <div className="w-64">
+                      <DatePickerInput
+                        value={newTanggal}
+                        onChange={(formatted) => setNewTanggal(formatted)}
+                        format="dMyShort"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Nama Supplier:</label>
+                    <select
+                      value={newSupplier}
+                      onChange={(e) => setNewSupplier(e.target.value)}
+                      required
+                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] uppercase cursor-pointer"
+                    >
+                      <option value="">-- Pilih Supplier --</option>
+                      {supplierDropdownChoices.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">No. PO (Pembelian):</label>
+                    <select
+                      value={newNoPo}
+                      onChange={(e) => applyPembelianAutoFill(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] uppercase cursor-pointer font-mono"
+                    >
+                      <option value="">-- Pilih No. Pembelian / PO --</option>
+                      {pembelianDropdownChoices.map((po) => (
+                        <option key={po} value={po}>
+                          {po}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">No. Faktur Pembelian:</label>
+                    <input
+                      type="text"
+                      value={newNoFaktur}
+                      onChange={(e) => setNewNoFaktur(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] uppercase font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Keterangan:</label>
+                    <input
+                      type="text"
+                      value={newKeterangan}
+                      onChange={(e) => setNewKeterangan(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Nilai Retur:</label>
+                    <input
+                      type="text"
+                      value={formatMoney(detailRows.reduce((acc, r) => acc + r.total, 0) || parseNum(newNilaiRetur))}
+                      readOnly
+                      className="w-64 px-2 py-1 bg-[#F5F5F5] border border-[#7F9DB9] rounded-[2px] font-mono text-right font-bold"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Mata Uang / Disc / PPN:</label>
+                    <div className="w-64 flex gap-1 items-center">
+                      <select
+                        value={newMataUang}
+                        onChange={(e) => setNewMataUang(e.target.value)}
+                        className="w-20 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                      >
+                        <option value="IDR">IDR</option>
+                        <option value="USD">USD</option>
+                        <option value="EUR">EUR</option>
+                      </select>
+                      <input
+                        type="number"
+                        value={newDisc}
+                        onChange={(e) => setNewDisc(e.target.value)}
+                        placeholder="Disc%"
+                        className="w-20 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
+                      />
+                      <input
+                        type="number"
+                        value={newPpn}
+                        onChange={(e) => setNewPpn(e.target.value)}
+                        placeholder="PPN%"
+                        className="w-20 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Sts.Print / Tgl.Print:</label>
+                    <div className="w-64 flex gap-1.5 items-center">
+                      <select
+                        value={newStsPrint}
+                        onChange={(e) => setNewStsPrint(e.target.value)}
+                        className="w-24 px-1.5 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                      >
+                        <option value="Not Yet">Not Yet</option>
+                        <option value="Printed">Printed</option>
+                      </select>
+                      <div className="flex-1">
+                        <DatePickerInput
+                          value={newTglPrint}
+                          onChange={(formatted) => setNewTglPrint(formatted)}
+                          format="dMyShort"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-gray-700">Sts.Post / Tgl.Post:</label>
+                    <div className="w-64 flex gap-1.5 items-center">
+                      <select
+                        value={newStsPost}
+                        onChange={(e) => setNewStsPost(e.target.value)}
+                        className="w-24 px-1.5 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                      >
+                        <option value="Not Yet">Not Yet</option>
+                        <option value="Posted">Posted</option>
+                      </select>
+                      <div className="flex-1">
+                        <DatePickerInput
+                          value={newTglPost}
+                          onChange={(formatted) => setNewTglPost(formatted)}
+                          format="dMyShort"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* PO Detail / Retur Detail Datagrid */}
+              <div className="border border-[#7F9DB9] bg-white rounded flex flex-col mt-2">
+                <div className="bg-[#ECE9D8] px-2 py-1 font-bold border-b border-[#7F9DB9] flex justify-between items-center text-[11px]">
+                  <span>RETUR DETAIL BARANG (KODE, NAMA BARANG, UNIT, TERIMA, QTY, HARGA, JUMLAH, TOTAL)</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDetailRows([
+                        ...detailRows,
+                        createBlankDetailRow(detailRows.length + 1),
+                      ])
+                    }
+                    className="px-2 py-0.5 bg-[#E1DFDD] hover:bg-[#D4D0C8] border border-[#7A7A7A] rounded cursor-pointer"
+                  >
+                    + Tambah Baris
+                  </button>
+                </div>
+                <div className="max-h-48 overflow-auto">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead className="sticky top-0 bg-[#F0F0F0] border-b border-[#C0C0C0]">
+                      <tr>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-10 text-center">No</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-28">Kode</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0]">Nama Barang</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-20">Unit</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-20 text-right">Terima</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-20 text-right">QTY</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-24 text-right">Harga</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-24 text-right">Jumlah</th>
+                        <th className="px-2 py-1 border-r border-[#C0C0C0] w-24 text-right">Total</th>
+                        <th className="px-2 py-1 text-center w-12">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailRows.map((d, index) => (
+                        <tr key={d.id} className="border-b border-[#E0E0E0]">
+                          <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{index + 1}</td>
+                          <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                            <input
+                              type="text"
+                              value={d.kode}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDetailRows(
+                                  detailRows.map((r, i) => (i === index ? { ...r, kode: val } : r))
+                                );
+                              }}
+                              className="w-full px-1 py-0.5 border border-[#ccc] rounded font-mono uppercase"
+                            />
+                          </td>
+                          <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                            <input
+                              type="text"
+                              value={d.namaBarang}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDetailRows(
+                                  detailRows.map((r, i) => (i === index ? { ...r, namaBarang: val } : r))
+                                );
+                              }}
+                              className="w-full px-1 py-0.5 border border-[#ccc] rounded"
+                            />
+                          </td>
+                          <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                            <input
+                              type="text"
+                              value={d.unit}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDetailRows(
+                                  detailRows.map((r, i) => (i === index ? { ...r, unit: val } : r))
+                                );
+                              }}
+                              className="w-full px-1 py-0.5 border border-[#ccc] rounded uppercase text-center"
+                            />
+                          </td>
+                          <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                            <input
+                              type="number"
+                              value={d.terima}
+                              onChange={(e) => {
+                                const val = parseNum(e.target.value);
+                                setDetailRows(
+                                  detailRows.map((r, i) => (i === index ? { ...r, terima: val } : r))
+                                );
+                              }}
+                              className="w-full px-1 py-0.5 border border-[#ccc] rounded text-right font-mono"
+                            />
+                          </td>
+                          <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                            <input
+                              type="number"
+                              value={d.qty}
+                              onChange={(e) => {
+                                const val = parseNum(e.target.value);
+                                const jumlah = val * d.harga;
+                                const total = jumlah;
+                                setDetailRows(
+                                  detailRows.map((r, i) =>
+                                    i === index ? { ...r, qty: val, jumlah, total } : r
+                                  )
+                                );
+                              }}
+                              className="w-full px-1 py-0.5 border border-[#ccc] rounded text-right font-mono"
+                            />
+                          </td>
+                          <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                            <input
+                              type="number"
+                              value={d.harga}
+                              onChange={(e) => {
+                                const val = parseNum(e.target.value);
+                                const jumlah = d.qty * val;
+                                const total = jumlah;
+                                setDetailRows(
+                                  detailRows.map((r, i) =>
+                                    i === index ? { ...r, harga: val, jumlah, total } : r
+                                  )
+                                );
+                              }}
+                              className="w-full px-1 py-0.5 border border-[#ccc] rounded text-right font-mono"
+                            />
+                          </td>
+                          <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono">
+                            {formatMoney(d.jumlah)}
+                          </td>
+                          <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono font-bold">
+                            {formatMoney(d.total)}
+                          </td>
+                          <td className="px-1 py-1 text-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDetailRows(detailRows.filter((_, i) => i !== index))
+                              }
+                              className="px-1 py-0.5 bg-red-100 text-red-700 hover:bg-red-200 rounded font-bold text-[10px] cursor-pointer"
+                            >
+                              X
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Audit Fields */}
+              <div className="border-t border-[#D0D0D0] pt-2 grid grid-cols-4 gap-2">
                 <div>
-                  <label className="block font-medium text-gray-800 mb-1">No. Bukti Retur:</label>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Dibuat Oleh:</label>
                   <input
                     type="text"
-                    value={newNoBukti}
-                    onChange={(e) => setNewNoBukti(e.target.value)}
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] font-mono uppercase"
-                    required
+                    value={newDibuatOleh}
+                    onChange={(e) => setNewDibuatOleh(e.target.value.toUpperCase())}
+                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded uppercase text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-gray-800 mb-1">Tanggal:</label>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Tgl.Created:</label>
                   <DatePickerInput
-                    value={newTanggal}
-                    onChange={(formatted) => setNewTanggal(formatted)}
+                    value={newTglCreated}
+                    onChange={(formatted) => setNewTglCreated(formatted)}
                     format="dMyShort"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block font-medium text-gray-800 mb-1">Nama Supplier:</label>
-                <input
-                  type="text"
-                  value={newSupplier}
-                  onChange={(e) => setNewSupplier(e.target.value)}
-                  className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] uppercase"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block font-medium text-gray-800 mb-1">Nilai Retur:</label>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Diupdate Oleh:</label>
                   <input
-                    type="number"
-                    value={newNilaiRetur}
-                    onChange={(e) => setNewNilaiRetur(e.target.value)}
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] font-mono text-right"
-                    required
+                    type="text"
+                    value={newDiupdateOleh}
+                    onChange={(e) => setNewDiupdateOleh(e.target.value.toUpperCase())}
+                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded uppercase text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-gray-800 mb-1">Mata Uang:</label>
-                  <select
-                    value={newMataUang}
-                    onChange={(e) => setNewMataUang(e.target.value)}
-                    className="w-full px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
-                  >
-                    <option value="IDR">IDR</option>
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                  </select>
+                  <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Tgl.Update:</label>
+                  <DatePickerInput
+                    value={newTglUpdate}
+                    onChange={(formatted) => setNewTglUpdate(formatted)}
+                    format="dMyShort"
+                  />
                 </div>
-                <div>
-                  <label className="block font-medium text-gray-800 mb-1">Disc (%) / PPN (%):</label>
-                  <div className="flex gap-1">
-                    <input
-                      type="number"
-                      value={newDisc}
-                      onChange={(e) => setNewDisc(e.target.value)}
-                      className="w-1/2 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
-                    />
-                    <input
-                      type="number"
-                      value={newPpn}
-                      onChange={(e) => setNewPpn(e.target.value)}
-                      className="w-1/2 px-1 py-1 bg-white border border-[#7F9DB9] rounded-[2px] text-center"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-gray-800 mb-1">Sts.Print / Tgl.Print:</label>
-                  <div className="flex gap-1.5 items-center">
-                    <select
-                      value={newStsPrint}
-                      onChange={(e) => setNewStsPrint(e.target.value)}
-                      className="w-24 px-1.5 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
-                    >
-                      <option value="Not Yet">Not Yet</option>
-                      <option value="Printed">Printed</option>
-                    </select>
-                    <div className="flex-1">
-                      <DatePickerInput
-                        value={newTglPrint}
-                        onChange={(formatted) => setNewTglPrint(formatted)}
-                        format="dMyShort"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block font-medium text-gray-800 mb-1">Sts.Post / Tgl.Post:</label>
-                  <div className="flex gap-1.5 items-center">
-                    <select
-                      value={newStsPost}
-                      onChange={(e) => setNewStsPost(e.target.value)}
-                      className="w-24 px-1.5 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
-                    >
-                      <option value="Not Yet">Not Yet</option>
-                      <option value="Posted">Posted</option>
-                    </select>
-                    <div className="flex-1">
-                      <DatePickerInput
-                        value={newTglPost}
-                        onChange={(formatted) => setNewTglPost(formatted)}
-                        format="dMyShort"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-medium text-gray-800 mb-1">Keterangan:</label>
-                <textarea
-                  value={newKeterangan}
-                  onChange={(e) => setNewKeterangan(e.target.value)}
-                  rows={2}
-                  className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
-                  placeholder="Catatan atau keterangan retur..."
-                />
               </div>
 
               {modalError && (
@@ -657,6 +1123,8 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
           { header: 'No.Bukti', accessor: 'noBukti', width: '115px' },
           { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '85px' },
           { header: 'Nama Supplier', accessor: 'namaSupplier' },
+          { header: 'No.PO', accessor: 'noPo', width: '100px' },
+          { header: 'No.Faktur', accessor: 'noFaktur', width: '105px' },
           { header: 'Nilai Retur', accessor: 'nilaiRetur', align: 'right', width: '100px' },
           { header: 'Mata Uang', accessor: 'mataUang', align: 'center', width: '65px' },
           { header: 'Keterangan', accessor: 'keterangan' },

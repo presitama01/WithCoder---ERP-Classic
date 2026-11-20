@@ -4,10 +4,9 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import {
-  erpCreate,
+  erpCompositeSave,
   erpDelete,
   erpList,
-  erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
@@ -19,6 +18,20 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+
+export interface PembelianDetailItem {
+  id: string;
+  pembelianId?: string;
+  noUrut: number;
+  kode: string;
+  namaBarang: string;
+  unit: string;
+  terima: number;
+  qty: number;
+  harga: number;
+  jumlah: number;
+  total: number;
+}
 
 export interface PembelianItem {
   id: string;
@@ -40,6 +53,14 @@ export interface PembelianItem {
   tglCreated: string;
   diupdateOleh: string;
   tglUpdate: string;
+}
+
+export interface PurchaseOrderRef {
+  id: string;
+  noBukti: string;
+  namaSupplier: string;
+  keterangan: string;
+  nilaiPo: number;
 }
 
 interface ListPembelianFormProps {
@@ -72,15 +93,55 @@ function mapDbToPembelian(r: any): PembelianItem {
   };
 }
 
+function mapDbToDetail(d: any, idx = 0): PembelianDetailItem {
+  const qty = Number(d.qty || 0);
+  const harga = Number(d.harga || 0);
+  const jumlah = d.jumlah !== undefined && d.jumlah !== null ? Number(d.jumlah) : qty * harga;
+  const total = d.total !== undefined && d.total !== null ? Number(d.total) : jumlah;
+  return {
+    id: d.id || `det-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+    pembelianId: d.pembelian_id,
+    noUrut: Number(d.no_urut ?? idx + 1),
+    kode: String(d.kode || '').trim().toUpperCase(),
+    namaBarang: String(d.nama_barang || '').trim(),
+    unit: String(d.unit || 'PCS').trim().toUpperCase(),
+    terima: Number(d.terima || 0),
+    qty,
+    harga,
+    jumlah,
+    total,
+  };
+}
+
+function createBlankDetailRow(noUrut: number): PembelianDetailItem {
+  return {
+    id: `new-${Date.now()}-${noUrut}-${Math.random().toString(36).slice(2, 6)}`,
+    noUrut,
+    kode: '',
+    namaBarang: '',
+    unit: 'PCS',
+    terima: 0,
+    qty: 1,
+    harga: 0,
+    jumlah: 0,
+    total: 0,
+  };
+}
+
 export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   isOpen,
   onClose,
 }) => {
   const [pembelianList, setPembelianList] = useState<PembelianItem[]>([]);
+  const [pembelianDetailsMap, setPembelianDetailsMap] = useState<Record<string, PembelianDetailItem[]>>({});
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Supplier');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
+
+  const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  const [poOptions, setPoOptions] = useState<PurchaseOrderRef[]>([]);
+  const [poDetailsByNoPoMap, setPoDetailsByNoPoMap] = useState<Record<string, PembelianDetailItem[]>>({});
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [newNoBukti, setNewNoBukti] = useState<string>('');
@@ -95,6 +156,13 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   const [newTglLunas, setNewTglLunas] = useState<string>('');
   const [newStsPost, setNewStsPost] = useState<string>('Posted');
   const [newTglPost, setNewTglPost] = useState<string>('');
+  
+  const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
+  const [newTglCreated, setNewTglCreated] = useState<string>('');
+  const [newDiupdateOleh, setNewDiupdateOleh] = useState<string>('');
+  const [newTglUpdate, setNewTglUpdate] = useState<string>('');
+
+  const [detailRows, setDetailRows] = useState<PembelianDetailItem[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -108,10 +176,80 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
+  const loadMasterReferences = async () => {
+    const [suppRes, poRes, poDetRes] = await Promise.allSettled([
+      erpList<any>('master_suppliers', { orderBy: 'nama_supplier', asc: true, limit: 1000 }),
+      erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      erpList<any>('purchase_order_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
+    ]);
+
+    if (suppRes.status === 'fulfilled') {
+      const supps = Array.from(
+        new Set(
+          suppRes.value
+            .map((s: any) => String(s.nama_supplier || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setSupplierOptions(supps);
+    }
+
+    const poIdToNoBukti = new Map<string, string>();
+    if (poRes.status === 'fulfilled') {
+      const pos: PurchaseOrderRef[] = poRes.value
+        .map((p: any) => {
+          const noBukti = String(p.no_bukti || '').trim().toUpperCase();
+          if (noBukti) poIdToNoBukti.set(String(p.id), noBukti);
+          return {
+            id: String(p.id || ''),
+            noBukti,
+            namaSupplier: String(p.nama_supplier || '').trim().toUpperCase(),
+            keterangan: String(p.keterangan || '').trim(),
+            nilaiPo: Number(p.nilai_po || 0),
+          };
+        })
+        .filter((p: PurchaseOrderRef) => p.noBukti);
+      setPoOptions(pos);
+    }
+
+    if (poDetRes.status === 'fulfilled') {
+      const grouped: Record<string, PembelianDetailItem[]> = {};
+      for (const raw of poDetRes.value) {
+        const mapped = mapDbToDetail(raw, 0);
+        const keys = Array.from(
+          new Set(
+            [
+              String(raw.no_bukti || '').trim().toUpperCase(),
+              poIdToNoBukti.get(String(raw.po_id || '')) || '',
+            ].filter(Boolean)
+          )
+        );
+        for (const k of keys) {
+          if (!grouped[k]) grouped[k] = [];
+          grouped[k].push({ ...mapped, noUrut: grouped[k].length + 1 });
+        }
+      }
+      setPoDetailsByNoPoMap(grouped);
+    }
+  };
+
   const loadData = async (): Promise<boolean> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('pembelian_barangs', { orderBy: 'tanggal', asc: false });
+      const [rows, detRows] = await Promise.all([
+        erpList<any>('pembelian_barangs', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('pembelian_barang_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
+        loadMasterReferences(),
+      ]);
+
+      const mappedDetails: Record<string, PembelianDetailItem[]> = {};
+      for (const d of detRows) {
+        const pId = String(d.pembelian_id || '');
+        if (!mappedDetails[pId]) mappedDetails[pId] = [];
+        mappedDetails[pId].push(mapDbToDetail(d, mappedDetails[pId].length));
+      }
+      setPembelianDetailsMap(mappedDetails);
+
       const mapped = rows.map(mapDbToPembelian);
       setPembelianList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
@@ -137,10 +275,45 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddNew = () => {
+  const applyPurchaseOrderAutoFill = (rawNoPo: string) => {
+    const cleanNoPo = rawNoPo.trim().toUpperCase();
+    setNewNoPo(cleanNoPo);
+    if (!cleanNoPo) return;
+
+    const matchedPo = poOptions.find((p) => p.noBukti === cleanNoPo);
+    if (matchedPo) {
+      if (matchedPo.namaSupplier) setNewSupplier(matchedPo.namaSupplier);
+      if (matchedPo.keterangan && !newKeterangan.trim()) {
+        setNewKeterangan(matchedPo.keterangan);
+      }
+      if (!newNoFaktur.trim()) {
+        setNewNoFaktur(`INV-${matchedPo.noBukti}`);
+      }
+    }
+
+    const poItems = (poDetailsByNoPoMap[cleanNoPo] || []).map((d, idx) => ({
+      ...d,
+      id: `po-fill-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      noUrut: idx + 1,
+    }));
+
+    if (poItems.length > 0) {
+      setDetailRows(poItems);
+      const sum = poItems.reduce((acc, item) => acc + item.total, 0);
+      setNewNilai(String(sum > 0 ? sum : matchedPo?.nilaiPo || 0));
+    } else {
+      setDetailRows([createBlankDetailRow(1)]);
+      if (matchedPo) {
+        setNewNilai(String(matchedPo.nilaiPo || 0));
+      }
+    }
+  };
+
+  const handleAddNew = async () => {
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(null);
     setModalError(null);
-    const todayDisp = toDisplayDMyShort(todayIso());
     setNewNoBukti(nextUniqueCode(pembelianList.map((p) => p.noBukti), '2608-PB-IMP-', 3));
     setNewTanggal(todayDisp);
     setNewSupplier('');
@@ -153,15 +326,23 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setNewTglLunas('');
     setNewStsPost('Posted');
     setNewTglPost(todayDisp);
+    setNewDibuatOleh(currentUser);
+    setNewTglCreated(todayDisp);
+    setNewDiupdateOleh('-');
+    setNewTglUpdate('');
+    setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const item = pembelianList.find((p) => p.id === selectedId);
     if (!item) {
       showFeedback('Pilih baris terlebih dahulu');
       return;
     }
+    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+    const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(item.id);
     setModalError(null);
     setNewNoBukti(item.noBukti);
@@ -176,7 +357,20 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setNewTglLunas(item.tglLunas === '-' ? '' : item.tglLunas);
     setNewStsPost(item.stsPost || 'Posted');
     setNewTglPost(item.tglPost === '-' ? '' : item.tglPost);
+    setNewDibuatOleh(item.dibuatOleh || currentUser);
+    setNewTglCreated(!item.tglCreated || item.tglCreated === '-' ? todayDisp : item.tglCreated);
+    setNewDiupdateOleh(item.diupdateOleh && item.diupdateOleh !== '-' ? item.diupdateOleh : currentUser);
+    setNewTglUpdate(item.tglUpdate && item.tglUpdate !== '-' ? item.tglUpdate : todayDisp);
+
+    const existingDet = pembelianDetailsMap[item.id] || [];
+    setDetailRows(
+      existingDet.length > 0
+        ? existingDet
+        : [createBlankDetailRow(1)]
+    );
+
     setIsAddOpen(true);
+    await loadMasterReferences();
   };
 
   const handleSaveNew = async (e: React.FormEvent) => {
@@ -189,15 +383,19 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
     try {
       setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const tglIso = toIsoDate(newTanggal) || todayIso();
-      const payload = {
+      const totalDetailSum = detailRows.reduce((acc, r) => acc + r.total, 0);
+      const finalNilai = totalDetailSum > 0 ? totalDetailSum : parseNum(newNilai);
+
+      const headerPayload: Record<string, any> = {
         no_bukti: newNoBukti.trim().toUpperCase(),
         tanggal: tglIso,
         nama_supplier: newSupplier.trim().toUpperCase(),
         no_po: newNoPo.trim().toUpperCase() || '-',
         no_faktur: newNoFaktur.trim().toUpperCase(),
         keterangan: newKeterangan.trim(),
-        nilai_pembelian: parseNum(newNilai),
+        nilai_pembelian: finalNilai,
         jth_tmp: toIsoDate(newJthTmp),
         sts_lunas: newStsLunas,
         tgl_lunas: toIsoDate(newTglLunas) || (newStsLunas === 'Lunas' ? todayIso() : null),
@@ -206,23 +404,43 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       };
 
       if (editingId) {
-        const saved = await erpUpdate<any>('pembelian_barangs', editingId, {
-          ...payload,
-          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_update: todayIso(),
-        });
-        const mapped = mapDbToPembelian(saved);
+        headerPayload.diupdate_oleh = newDiupdateOleh.trim().toUpperCase() || currentUser;
+        headerPayload.tgl_update = toIsoDate(newTglUpdate) || todayIso();
+        headerPayload.id = editingId;
+      } else {
+        headerPayload.dibuat_oleh = newDibuatOleh.trim().toUpperCase() || currentUser;
+        headerPayload.tgl_created = toIsoDate(newTglCreated) || todayIso();
+        headerPayload.diupdate_oleh = '-';
+      }
+
+      const detailsPayload = detailRows.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 1),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+
+      const saved = await erpCompositeSave<{ header: any; details: any[] }>(
+        'pembelian',
+        headerPayload,
+        detailsPayload
+      );
+
+      const mapped = mapDbToPembelian(saved.header);
+      const mappedDet = (saved.details || []).map((d: any, idx: number) => mapDbToDetail(d, idx));
+
+      if (editingId) {
         setPembelianList(pembelianList.map((p) => (p.id === editingId ? mapped : p)));
+        setPembelianDetailsMap({ ...pembelianDetailsMap, [editingId]: mappedDet });
         showFeedback('Pembelian diperbarui');
       } else {
-        const saved = await erpCreate<any>('pembelian_barangs', {
-          ...payload,
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-          diupdate_oleh: '-',
-        });
-        const mapped = mapDbToPembelian(saved);
         setPembelianList([mapped, ...pembelianList]);
+        setPembelianDetailsMap({ ...pembelianDetailsMap, [mapped.id]: mappedDet });
         setSelectedId(mapped.id);
         showFeedback('Pembelian tersimpan');
       }
@@ -240,6 +458,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   const handleDelete = async (id: string) => {
     try {
       setIsBusy(true);
+      await erpDelete('pembelian_barang_details', id, 'pembelian_id').catch(() => {});
       await erpDelete('pembelian_barangs', id);
       const updated = pembelianList.filter((item) => item.id !== id);
       setPembelianList(updated);
@@ -260,13 +479,15 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
     if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
+    if (searchField === 'No.PO') return item.noPo.toLowerCase().includes(term);
     if (searchField === 'No.Faktur Pembelian') return item.noFaktur.toLowerCase().includes(term);
     if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
     return (
       item.noBukti.toLowerCase().includes(term) ||
       item.namaSupplier.toLowerCase().includes(term) ||
+      item.noPo.toLowerCase().includes(term) ||
       item.noFaktur.toLowerCase().includes(term) ||
       item.keterangan.toLowerCase().includes(term)
     );
@@ -296,11 +517,20 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
         { header: 'Nilai Pembelian', accessor: 'nilaiPembelianNum', align: 'right' },
         { header: 'Jth.Tmp', accessor: 'jthTmp', align: 'center' },
         { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center' },
+        { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
       ],
       rows: filteredList,
     });
     showFeedback('Export Excel selesai');
   };
+
+  const supplierDropdownChoices = Array.from(
+    new Set([...supplierOptions, newSupplier.trim().toUpperCase()].filter(Boolean))
+  );
+
+  const poDropdownChoices = Array.from(
+    new Set([...poOptions.map((p) => p.noBukti), newNoPo.trim().toUpperCase()].filter(Boolean))
+  );
 
   return (
     <div
@@ -351,7 +581,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
         </div>
 
         <div className="flex-1 overflow-auto bg-white border border-[#999999] m-1.5 relative shadow-inner">
-          <table className="w-full border-collapse text-left min-w-[1600px]">
+          <table className="w-full border-collapse text-left min-w-[1700px]">
             <thead className="sticky top-0 bg-[#F0F0F0] text-gray-800 font-semibold border-b border-[#C0C0C0] z-10">
               <tr>
                 <th className="px-2 py-1.5 border-r border-[#C0C0C0] text-center w-12">No</th>
@@ -446,8 +676,10 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
               onChange={(e) => setSearchField(e.target.value)}
               className="bg-white border border-[#7A7A7A] px-1.5 py-0.5 rounded-xs text-xs"
             >
+              <option value="Semua">Semua</option>
               <option value="Nama Supplier">Nama Supplier</option>
               <option value="No.Bukti">No.Bukti</option>
+              <option value="No.PO">No.PO</option>
               <option value="No.Faktur Pembelian">No.Faktur Pembelian</option>
               <option value="Keterangan">Keterangan</option>
             </select>
@@ -471,7 +703,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[490px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] rounded shadow-2xl w-[780px] max-w-[95vw] max-h-[92vh] flex flex-col overflow-hidden">
               <div className="bg-gradient-to-r from-[#0055EA] to-[#2B579A] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Pembelian Barang' : 'Tambah Pembelian Barang Baru'}</span>
                 <button
@@ -485,123 +717,329 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                   ✕
                 </button>
               </div>
-              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2.5 overflow-y-auto">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">No.Bukti:</label>
-                  <input
-                    type="text"
-                    value={newNoBukti}
-                    onChange={(e) => setNewNoBukti(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Tanggal:</label>
-                  <div className="w-72">
-                    <DatePickerInput
-                      value={newTanggal}
-                      onChange={(formatted) => setNewTanggal(formatted)}
-                      format="dMyShort"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Nama Supplier:</label>
-                  <input
-                    type="text"
-                    value={newSupplier}
-                    onChange={(e) => setNewSupplier(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">No.PO:</label>
-                  <input
-                    type="text"
-                    value={newNoPo}
-                    onChange={(e) => setNewNoPo(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">No.Faktur Pembelian:</label>
-                  <input
-                    type="text"
-                    value={newNoFaktur}
-                    onChange={(e) => setNewNoFaktur(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Keterangan:</label>
-                  <input
-                    type="text"
-                    value={newKeterangan}
-                    onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Nilai Pembelian:</label>
-                  <input
-                    type="number"
-                    value={newNilai}
-                    onChange={(e) => setNewNilai(e.target.value)}
-                    required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono text-right"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Jth.Tmp / Sts.Lunas:</label>
-                  <div className="w-72 flex items-center space-x-2">
-                    <DatePickerInput
-                      value={newJthTmp}
-                      onChange={(formatted) => setNewJthTmp(formatted)}
-                      format="dMyShort"
-                    />
-                    <select
-                      value={newStsLunas}
-                      onChange={(e) => setNewStsLunas(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                    >
-                      <option value="Belum">Belum</option>
-                      <option value="Lunas">Lunas</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Tgl.Lunas:</label>
-                  <div className="w-72">
-                    <DatePickerInput
-                      value={newTglLunas}
-                      onChange={(formatted) => setNewTglLunas(formatted)}
-                      format="dMyShort"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-700">Sts.Post / Tgl.Post:</label>
-                  <div className="w-72 flex items-center space-x-2">
-                    <select
-                      value={newStsPost}
-                      onChange={(e) => setNewStsPost(e.target.value)}
-                      className="w-28 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
-                    >
-                      <option value="Not Yet">Not Yet</option>
-                      <option value="Posted">Posted</option>
-                    </select>
-                    <div className="flex-1">
-                      <DatePickerInput
-                        value={newTglPost}
-                        onChange={(formatted) => setNewTglPost(formatted)}
-                        format="dMyShort"
+              <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 overflow-y-auto text-xs">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">No.Bukti:</label>
+                      <input
+                        type="text"
+                        value={newNoBukti}
+                        onChange={(e) => setNewNoBukti(e.target.value)}
+                        required
+                        className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Tanggal:</label>
+                      <div className="w-64">
+                        <DatePickerInput
+                          value={newTanggal}
+                          onChange={(formatted) => setNewTanggal(formatted)}
+                          format="dMyShort"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Nama Supplier:</label>
+                      <select
+                        value={newSupplier}
+                        onChange={(e) => setNewSupplier(e.target.value)}
+                        required
+                        className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase cursor-pointer"
+                      >
+                        <option value="">-- Pilih Supplier --</option>
+                        {supplierDropdownChoices.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">No.PO:</label>
+                      <select
+                        value={newNoPo}
+                        onChange={(e) => applyPurchaseOrderAutoFill(e.target.value)}
+                        className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase cursor-pointer font-mono"
+                      >
+                        <option value="">-- Pilih Purchase Order --</option>
+                        {poDropdownChoices.map((po) => (
+                          <option key={po} value={po}>
+                            {po}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">No.Faktur Pembelian:</label>
+                      <input
+                        type="text"
+                        value={newNoFaktur}
+                        onChange={(e) => setNewNoFaktur(e.target.value)}
+                        required
+                        className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase font-mono"
                       />
                     </div>
                   </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Keterangan:</label>
+                      <input
+                        type="text"
+                        value={newKeterangan}
+                        onChange={(e) => setNewKeterangan(e.target.value)}
+                        className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Nilai Pembelian:</label>
+                      <input
+                        type="text"
+                        value={formatMoney(detailRows.reduce((acc, r) => acc + r.total, 0) || parseNum(newNilai))}
+                        readOnly
+                        className="w-64 px-2 py-1 bg-[#F5F5F5] border border-[#7A7A7A] rounded font-mono text-right font-bold"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Jth.Tmp / Sts.Lunas:</label>
+                      <div className="w-64 flex items-center space-x-1.5">
+                        <div className="flex-1">
+                          <DatePickerInput
+                            value={newJthTmp}
+                            onChange={(formatted) => setNewJthTmp(formatted)}
+                            format="dMyShort"
+                          />
+                        </div>
+                        <select
+                          value={newStsLunas}
+                          onChange={(e) => setNewStsLunas(e.target.value)}
+                          className="w-24 px-2 py-1 bg-white border border-[#7A7A7A] rounded"
+                        >
+                          <option value="Belum">Belum</option>
+                          <option value="Lunas">Lunas</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Tgl.Lunas:</label>
+                      <div className="w-64">
+                        <DatePickerInput
+                          value={newTglLunas}
+                          onChange={(formatted) => setNewTglLunas(formatted)}
+                          format="dMyShort"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-gray-700">Sts.Post / Tgl.Post:</label>
+                      <div className="w-64 flex items-center space-x-1.5">
+                        <select
+                          value={newStsPost}
+                          onChange={(e) => setNewStsPost(e.target.value)}
+                          className="w-28 px-2 py-1 bg-white border border-[#7A7A7A] rounded"
+                        >
+                          <option value="Not Yet">Not Yet</option>
+                          <option value="Posted">Posted</option>
+                        </select>
+                        <div className="flex-1">
+                          <DatePickerInput
+                            value={newTglPost}
+                            onChange={(formatted) => setNewTglPost(formatted)}
+                            format="dMyShort"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
+
+                {/* PO Detail / Pembelian Detail Datagrid */}
+                <div className="border border-[#7A7A7A] bg-white rounded flex flex-col mt-2">
+                  <div className="bg-[#ECE9D8] px-2 py-1 font-bold border-b border-[#7A7A7A] flex justify-between items-center text-[11px]">
+                    <span>PO DETAIL BARANG YANG DI-ORDER</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDetailRows([
+                          ...detailRows,
+                          createBlankDetailRow(detailRows.length + 1),
+                        ])
+                      }
+                      className="px-2 py-0.5 bg-[#E1DFDD] hover:bg-[#D4D0C8] border border-[#7A7A7A] rounded cursor-pointer"
+                    >
+                      + Tambah Baris
+                    </button>
+                  </div>
+                  <div className="max-h-48 overflow-auto">
+                    <table className="w-full text-left border-collapse text-[11px]">
+                      <thead className="sticky top-0 bg-[#F0F0F0] border-b border-[#C0C0C0]">
+                        <tr>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-10 text-center">No</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-28">Kode</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0]">Nama Barang</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-20">Unit</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-20 text-right">Terima</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-20 text-right">QTY</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-24 text-right">Harga</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-24 text-right">Jumlah</th>
+                          <th className="px-2 py-1 border-r border-[#C0C0C0] w-24 text-right">Total</th>
+                          <th className="px-2 py-1 text-center w-12">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailRows.map((d, index) => (
+                          <tr key={d.id} className="border-b border-[#E0E0E0]">
+                            <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{index + 1}</td>
+                            <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                              <input
+                                type="text"
+                                value={d.kode}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDetailRows(
+                                    detailRows.map((r, i) => (i === index ? { ...r, kode: val } : r))
+                                  );
+                                }}
+                                className="w-full px-1 py-0.5 border border-[#ccc] rounded font-mono uppercase"
+                              />
+                            </td>
+                            <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                              <input
+                                type="text"
+                                value={d.namaBarang}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDetailRows(
+                                    detailRows.map((r, i) => (i === index ? { ...r, namaBarang: val } : r))
+                                  );
+                                }}
+                                className="w-full px-1 py-0.5 border border-[#ccc] rounded"
+                              />
+                            </td>
+                            <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                              <input
+                                type="text"
+                                value={d.unit}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDetailRows(
+                                    detailRows.map((r, i) => (i === index ? { ...r, unit: val } : r))
+                                  );
+                                }}
+                                className="w-full px-1 py-0.5 border border-[#ccc] rounded uppercase text-center"
+                              />
+                            </td>
+                            <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                              <input
+                                type="number"
+                                value={d.terima}
+                                onChange={(e) => {
+                                  const val = parseNum(e.target.value);
+                                  setDetailRows(
+                                    detailRows.map((r, i) => (i === index ? { ...r, terima: val } : r))
+                                  );
+                                }}
+                                className="w-full px-1 py-0.5 border border-[#ccc] rounded text-right font-mono"
+                              />
+                            </td>
+                            <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                              <input
+                                type="number"
+                                value={d.qty}
+                                onChange={(e) => {
+                                  const val = parseNum(e.target.value);
+                                  const jumlah = val * d.harga;
+                                  const total = jumlah;
+                                  setDetailRows(
+                                    detailRows.map((r, i) =>
+                                      i === index ? { ...r, qty: val, jumlah, total } : r
+                                    )
+                                  );
+                                }}
+                                className="w-full px-1 py-0.5 border border-[#ccc] rounded text-right font-mono"
+                              />
+                            </td>
+                            <td className="px-1 py-1 border-r border-[#E0E0E0]">
+                              <input
+                                type="number"
+                                value={d.harga}
+                                onChange={(e) => {
+                                  const val = parseNum(e.target.value);
+                                  const jumlah = d.qty * val;
+                                  const total = jumlah;
+                                  setDetailRows(
+                                    detailRows.map((r, i) =>
+                                      i === index ? { ...r, harga: val, jumlah, total } : r
+                                    )
+                                  );
+                                }}
+                                className="w-full px-1 py-0.5 border border-[#ccc] rounded text-right font-mono"
+                              />
+                            </td>
+                            <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono">
+                              {formatMoney(d.jumlah)}
+                            </td>
+                            <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono font-bold">
+                              {formatMoney(d.total)}
+                            </td>
+                            <td className="px-1 py-1 text-center">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDetailRows(detailRows.filter((_, i) => i !== index))
+                                }
+                                className="px-1 py-0.5 bg-red-100 text-red-700 hover:bg-red-200 rounded font-bold text-[10px] cursor-pointer"
+                              >
+                                X
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Audit Fields */}
+                <div className="border-t border-[#D0D0D0] pt-2 grid grid-cols-4 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Dibuat Oleh:</label>
+                    <input
+                      type="text"
+                      value={newDibuatOleh}
+                      onChange={(e) => setNewDibuatOleh(e.target.value.toUpperCase())}
+                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Tgl.Created:</label>
+                    <DatePickerInput
+                      value={newTglCreated}
+                      onChange={(formatted) => setNewTglCreated(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Diupdate Oleh:</label>
+                    <input
+                      type="text"
+                      value={newDiupdateOleh}
+                      onChange={(e) => setNewDiupdateOleh(e.target.value.toUpperCase())}
+                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 mb-0.5">Tgl.Update:</label>
+                    <DatePickerInput
+                      value={newTglUpdate}
+                      onChange={(formatted) => setNewTglUpdate(formatted)}
+                      format="dMyShort"
+                    />
+                  </div>
+                </div>
+
                 {modalError && (
                   <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
                     ⚠ {modalError}
@@ -641,10 +1079,12 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
             { header: 'No.Bukti', accessor: 'noBukti', width: '110px' },
             { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
             { header: 'Nama Supplier', accessor: 'namaSupplier' },
+            { header: 'No.PO', accessor: 'noPo', width: '100px' },
             { header: 'No.Faktur', accessor: 'noFaktur', width: '105px' },
             { header: 'Keterangan', accessor: 'keterangan' },
             { header: 'Nilai', accessor: 'nilaiPembelian', align: 'right', width: '95px' },
             { header: 'Lunas', accessor: 'stsLunas', align: 'center', width: '60px' },
+            { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '80px' },
           ]}
           rows={filteredList}
           summaryItems={[
