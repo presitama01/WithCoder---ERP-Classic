@@ -913,17 +913,24 @@ export function registerErpApiRoutes(app: Express): void {
       const orSearch = req.query.orSearch as string | undefined;
       if (orSearch && searchVal) {
         const cleanVal = searchVal.replace(/[%_,()]/g, ' ').trim();
-        if (cleanVal) {
+        const tokens = cleanVal.split(/\s+/).filter(Boolean).slice(0, 6);
+        if (tokens.length > 0) {
           const cols = orSearch
             .split(',')
             .map((c) => c.trim())
             .filter((c) => /^[a-zA-Z0-9_]+$/.test(c));
           if (cols.length > 0) {
-            query = query.or(cols.map((c) => `${c}.ilike.%${cleanVal}%`).join(','));
+            for (const token of tokens) {
+              query = query.or(cols.map((c) => `${c}.ilike.%${token}%`).join(','));
+            }
           }
         }
       } else if (searchCol && searchVal) {
-        query = query.ilike(searchCol, `%${searchVal}%`);
+        const cleanVal = searchVal.replace(/[%_]/g, ' ').trim();
+        const tokens = cleanVal.split(/\s+/).filter(Boolean).slice(0, 6);
+        for (const token of tokens) {
+          query = query.ilike(searchCol, `%${token}%`);
+        }
       }
 
       const orderBy = req.query.orderBy as string | undefined;

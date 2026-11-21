@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface JurnalDetailLine {
   id?: string;
@@ -56,11 +59,12 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
   const [modeFilter, setModeFilter] = useState<'jurnal_umum' | 'posting'>('jurnal_umum');
   const [kategoriFilter, setKategoriFilter] = useState<string>('SEMUA-nya');
   const [tanggalFilter, setTanggalFilter] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Keterangan');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [yellowNote, setYellowNote] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
 
   // Add / Edit Modal state (with composite journal lines!)
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -97,17 +101,52 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     tglUpdate: toDisplayDMyShort(r.tgl_update),
   });
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_bukti',
+    'No.Bukti': 'no_bukti',
+    Kategori: 'kategori',
+    Keterangan: 'keterangan',
+    'Sts.Post': 'sts_post',
+    'Dibuat Oleh': 'dibuat_oleh',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<JurnalUmumItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('jurnal_umums', { orderBy: 'tanggal', asc: false });
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoFilter = activeTgl && activeTgl !== 'Semua' ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false, limit: 1000 };
+      if (isoFilter) queryOpts.eq = { tanggal: isoFilter };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_bukti,kategori,keterangan,sts_post,dibuat_oleh';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
+      const rows = await erpList<any>('jurnal_umums', queryOpts);
       const mapped = rows.map(mapRow);
       setJurnalList(mapped);
       if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal memuat Jurnal Umum: ${err.message}`);
+      return null;
     } finally {
       setIsBusy(false);
     }
@@ -238,6 +277,55 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     }
   };
 
+  const handleToolbarSimpan = async () => {
+    const selected = jurnalList.find((item) => item.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record Jurnal Umum terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const dets = await erpList<any>('jurnal_umum_details', {
+        eq: { jurnal_id: selected.id },
+        orderBy: 'created_at',
+        asc: true,
+      }).catch(() => []);
+      const headerPayload: Record<string, any> = {
+        id: selected.id,
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        tanggal: toIsoDate(selected.tanggal) || todayIso(),
+        kategori: selected.kategori || 'Jurnal Umum',
+        keterangan: selected.keterangan.trim(),
+        saldo_debet: selected.saldoDebet,
+        sts_post: selected.stsPost || 'Not Yet',
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      };
+      const detailsPayload = dets.map((d: any) => ({
+        kode_akun: String(d.kode_akun || '').trim().toUpperCase(),
+        nama_akun: String(d.nama_akun || '').trim(),
+        debet: Number(d.debet || 0),
+        kredit: Number(d.kredit || 0),
+        keterangan: String(d.keterangan || '').trim(),
+      }));
+      const saved = await erpCompositeSave<{ header: any }>(
+        'jurnal-umum',
+        headerPayload,
+        detailsPayload
+      );
+      const mapped = mapRow(saved.header);
+      setJurnalList((prev) => prev.map((it) => (it.id === mapped.id ? mapped : it)));
+      setSelectedId(mapped.id);
+      showFeedback(`Jurnal Umum [${mapped.noBukti}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const requestDelete = () => {
     if (!selectedId) {
       showFeedback('Pilih baris yang akan dihapus');
@@ -250,6 +338,7 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     if (!confirmDeleteId) return;
     try {
       setIsBusy(true);
+      await erpDelete('jurnal_umum_details', confirmDeleteId, 'jurnal_id').catch(() => {});
       await erpDelete('jurnal_umums', confirmDeleteId);
       const updated = jurnalList.filter((item) => item.id !== confirmDeleteId);
       setJurnalList(updated);
@@ -263,10 +352,29 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     }
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
-    showFeedback('Ketik kata kunci pencarian di bawah');
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Jurnal Umum dari Supabase`
+          : 'Data Jurnal Umum tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('');
+    setKategoriFilter('SEMUA-nya');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Jurnal Umum)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '', tglFilter: '' });
   };
 
   const uniqueTanggalOptions = Array.from(
@@ -287,19 +395,16 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     ) {
       return false;
     }
-    if (!searchTerm.trim()) return true;
-
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'Sts.Post') {
-      return item.stsPost.toLowerCase().includes(term);
-    } else if (searchField === 'Dibuat Oleh') {
-      return item.dibuatOleh.toLowerCase().includes(term);
+    if (searchField === 'Kode' || searchField === 'No.Bukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
     }
-    return (
-      item.keterangan.toLowerCase().includes(term) ||
-      item.noBukti.toLowerCase().includes(term)
+    if (searchField === 'Kategori') return matchesMultiKeyword([item.kategori], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    if (searchField === 'Sts.Post') return matchesMultiKeyword([item.stsPost], searchTerm);
+    if (searchField === 'Dibuat Oleh') return matchesMultiKeyword([item.dibuatOleh], searchTerm);
+    return matchesMultiKeyword(
+      [item.noBukti, item.tanggal, item.kategori, item.keterangan, item.stsPost, item.dibuatOleh],
+      searchTerm
     );
   });
 
@@ -307,6 +412,11 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
     (sum, item) => sum + item.saldoDebet,
     0
   );
+
+  const selectedJurnal =
+    filteredList.find((item) => item.id === selectedId) ||
+    jurnalList.find((item) => item.id === selectedId) ||
+    null;
 
   const handleExportExcel = async () => {
     try {
@@ -357,7 +467,7 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })}
           onExportExcel={handleExportExcel}
         />
 
@@ -366,7 +476,7 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
           <div className="flex items-center space-x-3 shrink-0">
             <FormActionButtons
               compact
-              onSimpan={() => (selectedId ? handleKoreksi() : handleBaru())}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={requestDelete}
@@ -506,27 +616,27 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
 
         {/* Bottom Footer & Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-4 py-2 border-t border-[#C0C0C0] gap-3 overflow-x-auto">
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="font-bold text-black text-[11px]">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] shadow-xs text-[11px] text-black outline-none cursor-pointer"
-            >
-              <option value="Keterangan">Keterangan</option>
-              <option value="No.Bukti">No.Bukti</option>
-              <option value="Sts.Post">Sts.Post</option>
-              <option value="Dibuat Oleh">Dibuat Oleh</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Ketik kata kunci pencarian..."
-              className="w-[260px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] outline-none"
-            />
-          </div>
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-[210px]"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.Bukti)' },
+              { value: 'No.Bukti', label: 'No.Bukti' },
+              { value: 'Kategori', label: 'Kategori' },
+              { value: 'Keterangan', label: 'Keterangan' },
+              { value: 'Sts.Post', label: 'Sts.Post' },
+              { value: 'Dibuat Oleh', label: 'Dibuat Oleh' },
+            ]}
+          />
 
           <div className="flex items-center space-x-6 shrink-0">
             <input
@@ -828,6 +938,76 @@ export const ListJurnalUmumForm: React.FC<ListJurnalUmumFormProps> = ({
           summaryItems={[
             { label: 'Total Jurnal', value: `${filteredList.length} Dokumen` },
             { label: 'Total Saldo Debet', value: formatRupiah(totalSaldoDebet) },
+          ]}
+          selectedRow={selectedJurnal}
+          selectedTitle="JURNAL UMUM (RECORD TERPILIH)"
+          selectedSubtitle={
+            selectedJurnal ? `No. Bukti: ${selectedJurnal.noBukti} | Kategori: ${selectedJurnal.kategori}` : undefined
+          }
+          selectedMetaLines={
+            selectedJurnal
+              ? [
+                  { label: 'No. Bukti', value: selectedJurnal.noBukti },
+                  { label: 'Tanggal', value: selectedJurnal.tanggal },
+                  { label: 'Kategori', value: selectedJurnal.kategori },
+                  { label: 'Status Post', value: selectedJurnal.stsPost },
+                  { label: 'Keterangan', value: selectedJurnal.keterangan || '-' },
+                  { label: 'Dibuat Oleh', value: selectedJurnal.dibuatOleh },
+                ]
+              : undefined
+          }
+          selectedSummaryItems={
+            selectedJurnal
+              ? [
+                  { label: 'No. Bukti', value: selectedJurnal.noBukti },
+                  { label: 'Saldo Debet', value: formatRupiah(selectedJurnal.saldoDebet) },
+                ]
+              : undefined
+          }
+        />
+
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Jurnal Umum"
+          rows={jurnalList}
+          selectedId={selectedId}
+          getRowId={(r) => r.id}
+          getSearchValues={(r) => [
+            r.noBukti,
+            r.tanggal,
+            r.kategori,
+            r.keterangan,
+            r.stsPost,
+            r.dibuatOleh,
+            r.saldoDebet,
+          ]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q, tglFilter: '' });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            setTanggalFilter('');
+            setKategoriFilter('SEMUA-nya');
+            return loadData({ field: 'Semua', term: '', tglFilter: '' });
+          }}
+          onSelectRow={(row, q) => {
+            setSelectedId(row.id);
+            setSearchTerm(q);
+            showFeedback(`Jurnal Umum [${row.noBukti}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.Bukti', accessor: (r) => r.noBukti, widthClass: 'w-32', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-22', align: 'center' },
+            { header: 'Kategori', accessor: (r) => r.kategori, widthClass: 'w-28' },
+            { header: 'Keterangan', accessor: (r) => r.keterangan, bold: true },
+            { header: 'Saldo Debet', accessor: (r) => formatMoney(r.saldoDebet), widthClass: 'w-28', align: 'right', mono: true },
+            { header: 'Sts.Post', accessor: (r) => r.stsPost, widthClass: 'w-20', align: 'center' },
           ]}
         />
       </div>

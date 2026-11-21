@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface PembelianDetailItem {
   id: string;
@@ -169,6 +172,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -233,11 +237,42 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     }
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_bukti',
+    'No.Bukti': 'no_bukti',
+    'Nama Supplier': 'nama_supplier',
+    'No.PO': 'no_po',
+    'No.Faktur Pembelian': 'no_faktur',
+    Keterangan: 'keterangan',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<PembelianItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoFilter = activeTgl && activeTgl !== 'Semua' ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false, limit: 1000 };
+      if (isoFilter) queryOpts.eq = { tanggal: isoFilter };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_bukti,nama_supplier,no_po,no_faktur,keterangan';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows, detRows] = await Promise.all([
-        erpList<any>('pembelian_barangs', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('pembelian_barangs', queryOpts),
         erpList<any>('pembelian_barang_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
         loadMasterReferences(),
       ]);
@@ -254,19 +289,73 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       setPembelianList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = pembelianList.find((p) => p.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record Pembelian terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const details = pembelianDetailsMap[selected.id] || [];
+      const headerPayload: Record<string, any> = {
+        id: selected.id,
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_supplier: selected.namaSupplier.trim().toUpperCase(),
+        no_po: selected.noPo.trim().toUpperCase() || '-',
+        no_faktur: selected.noFaktur.trim().toUpperCase(),
+        keterangan: selected.keterangan.trim(),
+        nilai_pembelian: selected.nilaiPembelianNum,
+        jth_tmp: selected.jthTmp !== '-' ? toIsoDate(selected.jthTmp) : null,
+        sts_lunas: selected.stsLunas,
+        tgl_lunas: selected.tglLunas !== '-' ? toIsoDate(selected.tglLunas) : null,
+        sts_post: selected.stsPost,
+        tgl_post: selected.tglPost !== '-' ? toIsoDate(selected.tglPost) : null,
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      };
+      const detailsPayload = details.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 1),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+      const saved = await erpCompositeSave<{ header: any; details: any[] }>(
+        'pembelian',
+        headerPayload,
+        detailsPayload
+      );
+      const mapped = mapDbToPembelian(saved.header);
+      const mappedDet = (saved.details || []).map((d: any, idx: number) => mapDbToDetail(d, idx));
+      setPembelianList((prev) => prev.map((p) => (p.id === mapped.id ? mapped : p)));
+      setPembelianDetailsMap((prev) => ({ ...prev, [mapped.id]: mappedDet }));
+      setSelectedId(mapped.id);
+      showFeedback(`Pembelian [${mapped.noBukti}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -462,6 +551,11 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
       await erpDelete('pembelian_barangs', id);
       const updated = pembelianList.filter((item) => item.id !== id);
       setPembelianList(updated);
+      setPembelianDetailsMap((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
       if (selectedId === id) {
         setSelectedId(updated[0]?.id || '');
       }
@@ -477,27 +571,49 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
 
   const filteredList = pembelianList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'No.PO') return item.noPo.toLowerCase().includes(term);
-    if (searchField === 'No.Faktur Pembelian') return item.noFaktur.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    return (
-      item.noBukti.toLowerCase().includes(term) ||
-      item.namaSupplier.toLowerCase().includes(term) ||
-      item.noPo.toLowerCase().includes(term) ||
-      item.noFaktur.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term)
+    if (searchField === 'Kode' || searchField === 'No.Bukti') return matchesMultiKeyword([item.noBukti], searchTerm);
+    if (searchField === 'Nama Supplier') return matchesMultiKeyword([item.namaSupplier], searchTerm);
+    if (searchField === 'No.PO') return matchesMultiKeyword([item.noPo], searchTerm);
+    if (searchField === 'No.Faktur Pembelian') return matchesMultiKeyword([item.noFaktur], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    return matchesMultiKeyword(
+      [item.noBukti, item.tanggal, item.namaSupplier, item.noPo, item.noFaktur, item.keterangan, item.stsLunas],
+      searchTerm
     );
   });
 
   const totalNilai = filteredList.reduce((acc, r) => acc + r.nilaiPembelianNum, 0);
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const selectedPembelian =
+    filteredList.find((p) => p.id === selectedId) ||
+    pembelianList.find((p) => p.id === selectedId) ||
+    null;
+  const selectedPembelianDetails = selectedPembelian
+    ? pembelianDetailsMap[selectedPembelian.id] || []
+    : [];
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Pembelian Barang dari Supabase`
+          : 'Data Pembelian Barang tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('Semua');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Pembelian)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
   };
 
   const handleExportExcel = async () => {
@@ -543,7 +659,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })}
           onExportExcel={handleExportExcel}
         />
 
@@ -668,32 +784,30 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
           </table>
         </div>
 
-        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
-          <div className="flex items-center space-x-2">
-            <span className="font-semibold text-gray-800">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="bg-white border border-[#7A7A7A] px-1.5 py-0.5 rounded-xs text-xs"
-            >
-              <option value="Semua">Semua</option>
-              <option value="Nama Supplier">Nama Supplier</option>
-              <option value="No.Bukti">No.Bukti</option>
-              <option value="No.PO">No.PO</option>
-              <option value="No.Faktur Pembelian">No.Faktur Pembelian</option>
-              <option value="Keterangan">Keterangan</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Cari data..."
-              className="w-64 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
-            />
-          </div>
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0] gap-2 overflow-x-auto">
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-56"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.Bukti)' },
+              { value: 'No.Bukti', label: 'No.Bukti' },
+              { value: 'Nama Supplier', label: 'Nama Supplier' },
+              { value: 'No.PO', label: 'No.PO' },
+              { value: 'No.Faktur Pembelian', label: 'No.Faktur Pembelian' },
+              { value: 'Keterangan', label: 'Keterangan' },
+            ]}
+          />
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-4 shrink-0">
             <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
               {pembelianList.find((r) => r.id === selectedId)?.namaSupplier || ''}
             </div>
@@ -1090,6 +1204,98 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
           summaryItems={[
             { label: 'Total Record', value: `${filteredList.length} Transaksi` },
             { label: 'Total Pembelian', value: formatRupiah(totalNilai) },
+          ]}
+          selectedRow={selectedPembelian}
+          selectedRows={selectedPembelianDetails.length > 0 ? selectedPembelianDetails : undefined}
+          selectedTitle={
+            selectedPembelianDetails.length > 0
+              ? 'BUKTI PEMBELIAN BARANG (RECORD TERPILIH)'
+              : 'PEMBELIAN BARANG (RECORD TERPILIH)'
+          }
+          selectedSubtitle={
+            selectedPembelian
+              ? `No. Bukti: ${selectedPembelian.noBukti} | Supplier: ${selectedPembelian.namaSupplier}`
+              : undefined
+          }
+          selectedMetaLines={
+            selectedPembelian
+              ? [
+                  { label: 'No. Bukti', value: selectedPembelian.noBukti },
+                  { label: 'Tanggal', value: selectedPembelian.tanggal },
+                  { label: 'Nama Supplier', value: selectedPembelian.namaSupplier },
+                  { label: 'No. PO', value: selectedPembelian.noPo || '-' },
+                  { label: 'No. Faktur', value: selectedPembelian.noFaktur || '-' },
+                  { label: 'Sts. Lunas', value: selectedPembelian.stsLunas },
+                  { label: 'Keterangan', value: selectedPembelian.keterangan || '-' },
+                ]
+              : undefined
+          }
+          selectedColumns={
+            selectedPembelianDetails.length > 0
+              ? [
+                  { header: 'Kode', accessor: 'kode', width: '90px' },
+                  { header: 'Nama Barang', accessor: 'namaBarang' },
+                  { header: 'Unit', accessor: 'unit', align: 'center', width: '60px' },
+                  { header: 'Terima', accessor: (r: PembelianDetailItem) => formatMoney(r.terima), align: 'right', width: '65px' },
+                  { header: 'QTY', accessor: (r: PembelianDetailItem) => formatMoney(r.qty), align: 'right', width: '65px' },
+                  { header: 'Harga', accessor: (r: PembelianDetailItem) => formatMoney(r.harga), align: 'right', width: '95px' },
+                  { header: 'Jumlah', accessor: (r: PembelianDetailItem) => formatMoney(r.jumlah), align: 'right', width: '100px' },
+                  { header: 'Total', accessor: (r: PembelianDetailItem) => formatMoney(r.total), align: 'right', width: '105px' },
+                ]
+              : undefined
+          }
+          selectedSummaryItems={
+            selectedPembelian
+              ? [
+                  { label: 'No. Bukti', value: selectedPembelian.noBukti },
+                  { label: 'Nilai Pembelian', value: formatRupiah(selectedPembelian.nilaiPembelianNum) },
+                ]
+              : undefined
+          }
+        />
+
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Pembelian Barang"
+          rows={pembelianList}
+          selectedId={selectedId}
+          getRowId={(r) => r.id}
+          getSearchValues={(r) => [
+            r.noBukti,
+            r.tanggal,
+            r.namaSupplier,
+            r.noPo,
+            r.noFaktur,
+            r.keterangan,
+            r.nilaiPembelian,
+            r.stsLunas,
+          ]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q, tglFilter: 'Semua' });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            setTanggalFilter('Semua');
+            return loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+          }}
+          onSelectRow={(row, q) => {
+            setSelectedId(row.id);
+            setSearchTerm(q);
+            showFeedback(`Pembelian [${row.noBukti} - ${row.namaSupplier}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.Bukti', accessor: (r) => r.noBukti, widthClass: 'w-32', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-22', align: 'center' },
+            { header: 'Nama Supplier', accessor: (r) => r.namaSupplier, bold: true },
+            { header: 'No.PO', accessor: (r) => r.noPo, widthClass: 'w-28', mono: true },
+            { header: 'No.Faktur', accessor: (r) => r.noFaktur, widthClass: 'w-28', mono: true },
+            { header: 'Nilai Pembelian', accessor: (r) => r.nilaiPembelian, widthClass: 'w-28', align: 'right', mono: true },
           ]}
         />
       </div>

@@ -4,6 +4,9 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile, nextUniqueCode } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface MerkItem {
   id: string;
@@ -20,7 +23,8 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
   const [merks, setMerks] = useState<MerkItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Description');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [isFindOpen, setIsFindOpen] = useState(false);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -37,10 +41,28 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'kode',
+    'Nama Merk': 'nama_merk',
+  };
+
+  const loadData = async (opts?: { field?: string; term?: string }): Promise<MerkItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('master_merks', { orderBy: 'nama_merk', asc: true });
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'nama_merk', asc: true, limit: 1000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'kode,nama_merk';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      const rows = await erpList<any>('master_merks', queryOpts);
       const mapped: MerkItem[] = rows.map((r) => ({
         id: r.id,
         kode: r.kode,
@@ -49,19 +71,41 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
       setMerks(mapped);
       if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = merks.find((m) => m.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_merks', selected.id, {
+        kode: selected.kode.trim().toUpperCase(),
+        nama_merk: selected.namaMerk.trim().toUpperCase(),
+      });
+      setMerks((prev) =>
+        prev.map((m) =>
+          m.id === selected.id ? { id: saved.id, kode: saved.kode, namaMerk: saved.nama_merk } : m
+        )
+      );
+      showFeedback(`Merk [${saved.kode} - ${saved.nama_merk}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -152,13 +196,33 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
   };
 
   const filteredMerks = merks.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Kode') {
-      return item.kode.toLowerCase().includes(term);
-    }
-    return item.namaMerk.toLowerCase().includes(term);
+    if (searchField === 'Kode') return matchesMultiKeyword([item.kode], searchTerm);
+    if (searchField === 'Nama Merk') return matchesMultiKeyword([item.namaMerk], searchTerm);
+    return matchesMultiKeyword([item.kode, item.namaMerk], searchTerm);
   });
+
+  const selectedMerk =
+    filteredMerks.find((m) => m.id === selectedId) ||
+    merks.find((m) => m.id === selectedId) ||
+    null;
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Merk dari Supabase`
+          : 'Data Merk tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Merk)`);
+  };
 
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
@@ -175,9 +239,9 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
     showFeedback('Export Excel selesai');
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   return (
@@ -191,13 +255,13 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
         onClose={onClose}
         onFind={handleFind}
         onPrint={() => setIsPrintOpen(true)}
-        onTableView={loadData}
+        onTableView={() => loadData({ field: searchField, term: searchTerm })}
         onExportExcel={handleExportExcel}
       />
 
       <div
         id="merk-form-toolbar"
-        className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
+        className="flex items-center h-[48px] px-3 space-x-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
       >
         <FormActionButtons
           onSimpan={handleToolbarSimpan}
@@ -210,33 +274,21 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
           feedback={feedback}
         />
 
-        <div className="flex items-center space-x-2">
-          <span className="font-bold text-[11px] text-black">Search :</span>
-
-          <div className="relative">
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[24px] px-2 pr-6 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-sans font-medium text-black appearance-none outline-none cursor-pointer"
-            >
-              <option value="Description">Description</option>
-              <option value="Kode">Kode</option>
-            </select>
-            <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
-          </div>
-
-          <div className="w-[340px]">
-            <input
-              ref={searchInputRef}
-              id="merk-search-input"
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Ketik untuk FIND..."
-              className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
-            />
-          </div>
-        </div>
+        <ToolbarSearchControl
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleExecuteCari}
+          onReset={handleResetCari}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode' },
+            { value: 'Nama Merk', label: 'Nama Merk' },
+          ]}
+        />
       </div>
 
       <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
@@ -373,6 +425,37 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Tabel Merk"
+        rows={merks}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [r.kode, r.namaMerk]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Merk [${row.kode} - ${row.namaMerk}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (r) => r.kode, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'Nama Merk', accessor: (r) => r.namaMerk, bold: true },
+        ]}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -383,6 +466,17 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
           { header: 'Nama Merk', accessor: 'namaMerk' },
         ]}
         rows={filteredMerks}
+        selectedRow={selectedMerk}
+        selectedTitle="DETAIL MASTER TABEL MERK"
+        selectedSubtitle={selectedMerk ? `Kode: ${selectedMerk.kode}` : undefined}
+        selectedMetaLines={
+          selectedMerk
+            ? [
+                { label: 'Kode Merk', value: selectedMerk.kode },
+                { label: 'Nama Merk', value: selectedMerk.namaMerk },
+              ]
+            : undefined
+        }
       />
     </div>
   );

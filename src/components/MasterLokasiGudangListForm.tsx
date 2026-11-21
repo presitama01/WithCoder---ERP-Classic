@@ -4,6 +4,9 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile, nextUniqueCode } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface LokasiGudangItem {
   id: string;
@@ -45,7 +48,8 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
   const [lokasiList, setLokasiList] = useState<LokasiGudangItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Description');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [isFindOpen, setIsFindOpen] = useState(false);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -70,27 +74,73 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'kode',
+    'Nama Lokasi': 'nama_lokasi',
+    Kota: 'kota',
+    'Penanggung Jawab': 'pic',
+  };
+
+  const loadData = async (opts?: { field?: string; term?: string }): Promise<LokasiGudangItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true });
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'kode', asc: true, limit: 1000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'kode,nama_lokasi,alamat,kota,telepon1,telepon2,fax,pic,keterangan';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      const rows = await erpList<any>('master_lokasi_gudangs', queryOpts);
       const mapped = rows.map(mapDbToItem);
       setLokasiList(mapped);
       if (mapped.length > 0 && !mapped.some((l) => l.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = lokasiList.find((l) => l.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_lokasi_gudangs', selected.id, {
+        kode: selected.kode.trim().toUpperCase(),
+        nama_lokasi: selected.namaLokasi.trim().toUpperCase(),
+        alamat: selected.alamat.trim().toUpperCase(),
+        kota: selected.kota.trim().toUpperCase(),
+        telepon1: selected.telepon1.trim(),
+        telepon2: selected.telepon2.trim(),
+        fax: (selected.fax || '').trim(),
+        pic: (selected.pic || '').trim().toUpperCase(),
+        keterangan: (selected.keterangan || '').trim().toUpperCase(),
+      });
+      const mapped = mapDbToItem(saved);
+      setLokasiList((prev) => prev.map((l) => (l.id === selected.id ? mapped : l)));
+      showFeedback(`Lokasi Gudang [${mapped.kode} - ${mapped.namaLokasi}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -199,19 +249,38 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
   };
 
   const filteredLokasi = lokasiList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Kode') return item.kode.toLowerCase().includes(term);
-    if (searchField === 'Penanggung Jawab') return (item.pic || '').toLowerCase().includes(term);
-    return (
-      item.namaLokasi.toLowerCase().includes(term) ||
-      item.kota.toLowerCase().includes(term) ||
-      item.alamat.toLowerCase().includes(term) ||
-      (item.pic || '').toLowerCase().includes(term) ||
-      (item.fax || '').toLowerCase().includes(term) ||
-      (item.keterangan || '').toLowerCase().includes(term)
+    if (searchField === 'Kode') return matchesMultiKeyword([item.kode], searchTerm);
+    if (searchField === 'Nama Lokasi') return matchesMultiKeyword([item.namaLokasi], searchTerm);
+    if (searchField === 'Kota') return matchesMultiKeyword([item.kota], searchTerm);
+    if (searchField === 'Penanggung Jawab') return matchesMultiKeyword([item.pic], searchTerm);
+    return matchesMultiKeyword(
+      [item.kode, item.namaLokasi, item.alamat, item.kota, item.telepon1, item.telepon2, item.fax, item.pic, item.keterangan],
+      searchTerm
     );
   });
+
+  const selectedLokasi =
+    filteredLokasi.find((l) => l.id === selectedId) ||
+    lokasiList.find((l) => l.id === selectedId) ||
+    null;
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Lokasi Gudang dari Supabase`
+          : 'Data Lokasi Gudang tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Lokasi Gudang)`);
+  };
 
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
@@ -235,9 +304,9 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     showFeedback('Export Excel selesai');
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   return (
@@ -252,13 +321,13 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm })}
           onExportExcel={handleExportExcel}
         />
 
         <div
           id="master-lokasi-toolbar"
-          className="flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
+          className="flex items-center h-[48px] px-3 space-x-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
         >
           <FormActionButtons
             onSimpan={handleToolbarSimpan}
@@ -271,34 +340,23 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
             feedback={feedback}
           />
 
-          <div className="flex items-center space-x-2">
-            <span className="font-bold text-[11px] text-black">Search :</span>
-
-            <div className="relative">
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[24px] px-2 pr-6 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-sans font-medium text-black appearance-none outline-none cursor-pointer"
-              >
-                <option value="Description">Description</option>
-                <option value="Kode">Kode</option>
-                <option value="Penanggung Jawab">Penanggung Jawab</option>
-              </select>
-              <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
-            </div>
-
-            <div className="w-[340px]">
-              <input
-                ref={searchInputRef}
-                id="lokasi-search-input"
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Ketik untuk FIND..."
-                className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
-              />
-            </div>
-          </div>
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode' },
+              { value: 'Nama Lokasi', label: 'Nama Lokasi' },
+              { value: 'Kota', label: 'Kota' },
+              { value: 'Penanggung Jawab', label: 'Penanggung Jawab' },
+            ]}
+          />
         </div>
 
         <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
@@ -517,6 +575,40 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Master Lokasi Gudang"
+        rows={lokasiList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [r.kode, r.namaLokasi, r.alamat, r.kota, r.telepon1, r.pic, r.keterangan]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Lokasi [${row.kode} - ${row.namaLokasi}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (r) => r.kode, widthClass: 'w-20', mono: true, bold: true },
+          { header: 'Nama Lokasi', accessor: (r) => r.namaLokasi, bold: true },
+          { header: 'Alamat', accessor: (r) => r.alamat || '-' },
+          { header: 'Kota', accessor: (r) => r.kota || '-', widthClass: 'w-24' },
+          { header: 'Penanggung Jawab', accessor: (r) => r.pic || '-', widthClass: 'w-32' },
+        ]}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -536,6 +628,19 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         ]}
         rows={filteredLokasi}
         summaryItems={[{ label: 'Total Lokasi Gudang', value: `${filteredLokasi.length} Lokasi` }]}
+        selectedRow={selectedLokasi}
+        selectedTitle="DETAIL MASTER LOKASI GUDANG"
+        selectedSubtitle={selectedLokasi ? `Kode: ${selectedLokasi.kode} - ${selectedLokasi.namaLokasi}` : undefined}
+        selectedMetaLines={
+          selectedLokasi
+            ? [
+                { label: 'Kode Lokasi', value: selectedLokasi.kode },
+                { label: 'Nama Lokasi', value: selectedLokasi.namaLokasi },
+                { label: 'Kota', value: selectedLokasi.kota || '-' },
+                { label: 'Penanggung Jawab', value: selectedLokasi.pic || '-' },
+              ]
+            : undefined
+        }
       />
     </div>
   );

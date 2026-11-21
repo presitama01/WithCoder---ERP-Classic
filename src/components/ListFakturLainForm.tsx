@@ -19,6 +19,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface FakturLainItem {
   id: string;
@@ -93,13 +96,14 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   const [fakturLainList, setFakturLainList] = useState<FakturLainItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [tanggalFilter, setTanggalFilter] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [yellowNote, setYellowNote] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -130,31 +134,98 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_bukti',
+    'No.Bukti': 'no_bukti',
+    'Nama Pelanggan': 'nama_customer',
+    'No.SO': 'no_so',
+    'PO.No': 'po_no',
+    'No.Faktur Pajak': 'no_faktur_pajak',
+    Keterangan: 'keterangan',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+  }): Promise<FakturLainItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('faktur_penjualans', {
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = {
         eq: { jenis_faktur: 'LAIN' },
         orderBy: 'tanggal',
         asc: false,
-      });
+        limit: 1000,
+      };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch =
+            'no_bukti,nama_customer,no_so,po_no,no_sj,no_faktur_pajak,sales,keterangan';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      const rows = await erpList<any>('faktur_penjualans', queryOpts);
       const mapped = rows.map(mapDbToFakturLain);
       setFakturLainList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = fakturLainList.find((r) => r.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Faktur Lain terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('faktur_penjualans', selected.id, {
+        jenis_faktur: 'LAIN',
+        no_bukti: selected.noBukti,
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_customer: selected.namaCustomer,
+        no_so: selected.noSo,
+        po_no: selected.poNo,
+        no_sj: selected.noSj,
+        no_faktur_pajak: selected.noFakturPajak,
+        sales: selected.sales,
+        jth_tmp: toIsoDate(selected.jthTmp) || selected.tanggalIso || todayIso(),
+        keterangan: selected.keterangan,
+        ppn: parseNum(selected.ppn),
+        nilai_penjualan: selected.nilaiPenjualanNum,
+        lokasi_stock: selected.lokasiStock || '01 - OFFICE',
+        sts_lunas: selected.stsLunas || 'Not Yet',
+        tgl_lunas: toIsoDate(selected.tglLunas) || null,
+        sts_print: selected.stsPrint || 'Not Yet',
+        tgl_print: toIsoDate(selected.tglPrint) || null,
+        sts_post: selected.stsPost || 'Not Yet',
+        tgl_post: toIsoDate(selected.tglPost) || null,
+        diupdate_oleh: getCurrentUser().username || 'ADMIN',
+        tgl_update: todayIso(),
+      });
+      const mapped = mapDbToFakturLain(saved);
+      setFakturLainList((prev) => prev.map((r) => (r.id === selected.id ? mapped : r)));
+      showFeedback(`Data Faktur Lain [${mapped.noBukti}] tersimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -320,20 +391,62 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     if (!matchesTanggal) return false;
     if (!searchTerm.trim()) return true;
 
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'No.SO') return item.noSo.toLowerCase().includes(term);
-    if (searchField === 'PO.No') return item.poNo.toLowerCase().includes(term);
-    if (searchField === 'No.Faktur Pajak') return item.noFakturPajak.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    return item.namaCustomer.toLowerCase().includes(term);
+    if (searchField === 'Kode' || searchField === 'No.Bukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
+    }
+    if (searchField === 'Nama Pelanggan') return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    if (searchField === 'No.SO') return matchesMultiKeyword([item.noSo], searchTerm);
+    if (searchField === 'PO.No') return matchesMultiKeyword([item.poNo], searchTerm);
+    if (searchField === 'No.Faktur Pajak') return matchesMultiKeyword([item.noFakturPajak], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    return matchesMultiKeyword(
+      [
+        item.noBukti,
+        item.tanggal,
+        item.namaCustomer,
+        item.noSo,
+        item.poNo,
+        item.noSj,
+        item.noFakturPajak,
+        item.sales,
+        item.keterangan,
+      ],
+      searchTerm
+    );
   });
+
+  const selectedFakturLain =
+    filteredList.find((r) => r.id === selectedId) ||
+    fakturLainList.find((r) => r.id === selectedId) ||
+    null;
 
   const totalNilai = filteredList.reduce((acc, f) => acc + f.nilaiPenjualanNum, 0);
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleToolbarCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows && rows.length > 0) {
+      setSelectedId(rows[0].id);
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} Faktur Lain di Supabase`
+          : `Menampilkan ${rows.length} Faktur Lain dari Supabase`
+      );
+    } else if (rows) {
+      showFeedback('Data Faktur Lain tidak ditemukan di Supabase');
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Faktur Lain)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   const handleExportExcel = async () => {
@@ -369,7 +482,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm })}
           onExportExcel={handleExportExcel}
         />
 
@@ -495,28 +608,27 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
         </div>
 
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-4 py-2 border-t border-[#C0C0C0] gap-3 overflow-x-auto">
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="font-bold text-black text-[11px]">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] shadow-xs text-[11px] text-black outline-none cursor-pointer"
-            >
-              <option value="Nama Pelanggan">Nama Pelanggan</option>
-              <option value="No.Bukti">No.Bukti</option>
-              <option value="No.SO">No.SO</option>
-              <option value="PO.No">PO.No</option>
-              <option value="No.Faktur Pajak">No.Faktur Pajak</option>
-              <option value="Keterangan">Keterangan</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-[260px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] outline-none"
-            />
-          </div>
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleToolbarCari}
+            onReset={handleToolbarReset}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.Bukti)' },
+              { value: 'No.Bukti', label: 'No.Bukti' },
+              { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+              { value: 'No.SO', label: 'No.SO' },
+              { value: 'PO.No', label: 'PO.No' },
+              { value: 'No.Faktur Pajak', label: 'No.Faktur Pajak' },
+              { value: 'Keterangan', label: 'Keterangan' },
+            ]}
+          />
 
           <div className="flex items-center space-x-6 shrink-0">
             <input
@@ -763,6 +875,53 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           </div>
         )}
 
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Faktur Lain"
+          rows={fakturLainList}
+          selectedId={selectedId}
+          getRowId={(r) => r.id}
+          getSearchValues={(r) => [
+            r.noBukti,
+            r.tanggal,
+            r.namaCustomer,
+            r.noSo,
+            r.poNo,
+            r.noSj,
+            r.noFakturPajak,
+            r.sales,
+            r.keterangan,
+          ]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          placeholder="Cari Kode (No.Bukti), Customer, No.SO, PO.No, Keterangan..."
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            return loadData({ field: 'Semua', term: '' });
+          }}
+          onSelectRow={(f, q) => {
+            setSelectedId(f.id);
+            setSearchTerm(q);
+            showFeedback(`Faktur Lain [${f.noBukti} - ${f.namaCustomer}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.Bukti', accessor: (f) => f.noBukti, widthClass: 'w-28', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (f) => f.tanggal, widthClass: 'w-22' },
+            { header: 'Nama Customer', accessor: (f) => f.namaCustomer, bold: true },
+            { header: 'No.SO', accessor: (f) => f.noSo || '-', widthClass: 'w-28', mono: true },
+            { header: 'PO.No', accessor: (f) => f.poNo || '-', widthClass: 'w-24', mono: true },
+            { header: 'Keterangan', accessor: (f) => f.keterangan || '-' },
+            { header: 'Nilai Faktur', accessor: (f) => f.nilaiPenjualan, widthClass: 'w-28', align: 'right', mono: true },
+          ]}
+        />
+
         <A4PrintPreviewModal
           isOpen={isPrintOpen}
           onClose={() => setIsPrintOpen(false)}
@@ -784,6 +943,33 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
             { label: 'Total Faktur Lain', value: `${filteredList.length} Dokumen` },
             { label: 'Total Nilai', value: formatRupiah(totalNilai) },
           ]}
+          selectedRow={selectedFakturLain}
+          selectedTitle="DETAIL FAKTUR LAIN"
+          selectedSubtitle={
+            selectedFakturLain
+              ? `No.Bukti: ${selectedFakturLain.noBukti} | Customer: ${selectedFakturLain.namaCustomer}`
+              : undefined
+          }
+          selectedMetaLines={
+            selectedFakturLain
+              ? [
+                  { label: 'No.Bukti', value: selectedFakturLain.noBukti },
+                  { label: 'Tanggal', value: selectedFakturLain.tanggal },
+                  { label: 'Customer', value: selectedFakturLain.namaCustomer },
+                  { label: 'No.SO / PO.No', value: `${selectedFakturLain.noSo || '-'} / ${selectedFakturLain.poNo || '-'}` },
+                  { label: 'Jth.Tmp', value: selectedFakturLain.jthTmp || '-' },
+                  { label: 'Sts.Lunas', value: selectedFakturLain.stsLunas },
+                ]
+              : undefined
+          }
+          selectedSummaryItems={
+            selectedFakturLain
+              ? [
+                  { label: 'PPN (%)', value: selectedFakturLain.ppn },
+                  { label: 'Nilai Faktur Lain', value: formatRupiah(selectedFakturLain.nilaiPenjualanNum) },
+                ]
+              : undefined
+          }
         />
       </div>
     </div>

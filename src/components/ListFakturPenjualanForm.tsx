@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface FakturPenjualanItem {
   id: string;
@@ -177,8 +180,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
-  const [findQuery, setFindQuery] = useState<string>('');
-  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -352,6 +353,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
+    Kode: 'no_bukti',
     'Nama Pelanggan': 'nama_customer',
     'No.Bukti': 'no_bukti',
     'No.SO': 'no_so',
@@ -434,8 +436,80 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   };
 
   const handleToolbarSimpan = async () => {
-    const rows = await loadData();
-    if (rows !== null) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = fakturList.find((f) => f.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Faktur Penjualan yang akan disimpan');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const tglIso = selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso();
+      const existingDetails = fakturDetailsMap[selected.id] || [];
+      const totalFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
+      const finalNilaiPenjualan =
+        existingDetails.length > 0 && totalFromDetails > 0
+          ? totalFromDetails
+          : Number(selected.nilaiPenjualanNum || 0);
+
+      const headerPayload: Record<string, any> = {
+        id: selected.id,
+        jenis_faktur: 'REGULAR',
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        tanggal: tglIso,
+        nama_customer: selected.namaCustomer.trim().toUpperCase(),
+        no_so: selected.noSo.trim().toUpperCase(),
+        po_no: selected.poNo.trim().toUpperCase(),
+        no_sj: selected.noSj.trim().toUpperCase(),
+        no_faktur_pajak: selected.noFakturPajak.trim(),
+        sales: selected.sales.trim().toUpperCase(),
+        jth_tmp: toIsoDate(selected.jthTmp) || tglIso,
+        keterangan: selected.keterangan.trim(),
+        ppn: parseNum(selected.ppn),
+        nilai_penjualan: finalNilaiPenjualan,
+        lokasi_stock: selected.lokasiStock.trim().toUpperCase() || '01 - OFFICE',
+        sts_lunas: selected.stsLunas || 'Not Yet',
+        tgl_lunas: selected.tglLunas ? toIsoDate(selected.tglLunas) : null,
+        sts_print: selected.stsPrint || 'Not Yet',
+        tgl_print: selected.tglPrint ? toIsoDate(selected.tglPrint) : null,
+        sts_post: selected.stsPost || 'Not Yet',
+        tgl_post: selected.tglPost ? toIsoDate(selected.tglPost) : null,
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(selected.tglCreated) || todayIso(),
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      };
+
+      const detailPayloads = existingDetails.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 0),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+
+      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+        'faktur-penjualan',
+        headerPayload,
+        detailPayloads
+      );
+      const savedHeader = mapDbToFaktur(res.header);
+      const savedDetails =
+        res.details && res.details.length > 0
+          ? res.details.map((d, idx) => mapDbToDetail(d, idx))
+          : existingDetails;
+      setFakturList((prev) => prev.map((item) => (item.id === selected.id ? savedHeader : item)));
+      setFakturDetailsMap((prev) => ({ ...prev, [savedHeader.id]: savedDetails }));
+      showFeedback(`Faktur Penjualan [${savedHeader.noBukti}] berhasil disimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -841,87 +915,37 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const filteredList = fakturList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
-    const term = searchTerm.trim().toLowerCase();
-    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'No.SO') return item.noSo.toLowerCase().includes(term);
-    if (searchField === 'PO.No') return item.poNo.toLowerCase().includes(term);
-    if (searchField === 'No.SJ') return item.noSj.toLowerCase().includes(term);
-    if (searchField === 'No.Faktur Pajak') return item.noFakturPajak.toLowerCase().includes(term);
-    if (searchField === 'Sales') return item.sales.toLowerCase().includes(term);
-    if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    if (searchField === 'Sts.Lunas') return item.stsLunas.toLowerCase().includes(term);
-    return (
-      item.noBukti.toLowerCase().includes(term) ||
-      item.namaCustomer.toLowerCase().includes(term) ||
-      item.noSo.toLowerCase().includes(term) ||
-      item.poNo.toLowerCase().includes(term) ||
-      item.noSj.toLowerCase().includes(term) ||
-      item.noFakturPajak.toLowerCase().includes(term) ||
-      item.sales.toLowerCase().includes(term) ||
-      item.lokasiStock.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term) ||
-      item.stsLunas.toLowerCase().includes(term)
+    if (searchField === 'Kode' || searchField === 'No.Bukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
+    }
+    if (searchField === 'Nama Pelanggan') return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    if (searchField === 'No.SO') return matchesMultiKeyword([item.noSo], searchTerm);
+    if (searchField === 'PO.No') return matchesMultiKeyword([item.poNo], searchTerm);
+    if (searchField === 'No.SJ') return matchesMultiKeyword([item.noSj], searchTerm);
+    if (searchField === 'No.Faktur Pajak') return matchesMultiKeyword([item.noFakturPajak], searchTerm);
+    if (searchField === 'Sales') return matchesMultiKeyword([item.sales], searchTerm);
+    if (searchField === 'Lokasi Stock') return matchesMultiKeyword([item.lokasiStock], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    if (searchField === 'Sts.Lunas') return matchesMultiKeyword([item.stsLunas], searchTerm);
+    return matchesMultiKeyword(
+      [
+        item.noBukti,
+        item.tanggal,
+        item.namaCustomer,
+        item.noSo,
+        item.poNo,
+        item.noSj,
+        item.noFakturPajak,
+        item.sales,
+        item.lokasiStock,
+        item.keterangan,
+        item.stsLunas,
+      ],
+      searchTerm
     );
   });
 
-  const findModalRows = fakturList.filter((item) => {
-    if (!findQuery.trim()) return true;
-    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
-    const searchable = [
-      item.noBukti,
-      item.tanggal,
-      item.namaCustomer,
-      item.noSo,
-      item.poNo,
-      item.noSj,
-      item.noFakturPajak,
-      item.sales,
-      item.lokasiStock,
-      item.keterangan,
-      item.stsLunas,
-    ]
-      .join(' ')
-      .toLowerCase();
-    return tokens.every((t) => searchable.includes(t));
-  });
-
   const totalNilai = filteredList.reduce((acc, f) => acc + f.nilaiPenjualanNum, 0);
-
-  const handleSearchTermChange = (val: string) => {
-    setSearchTerm(val);
-    const clean = val.trim().toLowerCase();
-    const matched = fakturList.filter((item) => {
-      if (filterIso && item.tanggalIso !== filterIso) return false;
-      if (!clean) return true;
-      if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(clean);
-      if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(clean);
-      if (searchField === 'No.SO') return item.noSo.toLowerCase().includes(clean);
-      if (searchField === 'PO.No') return item.poNo.toLowerCase().includes(clean);
-      if (searchField === 'No.SJ') return item.noSj.toLowerCase().includes(clean);
-      if (searchField === 'No.Faktur Pajak') return item.noFakturPajak.toLowerCase().includes(clean);
-      if (searchField === 'Sales') return item.sales.toLowerCase().includes(clean);
-      if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(clean);
-      if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(clean);
-      if (searchField === 'Sts.Lunas') return item.stsLunas.toLowerCase().includes(clean);
-      return (
-        item.noBukti.toLowerCase().includes(clean) ||
-        item.namaCustomer.toLowerCase().includes(clean) ||
-        item.noSo.toLowerCase().includes(clean) ||
-        item.poNo.toLowerCase().includes(clean) ||
-        item.noSj.toLowerCase().includes(clean) ||
-        item.noFakturPajak.toLowerCase().includes(clean) ||
-        item.sales.toLowerCase().includes(clean) ||
-        item.lokasiStock.toLowerCase().includes(clean) ||
-        item.keterangan.toLowerCase().includes(clean) ||
-        item.stsLunas.toLowerCase().includes(clean)
-      );
-    });
-    if (matched.length > 0 && !matched.some((m) => m.id === selectedId)) {
-      setSelectedId(matched[0].id);
-    }
-  };
 
   const handleExecuteToolbarSearch = async () => {
     const rows = await loadData({
@@ -953,16 +977,11 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    setFindQuery(searchTerm);
     await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
-    setTimeout(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    }, 60);
   };
 
-  const handleOpenPrint = (mode: 'list' | 'detail' = 'list') => {
-    setPrintMode(mode);
+  const handleOpenPrint = (mode?: 'list' | 'detail') => {
+    setPrintMode(mode ?? (selectedFaktur ? 'detail' : 'list'));
     setIsPrintOpen(true);
   };
 
@@ -1075,7 +1094,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         title="List Faktur Penjualan"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={() => handleOpenPrint('list')}
+        onPrint={() => handleOpenPrint()}
         onTableView={() => loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })}
         onExportExcel={handleExportExcel}
       />
@@ -1094,7 +1113,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
               }
               setConfirmDeleteRow(target);
             }}
-            onPrint={() => handleOpenPrint('list')}
+            onPrint={() => handleOpenPrint()}
             onFind={handleFind}
             isBusy={isBusy}
             feedback={feedback}
@@ -1301,58 +1320,31 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
       {/* Bottom Search Bar */}
       <div className="shrink-0 bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs gap-2 overflow-x-auto">
-        <div className="flex items-center space-x-2 shrink-0">
-          <span className="font-semibold">Search :</span>
-          <select
-            value={searchField}
-            onChange={(e) => {
-              const nextField = e.target.value;
-              setSearchField(nextField);
-            }}
-            className="px-2 py-0.5 bg-white border border-[#7A7A7A] text-xs rounded"
-          >
-            <option value="Semua">Semua</option>
-            <option value="Nama Pelanggan">Nama Pelanggan</option>
-            <option value="No.Bukti">No.Bukti</option>
-            <option value="No.SO">No.SO</option>
-            <option value="PO.No">PO.No</option>
-            <option value="No.SJ">No.SJ</option>
-            <option value="No.Faktur Pajak">No.Faktur Pajak</option>
-            <option value="Sales">Sales</option>
-            <option value="Lokasi Stock">Lokasi Stock</option>
-            <option value="Keterangan">Keterangan</option>
-            <option value="Sts.Lunas">Sts.Lunas</option>
-          </select>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchTerm}
-            onChange={(e) => handleSearchTermChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleExecuteToolbarSearch();
-            }}
-            placeholder="Cari faktur penjualan..."
-            className="px-2 py-0.5 w-52 bg-white border border-[#7A7A7A] text-xs shadow-inner"
-          />
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={handleExecuteToolbarSearch}
-            className="px-2.5 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs font-semibold cursor-pointer"
-          >
-            Cari
-          </button>
-          {(searchTerm || searchField !== 'Semua') && (
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={handleResetSearch}
-              className="px-2 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs cursor-pointer"
-            >
-              Reset
-            </button>
-          )}
-        </div>
+        <ToolbarSearchControl
+          compact
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleExecuteToolbarSearch}
+          onReset={handleResetSearch}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode (No.Bukti)' },
+            { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+            { value: 'No.Bukti', label: 'No.Bukti' },
+            { value: 'No.SO', label: 'No.SO' },
+            { value: 'PO.No', label: 'PO.No' },
+            { value: 'No.SJ', label: 'No.SJ' },
+            { value: 'No.Faktur Pajak', label: 'No.Faktur Pajak' },
+            { value: 'Sales', label: 'Sales' },
+            { value: 'Lokasi Stock', label: 'Lokasi Stock' },
+            { value: 'Keterangan', label: 'Keterangan' },
+            { value: 'Sts.Lunas', label: 'Sts.Lunas' },
+          ]}
+        />
         <div className="flex items-center space-x-4 shrink-0">
           <div className="w-60 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
             {selectedFaktur ? `${selectedFaktur.noBukti} - ${selectedFaktur.namaCustomer}` : ''}
@@ -1850,142 +1842,55 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         </div>
       )}
 
-      {/* Find Modal: Cari & Daftar Faktur Penjualan */}
-      {isFindOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[900px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
-            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
-              <span>Cari &amp; Daftar Faktur Penjualan (Supabase)</span>
-              <button
-                type="button"
-                onClick={() => setIsFindOpen(false)}
-                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-2">
-                <span className="font-bold whitespace-nowrap">Cari :</span>
-                <input
-                  ref={findInputRef}
-                  type="text"
-                  value={findQuery}
-                  onChange={(e) => setFindQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && findModalRows.length > 0) {
-                      const first = findModalRows[0];
-                      setSelectedId(first.id);
-                      setSearchTerm(findQuery);
-                      setIsFindOpen(false);
-                      showFeedback(`Faktur Penjualan [${first.noBukti}] dipilih`);
-                    }
-                  }}
-                  placeholder="Cari No.Bukti, Nama Customer, No.SO, PO.No, No.SJ, Sales, Lokasi Stock..."
-                  className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={async () => {
-                    const rows = await loadData({
-                      field: 'Semua',
-                      term: findQuery,
-                      tglFilter: 'Semua',
-                    });
-                    setSearchField('Semua');
-                    setSearchTerm(findQuery);
-                    if (rows && rows.length > 0) {
-                      setSelectedId(rows[0].id);
-                      showFeedback(`Ditemukan ${rows.length} Faktur Penjualan dari Supabase`);
-                    } else if (rows) {
-                      showFeedback('Data Faktur Penjualan tidak ditemukan di Supabase');
-                    }
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Cari
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={async () => {
-                    setFindQuery('');
-                    setSearchTerm('');
-                    setSearchField('Semua');
-                    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
-                    showFeedback('Data Faktur Penjualan di-refresh dari Supabase');
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
-                <table className="w-full text-left border-collapse text-[11px]">
-                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                    <tr>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.Bukti</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-22">Tanggal</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">Nama Customer</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.SO</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">PO.No</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">No.SJ</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">Lokasi Stock</th>
-                      <th className="px-2 py-1 text-right w-28">Nilai Penjualan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {findModalRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="text-center py-6 text-gray-500 italic">
-                          Tidak ada data Faktur Penjualan yang cocok
-                        </td>
-                      </tr>
-                    ) : (
-                      findModalRows.map((f) => (
-                        <tr
-                          key={f.id}
-                          onClick={() => {
-                            setSelectedId(f.id);
-                            setSearchTerm(findQuery);
-                            setIsFindOpen(false);
-                            showFeedback(`Faktur Penjualan [${f.noBukti} - ${f.namaCustomer}] dipilih`);
-                          }}
-                          className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                            f.id === selectedId ? 'bg-[#FFFF99]' : ''
-                          }`}
-                        >
-                          <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">{f.noBukti}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{f.tanggal}</td>
-                          <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">{f.namaCustomer}</td>
-                          <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{f.noSo || '-'}</td>
-                          <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{f.poNo || '-'}</td>
-                          <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{f.noSj || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{f.lokasiStock || '-'}</td>
-                          <td className="px-2 py-1 text-right font-mono">{f.nilaiPenjualan}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-[11px] text-[#555]">
-                  Menampilkan {findModalRows.length} dari {fakturList.length} Faktur Penjualan. Klik baris untuk memilih record.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Faktur Penjualan"
+        rows={fakturList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.noBukti,
+          r.tanggal,
+          r.namaCustomer,
+          r.noSo,
+          r.poNo,
+          r.noSj,
+          r.noFakturPajak,
+          r.sales,
+          r.lokasiStock,
+          r.keterangan,
+          r.stsLunas,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        placeholder="Cari Kode (No.Bukti), Customer, No.SO, PO.No, No.SJ, Sales..."
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q, tglFilter: 'Semua' });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+        }}
+        onSelectRow={(f, q) => {
+          setSelectedId(f.id);
+          setSearchTerm(q);
+          showFeedback(`Faktur Penjualan [${f.noBukti} - ${f.namaCustomer}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode / No.Bukti', accessor: (f) => f.noBukti, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'Tanggal', accessor: (f) => f.tanggal, widthClass: 'w-22' },
+          { header: 'Nama Customer', accessor: (f) => f.namaCustomer, bold: true },
+          { header: 'No.SO', accessor: (f) => f.noSo || '-', widthClass: 'w-28', mono: true },
+          { header: 'PO.No', accessor: (f) => f.poNo || '-', widthClass: 'w-24', mono: true },
+          { header: 'No.SJ', accessor: (f) => f.noSj || '-', widthClass: 'w-24', mono: true },
+          { header: 'Lokasi Stock', accessor: (f) => f.lokasiStock || '-', widthClass: 'w-28' },
+          { header: 'Nilai Penjualan', accessor: (f) => f.nilaiPenjualan, widthClass: 'w-28', align: 'right', mono: true },
+        ]}
+      />
 
       {/* Konfirmasi Hapus */}
       {confirmDeleteRow && (
@@ -2061,10 +1966,20 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         orientation="landscape"
         columns={
           printMode === 'detail'
-            ? (detailPrintColumns as PrintColumn<any>[])
+            ? selectedFakturDetails.length > 0
+              ? (detailPrintColumns as PrintColumn<any>[])
+              : (listPrintColumns as PrintColumn<any>[])
             : (listPrintColumns as PrintColumn<any>[])
         }
-        rows={printMode === 'detail' ? selectedFakturDetails : filteredList}
+        rows={
+          printMode === 'detail'
+            ? selectedFakturDetails.length > 0
+              ? selectedFakturDetails
+              : selectedFaktur
+              ? [selectedFaktur]
+              : []
+            : filteredList
+        }
         summaryItems={
           printMode === 'detail'
             ? [
@@ -2079,6 +1994,49 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 { label: 'Total Faktur Penjualan', value: `${filteredList.length} Dokumen` },
                 { label: 'Total Nilai Penjualan', value: formatRupiah(totalNilai) },
               ]
+        }
+        selectedRow={printMode === 'list' ? selectedFaktur : undefined}
+        selectedTitle={printMode === 'list' ? 'FAKTUR PENJUALAN (RECORD TERPILIH)' : undefined}
+        selectedSubtitle={
+          printMode === 'list' && selectedFaktur
+            ? `No. Bukti: ${selectedFaktur.noBukti} | Customer: ${selectedFaktur.namaCustomer}`
+            : undefined
+        }
+        selectedMetaLines={
+          printMode === 'list' && selectedFaktur
+            ? [
+                { label: 'No. Bukti', value: selectedFaktur.noBukti },
+                { label: 'Tanggal', value: selectedFaktur.tanggal },
+                { label: 'Customer', value: selectedFaktur.namaCustomer },
+                { label: 'No. SO', value: selectedFaktur.noSo || '-' },
+                { label: 'No. SJ', value: selectedFaktur.noSj || '-' },
+                { label: 'Nilai Penjualan', value: formatRupiah(selectedFaktur.nilaiPenjualanNum) },
+              ]
+            : undefined
+        }
+        toolbarExtra={
+          selectedFaktur ? (
+            <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
+              <button
+                type="button"
+                onClick={() => setPrintMode('detail')}
+                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                  printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                Faktur Terpilih (Detail)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintMode('list')}
+                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                  printMode === 'list' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                List Faktur
+              </button>
+            </div>
+          ) : undefined
         }
       />
     </div>

@@ -11,6 +11,9 @@ import {
   formatMoney,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { matchesMultiKeyword } from '../lib/searchUtils';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
 
 export interface SupplierItem {
   id: string;
@@ -57,8 +60,6 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   const [searchField, setSearchField] = useState<string>('Semua');
 
   const [isFindOpen, setIsFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState('');
-  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -139,8 +140,33 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   };
 
   const handleToolbarSimpan = async () => {
-    const rows = await loadData({ field: searchField, term: searchTerm });
-    if (rows !== null) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = supplierList.find((s) => s.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_suppliers', selected.id, {
+        kode_supplier: selected.kodeSupplier.trim().toUpperCase(),
+        nama_supplier: selected.namaSupplier.trim().toUpperCase(),
+        hutang: Number(selected.hutang) || 0,
+        hutang_giro: Number(selected.hutangGiro) || 0,
+        alamat: selected.alamat.trim(),
+        kota: selected.kota.trim().toUpperCase(),
+        telepon: selected.telepon.trim(),
+        contact_person: selected.contactPerson.trim(),
+        email: selected.email.trim(),
+        website: selected.website.trim(),
+      });
+      const mapped = mapDbToItem(saved);
+      setSupplierList((prev) => prev.map((s) => (s.id === selected.id ? mapped : s)));
+      showFeedback(`Supplier [${mapped.kodeSupplier} - ${mapped.namaSupplier}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -258,68 +284,57 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   };
 
   const filteredSupplier = supplierList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.trim().toLowerCase();
-    if (searchField === 'Kode') return item.kodeSupplier.toLowerCase().includes(term);
-    if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
-    if (searchField === 'Alamat') return item.alamat.toLowerCase().includes(term);
-    if (searchField === 'Kota') return item.kota.toLowerCase().includes(term);
-    if (searchField === 'Telepon') return item.telepon.toLowerCase().includes(term);
-    if (searchField === 'Contact Person') return item.contactPerson.toLowerCase().includes(term);
-    if (searchField === 'Email') return item.email.toLowerCase().includes(term);
-    if (searchField === 'Website') return item.website.toLowerCase().includes(term);
-    return (
-      item.kodeSupplier.toLowerCase().includes(term) ||
-      item.namaSupplier.toLowerCase().includes(term) ||
-      item.alamat.toLowerCase().includes(term) ||
-      item.kota.toLowerCase().includes(term) ||
-      item.telepon.toLowerCase().includes(term) ||
-      item.contactPerson.toLowerCase().includes(term) ||
-      item.email.toLowerCase().includes(term) ||
-      item.website.toLowerCase().includes(term)
+    if (searchField === 'Kode') return matchesMultiKeyword([item.kodeSupplier], searchTerm);
+    if (searchField === 'Nama Supplier') return matchesMultiKeyword([item.namaSupplier], searchTerm);
+    if (searchField === 'Alamat') return matchesMultiKeyword([item.alamat], searchTerm);
+    if (searchField === 'Kota') return matchesMultiKeyword([item.kota], searchTerm);
+    if (searchField === 'Telepon') return matchesMultiKeyword([item.telepon], searchTerm);
+    if (searchField === 'Contact Person') return matchesMultiKeyword([item.contactPerson], searchTerm);
+    if (searchField === 'Email') return matchesMultiKeyword([item.email], searchTerm);
+    if (searchField === 'Website') return matchesMultiKeyword([item.website], searchTerm);
+    return matchesMultiKeyword(
+      [
+        item.kodeSupplier,
+        item.namaSupplier,
+        item.alamat,
+        item.kota,
+        item.telepon,
+        item.contactPerson,
+        item.email,
+        item.website,
+      ],
+      searchTerm
     );
   });
 
-  const findModalRows = supplierList.filter((item) => {
-    if (!findQuery.trim()) return true;
-    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
-    const searchable = [
-      item.kodeSupplier,
-      item.namaSupplier,
-      item.alamat,
-      item.kota,
-      item.telepon,
-      item.contactPerson,
-      item.email,
-      item.website,
-    ]
-      .join(' ')
-      .toLowerCase();
-    return tokens.every((t) => searchable.includes(t));
-  });
+  const selectedSupplier =
+    filteredSupplier.find((s) => s.id === selectedId) ||
+    supplierList.find((s) => s.id === selectedId) ||
+    null;
 
   const handleSearchTermChange = (val: string) => {
     setSearchTerm(val);
-    const clean = val.trim().toLowerCase();
     const matched = supplierList.filter((item) => {
-      if (!clean) return true;
-      if (searchField === 'Kode') return item.kodeSupplier.toLowerCase().includes(clean);
-      if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(clean);
-      if (searchField === 'Alamat') return item.alamat.toLowerCase().includes(clean);
-      if (searchField === 'Kota') return item.kota.toLowerCase().includes(clean);
-      if (searchField === 'Telepon') return item.telepon.toLowerCase().includes(clean);
-      if (searchField === 'Contact Person') return item.contactPerson.toLowerCase().includes(clean);
-      if (searchField === 'Email') return item.email.toLowerCase().includes(clean);
-      if (searchField === 'Website') return item.website.toLowerCase().includes(clean);
-      return (
-        item.kodeSupplier.toLowerCase().includes(clean) ||
-        item.namaSupplier.toLowerCase().includes(clean) ||
-        item.alamat.toLowerCase().includes(clean) ||
-        item.kota.toLowerCase().includes(clean) ||
-        item.telepon.toLowerCase().includes(clean) ||
-        item.contactPerson.toLowerCase().includes(clean) ||
-        item.email.toLowerCase().includes(clean) ||
-        item.website.toLowerCase().includes(clean)
+      if (searchField === 'Kode') return matchesMultiKeyword([item.kodeSupplier], val);
+      if (searchField === 'Nama Supplier') return matchesMultiKeyword([item.namaSupplier], val);
+      if (searchField === 'Alamat') return matchesMultiKeyword([item.alamat], val);
+      if (searchField === 'Kota') return matchesMultiKeyword([item.kota], val);
+      if (searchField === 'Telepon') return matchesMultiKeyword([item.telepon], val);
+      if (searchField === 'Contact Person') return matchesMultiKeyword([item.contactPerson], val);
+      if (searchField === 'Email') return matchesMultiKeyword([item.email], val);
+      if (searchField === 'Website') return matchesMultiKeyword([item.website], val);
+      return matchesMultiKeyword(
+        [
+          item.kodeSupplier,
+          item.namaSupplier,
+          item.alamat,
+          item.kota,
+          item.telepon,
+          item.contactPerson,
+          item.email,
+          item.website,
+        ],
+        val
       );
     });
     if (matched.length > 0 && !matched.some((m) => m.id === selectedId)) {
@@ -376,12 +391,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    setFindQuery(searchTerm);
     await loadData({ field: 'Semua', term: '' });
-    setTimeout(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    }, 60);
   };
 
   return (
@@ -419,53 +429,29 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
             Refresh
           </button>
 
-          <div className="ml-auto flex items-center space-x-1.5 text-[11px] shrink-0">
-            <span className="font-semibold text-black">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] bg-white border border-[#7F9DB9] px-1 text-[11px]"
-            >
-              <option value="Semua">Semua</option>
-              <option value="Nama Supplier">Nama Supplier</option>
-              <option value="Kode">Kode</option>
-              <option value="Alamat">Alamat</option>
-              <option value="Kota">Kota</option>
-              <option value="Telepon">Telepon</option>
-              <option value="Contact Person">Contact Person</option>
-              <option value="Email">Email</option>
-              <option value="Website">Website</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => handleSearchTermChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleExecuteToolbarSearch();
-              }}
-              placeholder="Ketik kata kunci..."
-              className="h-[22px] w-[150px] bg-white border border-[#7F9DB9] px-2 text-[11px]"
-            />
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={handleExecuteToolbarSearch}
-              className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-            >
-              Cari
-            </button>
-            {(searchTerm || searchField !== 'Semua') && (
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={handleResetSearch}
-                className="h-[22px] px-2 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] cursor-pointer"
-              >
-                Reset
-              </button>
-            )}
-          </div>
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={handleSearchTermChange}
+            onCari={handleExecuteToolbarSearch}
+            onReset={handleResetSearch}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-[160px]"
+            compact
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode' },
+              { value: 'Nama Supplier', label: 'Nama Supplier' },
+              { value: 'Alamat', label: 'Alamat' },
+              { value: 'Kota', label: 'Kota' },
+              { value: 'Telepon', label: 'Telepon' },
+              { value: 'Contact Person', label: 'Contact Person' },
+              { value: 'Email', label: 'Email' },
+              { value: 'Website', label: 'Website' },
+            ]}
+          />
         </div>
 
         <div className="flex-1 overflow-auto bg-white m-2 border border-[#ACA899] shadow-inner">
@@ -686,148 +672,51 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
         </div>
       )}
 
-      {/* Find Modal: Cari & Daftar Master Supplier */}
-      {isFindOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[940px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
-            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
-              <span>Cari &amp; Daftar Master Supplier (Supabase)</span>
-              <button
-                type="button"
-                onClick={() => setIsFindOpen(false)}
-                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-2">
-                <span className="font-bold whitespace-nowrap">Cari :</span>
-                <input
-                  ref={findInputRef}
-                  type="text"
-                  value={findQuery}
-                  onChange={(e) => setFindQuery(e.target.value)}
-                  onKeyDown={async (e) => {
-                    if (e.key === 'Enter') {
-                      if (findModalRows.length > 0 && !findQuery.trim()) {
-                        const first = findModalRows[0];
-                        setSelectedId(first.id);
-                        setSearchTerm(findQuery);
-                        setIsFindOpen(false);
-                        showFeedback(`Supplier [${first.kodeSupplier} - ${first.namaSupplier}] dipilih`);
-                      } else {
-                        const rows = await loadData({ field: 'Semua', term: findQuery });
-                        setSearchField('Semua');
-                        setSearchTerm(findQuery);
-                        if (rows && rows.length > 0) {
-                          setSelectedId(rows[0].id);
-                          showFeedback(`Ditemukan ${rows.length} Supplier dari Supabase`);
-                        } else if (rows) {
-                          showFeedback('Data Supplier tidak ditemukan di Supabase');
-                        }
-                      }
-                    }
-                  }}
-                  placeholder="Cari Kode, Nama Supplier, Alamat, Kota, Telepon, Contact Person, Email, Website..."
-                  className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={async () => {
-                    const rows = await loadData({ field: 'Semua', term: findQuery });
-                    setSearchField('Semua');
-                    setSearchTerm(findQuery);
-                    if (rows && rows.length > 0) {
-                      setSelectedId(rows[0].id);
-                      showFeedback(`Ditemukan ${rows.length} Supplier dari Supabase`);
-                    } else if (rows) {
-                      showFeedback('Data Supplier tidak ditemukan di Supabase');
-                    }
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Cari
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={async () => {
-                    setFindQuery('');
-                    setSearchTerm('');
-                    setSearchField('Semua');
-                    await loadData({ field: 'Semua', term: '' });
-                    showFeedback('Data Master Supplier di-refresh dari Supabase');
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
-                <table className="w-full text-left border-collapse text-[11px]">
-                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                    <tr>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-20">Kode</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">Nama Supplier</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">Kota</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">Telepon</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-32">Contact Person</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-36">Email</th>
-                      <th className="px-2 py-1 w-36">Website</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {findModalRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="text-center py-6 text-gray-500 italic">
-                          Tidak ada data Supplier yang cocok
-                        </td>
-                      </tr>
-                    ) : (
-                      findModalRows.map((s) => (
-                        <tr
-                          key={s.id}
-                          onClick={() => {
-                            setSelectedId(s.id);
-                            setSearchTerm(findQuery);
-                            setIsFindOpen(false);
-                            showFeedback(`Supplier [${s.kodeSupplier} - ${s.namaSupplier}] dipilih`);
-                          }}
-                          className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                            s.id === selectedId ? 'bg-[#FFFF99]' : ''
-                          }`}
-                        >
-                          <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">{s.kodeSupplier}</td>
-                          <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">{s.namaSupplier}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.kota || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.telepon || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.contactPerson || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.email || '-'}</td>
-                          <td className="px-2 py-1">{s.website || '-'}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-[11px] text-[#555]">
-                  Menampilkan {findModalRows.length} dari {supplierList.length} Supplier. Klik baris untuk memilih record.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Master Supplier"
+        rows={supplierList}
+        selectedId={selectedId}
+        getRowId={(s) => s.id}
+        getSearchValues={(s) => [
+          s.kodeSupplier,
+          s.namaSupplier,
+          s.alamat,
+          s.kota,
+          s.telepon,
+          s.contactPerson,
+          s.email,
+          s.website,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        placeholder="Cari Kode, Nama Supplier, Alamat, Kota, Telepon, Contact Person, Email, Website..."
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(s, q) => {
+          setSelectedId(s.id);
+          setSearchTerm(q);
+          showFeedback(`Supplier [${s.kodeSupplier} - ${s.namaSupplier}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (s) => s.kodeSupplier, widthClass: 'w-20', mono: true, bold: true },
+          { header: 'Nama Supplier', accessor: (s) => s.namaSupplier, bold: true },
+          { header: 'Kota', accessor: (s) => s.kota || '-', widthClass: 'w-24' },
+          { header: 'Telepon', accessor: (s) => s.telepon || '-', widthClass: 'w-28' },
+          { header: 'Contact Person', accessor: (s) => s.contactPerson || '-', widthClass: 'w-32' },
+          { header: 'Email', accessor: (s) => s.email || '-', widthClass: 'w-36' },
+          { header: 'Website', accessor: (s) => s.website || '-', widthClass: 'w-36' },
+        ]}
+      />
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
@@ -862,6 +751,27 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
             value: formatMoney(filteredSupplier.reduce((a, b) => a + b.hutangGiro, 0)),
           },
         ]}
+        selectedRow={selectedSupplier}
+        selectedTitle="DETAIL MASTER SUPPLIER"
+        selectedSubtitle={selectedSupplier ? `Kode: ${selectedSupplier.kodeSupplier} - ${selectedSupplier.namaSupplier}` : undefined}
+        selectedMetaLines={
+          selectedSupplier
+            ? [
+                { label: 'Kode Supplier', value: selectedSupplier.kodeSupplier },
+                { label: 'Nama Supplier', value: selectedSupplier.namaSupplier },
+                { label: 'Contact Person', value: selectedSupplier.contactPerson || '-' },
+                { label: 'Email / Website', value: [selectedSupplier.email, selectedSupplier.website].filter(Boolean).join(' | ') || '-' },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedSupplier
+            ? [
+                { label: 'Hutang', value: formatMoney(selectedSupplier.hutang) },
+                { label: 'Hutang Giro', value: formatMoney(selectedSupplier.hutangGiro) },
+              ]
+            : undefined
+        }
       />
     </div>
   );

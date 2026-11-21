@@ -12,6 +12,9 @@ import {
   parseNum,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface CustomerItem {
   id: string;
@@ -106,8 +109,6 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   const [wilayahOptions, setWilayahOptions] = useState<string[]>([]);
 
   const [isFindOpen, setIsFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState('');
-  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -193,30 +194,101 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     }
   };
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'kode_customer',
+    'Nama Pelanggan': 'nama_customer',
+    NPWP: 'npwp',
+    Kota: 'inv_kota',
+    Phone: 'inv_telepon',
+    Email: 'email',
+    Sales: 'nama_sales',
+    Wilayah: 'wilayah',
+  };
+
+  const loadData = async (opts?: { field?: string; term?: string }): Promise<CustomerItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'kode_customer', asc: true, limit: 1000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch =
+            'kode_customer,nama_customer,npwp,inv_alamat,inv_kota,del_alamat,del_kota,inv_telepon,email,handphone,nama_sales,nama_expedisi,contact_nama,wilayah';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
       const [rows] = await Promise.all([
-        erpList<any>('master_customers', { orderBy: 'kode_customer', asc: true }),
+        erpList<any>('master_customers', queryOpts),
         loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToItem);
       setCustomerList(mapped);
       if (mapped.length > 0 && !mapped.some((c) => c.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = customerList.find((c) => c.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_customers', selected.id, {
+        kode_customer: selected.kodeCustomer.trim().toUpperCase(),
+        nama_customer: selected.namaCustomer.trim().toUpperCase(),
+        ppn: selected.ppn,
+        hitung: selected.hitung,
+        npwp: selected.npwp.trim(),
+        alamat_npwp: selected.alamatNpwp.trim(),
+        wilayah: selected.wilayah.trim().toUpperCase(),
+        limit_kredit: Number(selected.limitKredit) || 0,
+        tmp_pembayaran: Number(selected.tmpPembayaran) || 0,
+        rubah_kode: selected.rubahKode.trim().toUpperCase(),
+        kode_sales: selected.kodeSales.trim().toUpperCase(),
+        nama_sales: selected.namaSales.trim().toUpperCase(),
+        kode_expedisi: selected.kodeExpedisi.trim().toUpperCase(),
+        nama_expedisi: selected.namaExpedisi.trim().toUpperCase(),
+        contact_nama: selected.cpNama.trim(),
+        email: selected.email.trim(),
+        handphone: selected.handphone.trim(),
+        inv_alamat: selected.invAlamat.trim(),
+        inv_kota: selected.invKota.trim().toUpperCase(),
+        inv_telepon: selected.invTelepon.trim(),
+        inv_fax: selected.invFax.trim(),
+        del_alamat: selected.delAlamat.trim(),
+        del_kota: selected.delKota.trim().toUpperCase(),
+        del_telepon: selected.delTelepon.trim(),
+        del_fax: selected.delFax.trim(),
+        alamat: selected.invAlamat.trim(),
+        kota: selected.invKota.trim().toUpperCase(),
+        phone: selected.invTelepon.trim(),
+        sales: selected.namaSales.trim().toUpperCase(),
+      });
+      const mapped = mapDbToItem(saved);
+      setCustomerList((prev) => prev.map((c) => (c.id === selected.id ? mapped : c)));
+      showFeedback(`Pelanggan [${mapped.kodeCustomer} - ${mapped.namaCustomer}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -396,41 +468,40 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   };
 
   const filteredCustomer = customerList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.trim().toLowerCase();
-    if (searchField === 'Kode') return item.kodeCustomer.toLowerCase().includes(term);
-    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'Kota') return item.invKota.toLowerCase().includes(term) || item.kota.toLowerCase().includes(term);
-    if (searchField === 'Phone') return item.invTelepon.toLowerCase().includes(term) || item.phone.toLowerCase().includes(term);
-    if (searchField === 'Email') return item.email.toLowerCase().includes(term);
-    if (searchField === 'Sales') return item.namaSales.toLowerCase().includes(term) || item.sales.toLowerCase().includes(term);
-    return (
-      item.kodeCustomer.toLowerCase().includes(term) ||
-      item.namaCustomer.toLowerCase().includes(term) ||
-      item.invAlamat.toLowerCase().includes(term) ||
-      item.invKota.toLowerCase().includes(term) ||
-      item.email.toLowerCase().includes(term) ||
-      item.namaSales.toLowerCase().includes(term)
+    if (searchField === 'Kode') return matchesMultiKeyword([item.kodeCustomer], searchTerm);
+    if (searchField === 'Nama Pelanggan') return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    if (searchField === 'NPWP') return matchesMultiKeyword([item.npwp], searchTerm);
+    if (searchField === 'Wilayah') return matchesMultiKeyword([item.wilayah], searchTerm);
+    if (searchField === 'Kota') return matchesMultiKeyword([item.invKota, item.delKota], searchTerm);
+    if (searchField === 'Phone') return matchesMultiKeyword([item.invTelepon, item.handphone, item.delTelepon], searchTerm);
+    if (searchField === 'Email') return matchesMultiKeyword([item.email], searchTerm);
+    if (searchField === 'Sales') return matchesMultiKeyword([item.namaSales, item.kodeSales], searchTerm);
+    return matchesMultiKeyword(
+      [
+        item.kodeCustomer,
+        item.namaCustomer,
+        item.npwp,
+        item.invAlamat,
+        item.invKota,
+        item.delAlamat,
+        item.delKota,
+        item.wilayah,
+        item.cpNama,
+        item.email,
+        item.handphone,
+        item.invTelepon,
+        item.kodeSales,
+        item.namaSales,
+        item.namaExpedisi,
+      ],
+      searchTerm
     );
   });
 
-  const findModalCustomers = customerList.filter((item) => {
-    if (!findQuery.trim()) return true;
-    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
-    const searchable = [
-      item.kodeCustomer,
-      item.namaCustomer,
-      item.invAlamat,
-      item.invKota,
-      item.invTelepon,
-      item.email,
-      item.namaSales,
-      item.namaExpedisi,
-    ]
-      .join(' ')
-      .toLowerCase();
-    return tokens.every((t) => searchable.includes(t));
-  });
+  const selectedCustomer =
+    filteredCustomer.find((c) => c.id === selectedId) ||
+    customerList.find((c) => c.id === selectedId) ||
+    null;
 
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
@@ -454,23 +525,30 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     showFeedback('Export Excel selesai');
   };
 
-  const handleExecuteToolbarSearch = () => {
-    if (filteredCustomer.length > 0) {
-      setSelectedId(filteredCustomer[0].id);
-      showFeedback(`Ditemukan ${filteredCustomer.length} data pelanggan`);
-    } else {
-      showFeedback('Data pelanggan tidak ditemukan');
+  const handleExecuteToolbarSearch = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows && rows.length > 0) {
+      setSelectedId(rows[0].id);
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} pelanggan dari Supabase`
+          : `Menampilkan ${rows.length} pelanggan dari Supabase`
+      );
+    } else if (rows) {
+      showFeedback('Data pelanggan tidak ditemukan di Supabase');
     }
+  };
+
+  const handleResetSearch = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} pelanggan)`);
   };
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    setFindQuery(searchTerm);
-    await loadData();
-    setTimeout(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    }, 60);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   return (
@@ -508,50 +586,28 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
             Refresh
           </button>
 
-          <div className="ml-auto flex items-center space-x-1.5 text-[11px]">
-            <span className="font-semibold text-black">Cari:</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] bg-white border border-[#7F9DB9] px-1 text-[11px]"
-            >
-              <option value="Semua">Semua</option>
-              <option value="Nama Pelanggan">Nama Pelanggan</option>
-              <option value="Kode">Kode</option>
-              <option value="Kota">Kota</option>
-              <option value="Phone">Phone</option>
-              <option value="Email">Email</option>
-              <option value="Sales">Sales</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleExecuteToolbarSearch();
-              }}
-              placeholder="Ketik kata kunci..."
-              className="h-[22px] w-[160px] bg-white border border-[#7F9DB9] px-2 text-[11px]"
-            />
-            <button
-              type="button"
-              onClick={handleExecuteToolbarSearch}
-              className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] cursor-pointer text-[11px] font-semibold text-black"
-            >
-              Cari
-            </button>
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="h-[22px] px-2 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] rounded-[2px] cursor-pointer text-[11px] text-black"
-                title="Reset pencarian"
-              >
-                Reset
-              </button>
-            )}
-          </div>
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteToolbarSearch}
+            onReset={handleResetSearch}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            compact
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode' },
+              { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+              { value: 'NPWP', label: 'NPWP' },
+              { value: 'Kota', label: 'Kota' },
+              { value: 'Wilayah', label: 'Wilayah' },
+              { value: 'Phone', label: 'Phone' },
+              { value: 'Email', label: 'Email' },
+              { value: 'Sales', label: 'Sales' },
+            ]}
+          />
         </div>
 
         <div className="flex-1 overflow-auto bg-white m-2 border border-[#ACA899] shadow-inner">
@@ -946,132 +1002,53 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         </div>
       )}
 
-      {isFindOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[740px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
-            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
-              <span>Cari &amp; Daftar Master Pelanggan (Supabase)</span>
-              <button
-                type="button"
-                onClick={() => setIsFindOpen(false)}
-                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-2">
-                <span className="font-bold whitespace-nowrap">Cari :</span>
-                <input
-                  ref={findInputRef}
-                  type="text"
-                  value={findQuery}
-                  onChange={(e) => setFindQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && findModalCustomers.length > 0) {
-                      const first = findModalCustomers[0];
-                      setSelectedId(first.id);
-                      setSearchTerm(findQuery);
-                      setIsFindOpen(false);
-                      showFeedback(`Pelanggan [${first.kodeCustomer}] dipilih`);
-                    }
-                  }}
-                  placeholder="Cari Kode, Nama Pelanggan, Kota, Phone, Email, Sales..."
-                  className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchTerm(findQuery);
-                    if (findModalCustomers.length > 0) {
-                      setSelectedId(findModalCustomers[0].id);
-                      showFeedback(`Ditemukan ${findModalCustomers.length} record pelanggan`);
-                    } else {
-                      showFeedback('Data pelanggan tidak ditemukan');
-                    }
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Cari
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setFindQuery('');
-                    setSearchTerm('');
-                    await loadData();
-                    showFeedback('Data pelanggan di-refresh dari Supabase');
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
-                <table className="w-full text-left border-collapse text-[11px]">
-                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                    <tr>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">Kode</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">Nama Pelanggan</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">Kota</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">Phone</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-36">Email</th>
-                      <th className="px-2 py-1 w-24">Sales</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {findModalCustomers.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="text-center py-6 text-gray-500 italic">
-                          Tidak ada record data pelanggan yang cocok
-                        </td>
-                      </tr>
-                    ) : (
-                      findModalCustomers.map((c) => (
-                        <tr
-                          key={c.id}
-                          onClick={() => {
-                            setSelectedId(c.id);
-                            setSearchTerm(findQuery);
-                            setIsFindOpen(false);
-                            showFeedback(`Pelanggan [${c.kodeCustomer} - ${c.namaCustomer}] dipilih`);
-                          }}
-                          className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                            c.id === selectedId ? 'bg-[#FFFF99]' : ''
-                          }`}
-                        >
-                          <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">
-                            {c.kodeCustomer}
-                          </td>
-                          <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">
-                            {c.namaCustomer}
-                          </td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.invKota || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.invTelepon || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{c.email || '-'}</td>
-                          <td className="px-2 py-1">{c.namaSales || '-'}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-[11px] text-[#555]">
-                  Menampilkan {findModalCustomers.length} dari {customerList.length} pelanggan. Klik baris untuk memilih record.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Master Pelanggan"
+        rows={customerList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.kodeCustomer,
+          r.namaCustomer,
+          r.npwp,
+          r.invAlamat,
+          r.invKota,
+          r.invTelepon,
+          r.handphone,
+          r.email,
+          r.namaSales,
+          r.namaExpedisi,
+          r.wilayah,
+          r.cpNama,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(c, q) => {
+          setSelectedId(c.id);
+          setSearchTerm(q);
+          showFeedback(`Pelanggan [${c.kodeCustomer} - ${c.namaCustomer}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (r) => r.kodeCustomer, widthClass: 'w-24', mono: true, bold: true },
+          { header: 'Nama Pelanggan', accessor: (r) => r.namaCustomer, bold: true },
+          { header: 'Kota', accessor: (r) => r.invKota || '-', widthClass: 'w-24' },
+          { header: 'Phone', accessor: (r) => r.invTelepon || '-', widthClass: 'w-28', mono: true },
+          { header: 'Email', accessor: (r) => r.email || '-', widthClass: 'w-36' },
+          { header: 'Sales', accessor: (r) => r.namaSales || '-', widthClass: 'w-24' },
+        ]}
+      />
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
@@ -1096,6 +1073,26 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
             value: formatMoney(filteredCustomer.reduce((a, b) => a + b.limitKredit, 0)),
           },
         ]}
+        selectedRow={selectedCustomer}
+        selectedTitle="DETAIL MASTER PELANGGAN"
+        selectedSubtitle={selectedCustomer ? `Kode: ${selectedCustomer.kodeCustomer} - ${selectedCustomer.namaCustomer}` : undefined}
+        selectedMetaLines={
+          selectedCustomer
+            ? [
+                { label: 'Kode Customer', value: selectedCustomer.kodeCustomer },
+                { label: 'Nama Customer', value: selectedCustomer.namaCustomer },
+                { label: 'NPWP', value: selectedCustomer.npwp || '-' },
+                { label: 'Wilayah / Sales', value: [selectedCustomer.wilayah, selectedCustomer.namaSales].filter(Boolean).join(' | ') || '-' },
+                { label: 'Contact / Email', value: [selectedCustomer.cpNama, selectedCustomer.email].filter(Boolean).join(' | ') || '-' },
+                { label: 'Piutang / Giro', value: `${formatMoney(selectedCustomer.piutang)} / ${formatMoney(selectedCustomer.piutangGiro)}` },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedCustomer
+            ? [{ label: 'Limit Kredit', value: formatMoney(selectedCustomer.limitKredit) }]
+            : undefined
+        }
       />
     </div>
   );

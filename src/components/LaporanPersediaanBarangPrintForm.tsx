@@ -3,6 +3,9 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
   erpCreate,
   erpDelete,
@@ -60,6 +63,7 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Add / Koreksi Modal for master_barangs
@@ -83,6 +87,7 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
@@ -90,9 +95,32 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadLiveRows = async (): Promise<any[]> => {
+  const loadLiveRows = async (opts?: {
+    field?: string;
+    term?: string;
+    skipSearch?: boolean;
+  }): Promise<any[]> => {
+    const activeField = opts?.field ?? searchField;
+    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
+    const SEARCH_COL_MAP: Record<string, string> = {
+      Kode: 'kode',
+      'Nama Barang': 'nama_barang',
+      Merk: 'merk',
+      Category: 'category',
+    };
+    const queryOpts: Record<string, any> = { orderBy: 'kode', asc: true };
+    if (activeTerm) {
+      if (activeField !== 'Semua' && SEARCH_COL_MAP[activeField]) {
+        queryOpts.searchCol = SEARCH_COL_MAP[activeField];
+        queryOpts.searchVal = activeTerm;
+      } else {
+        queryOpts.orSearch = 'kode,nama_barang,merk,category,tipe,unit';
+        queryOpts.searchVal = activeTerm;
+      }
+    }
+
     const [barangs, stockAwals] = await Promise.all([
-      erpList<any>('master_barangs', { orderBy: 'kode', asc: true }),
+      erpList<any>('master_barangs', queryOpts),
       erpList<any>('stock_awal', { orderBy: 'item_code', asc: true }).catch(() => []),
     ]);
 
@@ -146,10 +174,14 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
       };
     });
 
-    setBarangCodes(mapped.map((m) => m.kode_barang).filter(Boolean));
+    if (!activeTerm) {
+      setBarangCodes(mapped.map((m) => m.kode_barang).filter(Boolean));
+    }
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
       setSelectedId(mapped[0].id);
+    } else if (mapped.length === 0) {
+      setSelectedId('');
     }
     return mapped;
   };
@@ -225,20 +257,22 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
       }
     }
     if (searchTerm.trim()) {
-      const q = searchTerm.trim().toLowerCase();
-      if (searchField === 'Kode') return r.kode_barang.toLowerCase().includes(q);
-      if (searchField === 'Nama Barang') return r.nama_barang.toLowerCase().includes(q);
-      if (searchField === 'Merk') return r.merk.toLowerCase().includes(q);
-      if (searchField === 'Category') return r.category.toLowerCase().includes(q);
-      return (
-        r.kode_barang.toLowerCase().includes(q) ||
-        r.nama_barang.toLowerCase().includes(q) ||
-        r.merk.toLowerCase().includes(q) ||
-        r.category.toLowerCase().includes(q)
+      if (searchField === 'Kode') return matchesMultiKeyword([r.kode_barang], searchTerm);
+      if (searchField === 'Nama Barang') return matchesMultiKeyword([r.nama_barang], searchTerm);
+      if (searchField === 'Merk') return matchesMultiKeyword([r.merk], searchTerm);
+      if (searchField === 'Category') return matchesMultiKeyword([r.category], searchTerm);
+      return matchesMultiKeyword(
+        [r.kode_barang, r.nama_barang, r.merk, r.category, r.tipe, r.satuan, r.lokasi],
+        searchTerm
       );
     }
     return true;
   });
+
+  const selectedTableRow =
+    filteredTableRows.find((r) => r.id === selectedId) ||
+    tableRows.find((r) => r.id === selectedId) ||
+    null;
 
   const handleBaru = () => {
     setEditingId(null);
@@ -350,6 +384,7 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
     try {
       setIsBusy(true);
       await erpDelete('master_barangs', confirmDeleteRow.id);
+      if (confirmDeleteRow.id === selectedId) setSelectedId('');
       setConfirmDeleteRow(null);
       await loadLiveRows();
       showFeedback('Data barang dihapus dari Supabase');
@@ -361,8 +396,29 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
   };
 
   const handleSimpan = async () => {
+    const selected = selectedTableRow;
+    if (!selected) {
+      showFeedback('Pilih baris Persediaan Barang terlebih dahulu untuk disimpan');
+      return;
+    }
     try {
       setIsBusy(true);
+      await erpUpdate('master_barangs', selected.id, {
+        kode: selected.kode_barang,
+        nama_barang: selected.nama_barang,
+        category: selected.category || '',
+        merk: selected.merk || '',
+        tipe: selected.tipe || '',
+        unit: selected.satuan || 'PCS',
+        stock: Number(selected.stock_master ?? selected.stock_bagus ?? 0),
+        cost: Number(selected.hpp || 0),
+        price: Number(selected.harga_jual || 0),
+        disc: Number(selected.disc || 0),
+        q_min: Number(selected.q_min || 0),
+        qty_po: Number(selected.qty_po || 0),
+        qty_so: Number(selected.qty_so || 0),
+        not_print: Boolean(selected.not_print),
+      });
       localStorage.setItem(
         'withcoder_preset_persediaan_barang',
         JSON.stringify({ bulan, tglStart, tglEnd, lokasiStock, bentukLaporan })
@@ -374,7 +430,7 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
         lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
       });
       await loadLiveRows();
-      showFeedback('Parameter & data Persediaan Barang tersinkron ke Supabase');
+      showFeedback(`Data Persediaan [${selected.kode_barang}] tersimpan ke Supabase`);
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -383,12 +439,10 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
   };
 
   const handleFind = async () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+    setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows();
-      showFeedback('Data Persediaan Barang dimuat ulang dari Supabase');
+      await loadLiveRows({ skipSearch: true });
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
     } finally {
@@ -396,8 +450,38 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
     }
   };
 
+  const handleToolbarCari = async () => {
+    try {
+      setIsBusy(true);
+      const res = await loadLiveRows({ field: searchField, term: searchTerm });
+      showFeedback(
+        searchTerm.trim()
+          ? `Hasil cari Supabase: ${res.length} item ditemukan`
+          : `Data dimuat ulang (${res.length} item)`
+      );
+    } catch (err: any) {
+      showFeedback(`Gagal mencari: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    try {
+      setIsBusy(true);
+      await loadLiveRows({ field: 'Semua', term: '' });
+      showFeedback('Filter pencarian direset');
+    } catch (err: any) {
+      showFeedback(`Gagal reset: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const fetchReportData = async (): Promise<any[]> => {
-    const mapped = await loadLiveRows();
+    const mapped = await loadLiveRows({ skipSearch: true });
     return mapped.filter((r) => {
       if (filterType === 'merk' && (merkName.trim() || merkCode.trim())) {
         const needle = (merkName.trim() || merkCode.trim()).toLowerCase();
@@ -413,11 +497,31 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      setPrintScopeOnOpen('all');
       const data = await fetchReportData();
       setPreviewRows(data);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat laporan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handlePrintSelected = async () => {
+    if (!selectedTableRow) {
+      showFeedback('Pilih baris Persediaan Barang yang akan dicetak terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      setPrintScopeOnOpen('selected');
+      const data = await fetchReportData().catch(() => []);
+      setPreviewRows(data);
+      setIsPrintOpen(true);
+    } catch {
+      setPreviewRows([]);
+      setIsPrintOpen(true);
     } finally {
       setIsBusy(false);
     }
@@ -477,7 +581,7 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
         title="Laporan Persediaan Barang"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePreview}
+        onPrint={handlePrintSelected}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
@@ -497,7 +601,7 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleRequestHapus}
-              onPrint={handlePreview}
+              onPrint={handlePrintSelected}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -732,37 +836,26 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
         {/* Live Supabase Search & Persediaan Grid Panel */}
         <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
-              >
-                <option value="Semua">Semua Kolom</option>
-                <option value="Kode">Kode</option>
-                <option value="Nama Barang">Nama Barang</option>
-                <option value="Merk">Merk</option>
-                <option value="Category">Category</option>
-              </select>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') loadLiveRows();
-                }}
+            <div className="flex items-center">
+              <ToolbarSearchControl
+                compact
+                searchField={searchField}
+                onSearchFieldChange={setSearchField}
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onCari={handleToolbarCari}
+                onReset={handleToolbarReset}
+                options={[
+                  { value: 'Semua', label: 'Semua Kolom' },
+                  { value: 'Kode', label: 'Kode' },
+                  { value: 'Nama Barang', label: 'Nama Barang' },
+                  { value: 'Merk', label: 'Merk' },
+                  { value: 'Category', label: 'Category' },
+                ]}
+                inputRef={searchInputRef}
+                isBusy={isBusy}
                 placeholder="Cari Kode, Nama Barang, Merk, Category..."
-                className="w-[240px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
               />
-              <button
-                type="button"
-                onClick={() => loadLiveRows()}
-                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
-              >
-                Cari / Refresh
-              </button>
             </div>
             <span className="text-[11px] text-black">
               Data Supabase (<b>master_barangs</b>): <b>{filteredTableRows.length}</b> item
@@ -1083,12 +1176,74 @@ export const LaporanPersediaanBarangPrintForm: React.FC<
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Persediaan Barang"
+        rows={tableRows}
+        columns={[
+          { header: 'Kode Brg', accessor: (r) => r.kode_barang, mono: true, bold: true },
+          { header: 'Nama Barang', accessor: (r) => r.nama_barang },
+          { header: 'Category', accessor: (r) => r.category || '-' },
+          { header: 'Merk', accessor: (r) => r.merk || '-' },
+          { header: 'Sat', accessor: (r) => r.satuan, align: 'center' },
+          { header: 'Bagus', accessor: (r) => formatMoney(r.stock_bagus), align: 'right', mono: true },
+          { header: 'Nilai (Rp)', accessor: (r) => formatRupiah(r.nilai_persediaan), align: 'right', mono: true, bold: true },
+        ]}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.kode_barang,
+          r.nama_barang,
+          r.category,
+          r.merk,
+          r.tipe,
+          r.satuan,
+          r.lokasi,
+        ]}
+        selectedId={selectedId}
+        onSelectRow={(r) => {
+          setSelectedId(r.id);
+          showFeedback(`Persediaan [${r.kode_barang}] dipilih`);
+        }}
+        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
+        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        isBusy={isBusy}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={bentukLaporan.toUpperCase()}
         subtitle={`Bulan: ${bulan} | Periode: ${tglStart || '-'} s/d ${tglEnd || '-'}`}
         orientation="landscape"
+        defaultPrintScope={printScopeOnOpen}
+        selectedRow={selectedTableRow}
+        selectedTitle="CETAK DATA PERSEDIAAN BARANG"
+        selectedSubtitle={
+          selectedTableRow
+            ? `Kode: ${selectedTableRow.kode_barang} | ${selectedTableRow.nama_barang}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedTableRow
+            ? [
+                { label: 'Kode Barang', value: selectedTableRow.kode_barang },
+                { label: 'Nama Barang', value: selectedTableRow.nama_barang },
+                { label: 'Category / Merk', value: `${selectedTableRow.category || '-'} / ${selectedTableRow.merk || '-'}` },
+                { label: 'Lokasi Stock', value: selectedTableRow.lokasi },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedTableRow
+            ? [
+                { label: 'Stock Bagus', value: `${formatMoney(selectedTableRow.stock_bagus)} ${selectedTableRow.satuan}` },
+                { label: 'Stock Rusak', value: `${formatMoney(selectedTableRow.stock_rusak)} ${selectedTableRow.satuan}` },
+                { label: 'HPP / Cost', value: formatRupiah(selectedTableRow.hpp) },
+                { label: 'Nilai Persediaan', value: formatRupiah(selectedTableRow.nilai_persediaan) },
+              ]
+            : undefined
+        }
         metaLines={[
           { label: 'Bulan / Periode', value: `${bulan} (${tglStart || '-'} s/d ${tglEnd || '-'})` },
           { label: 'Lokasi Stock', value: lokasiStock },

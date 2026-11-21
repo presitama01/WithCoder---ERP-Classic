@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface SalesQuotationItem {
   id: string;
@@ -144,8 +147,6 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   const [yellowNote, setYellowNote] = useState<string>('');
 
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
-  const [findQuery, setFindQuery] = useState<string>('');
-  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -258,12 +259,48 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     }
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_sq',
+    'No. SQ': 'no_sq',
+    'Nama Pelanggan': 'nama_customer',
+    Sales: 'sales',
+    'No. Inquiry': 'no_inquiry',
+    'Lokasi Stock': 'lokasi_stock',
+    Keterangan: 'keterangan',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<SalesQuotationItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoFilter = activeTgl.trim() ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = {
+        orderBy: 'tanggal',
+        asc: false,
+        limit: 1000,
+      };
+      if (isoFilter) queryOpts.eq = { tanggal: isoFilter };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_sq,nama_customer,sales,no_inquiry,lokasi_stock,keterangan';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows, details] = await Promise.all([
-        erpList<any>('sales_quotations', { orderBy: 'tanggal', asc: false }),
-        erpList<any>('sales_quotation_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
+        erpList<any>('sales_quotations', queryOpts),
+        erpList<any>('sales_quotation_details', { orderBy: 'no_urut', asc: true, limit: 5000 }).catch(() => []),
         loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToQuotation);
@@ -281,19 +318,76 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
         setYellowNote(`${mapped[0].noSq} - ${mapped[0].namaCustomer}`);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
+        setYellowNote('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = quotationList.find((q) => q.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Sales Quotation yang akan disimpan');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const existingDetails = sqDetailsMap[selected.id] || [];
+      const totalFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
+      const finalAmount = existingDetails.length > 0 ? totalFromDetails : selected.amountNum;
+
+      const headerPayload: Record<string, any> = {
+        id: selected.id,
+        no_sq: selected.noSq.trim().toUpperCase(),
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_customer: selected.namaCustomer.trim().toUpperCase(),
+        sales: selected.sales.trim().toUpperCase(),
+        no_inquiry: selected.noInquiry.trim().toUpperCase(),
+        lokasi_stock: selected.lokasiStock.trim().toUpperCase() || '01 - OFFICE',
+        keterangan: selected.keterangan.trim(),
+        amount: finalAmount,
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(selected.tglCreated) || todayIso(),
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      };
+
+      const detailPayloads = existingDetails.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 0),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+
+      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+        'sales-quotation',
+        headerPayload,
+        detailPayloads
+      );
+      const savedHeader = mapDbToQuotation(res.header);
+      const savedDetails = (res.details || []).map((d, idx) => mapDbToSqDetail(d, idx));
+      setQuotationList((prev) => prev.map((item) => (item.id === selected.id ? savedHeader : item)));
+      setSqDetailsMap((prev) => ({ ...prev, [savedHeader.id]: savedDetails }));
+      setYellowNote(`${savedHeader.noSq} - ${savedHeader.namaCustomer}`);
+      showFeedback(`Sales Quotation [${savedHeader.noSq}] berhasil disimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -602,66 +696,58 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
   const filteredList = quotationList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
-    if (!searchTerm.trim()) return true;
-
-    const term = searchTerm.trim().toLowerCase();
-    if (searchField === 'No. SQ') return item.noSq.toLowerCase().includes(term);
-    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'Sales') return item.sales.toLowerCase().includes(term);
-    if (searchField === 'No. Inquiry') return item.noInquiry.toLowerCase().includes(term);
-    if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    return (
-      item.noSq.toLowerCase().includes(term) ||
-      item.namaCustomer.toLowerCase().includes(term) ||
-      item.sales.toLowerCase().includes(term) ||
-      item.noInquiry.toLowerCase().includes(term) ||
-      item.lokasiStock.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term)
+    if (searchField === 'Kode' || searchField === 'No. SQ') {
+      return matchesMultiKeyword([item.noSq], searchTerm);
+    }
+    if (searchField === 'Nama Pelanggan') {
+      return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    }
+    if (searchField === 'Sales') {
+      return matchesMultiKeyword([item.sales], searchTerm);
+    }
+    if (searchField === 'No. Inquiry') {
+      return matchesMultiKeyword([item.noInquiry], searchTerm);
+    }
+    if (searchField === 'Lokasi Stock') {
+      return matchesMultiKeyword([item.lokasiStock], searchTerm);
+    }
+    if (searchField === 'Keterangan') {
+      return matchesMultiKeyword([item.keterangan], searchTerm);
+    }
+    return matchesMultiKeyword(
+      [item.noSq, item.tanggal, item.namaCustomer, item.sales, item.noInquiry, item.lokasiStock, item.keterangan],
+      searchTerm
     );
-  });
-
-  const findModalRows = quotationList.filter((item) => {
-    if (!findQuery.trim()) return true;
-    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
-    const searchable = [
-      item.noSq,
-      item.tanggal,
-      item.namaCustomer,
-      item.sales,
-      item.noInquiry,
-      item.lokasiStock,
-      item.keterangan,
-    ]
-      .join(' ')
-      .toLowerCase();
-    return tokens.every((t) => searchable.includes(t));
   });
 
   const totalAmount = filteredList.reduce((sum, q) => sum + q.amountNum, 0);
 
-  const handleExecuteToolbarSearch = () => {
-    if (filteredList.length > 0) {
-      setSelectedId(filteredList[0].id);
-      setYellowNote(`${filteredList[0].noSq} - ${filteredList[0].namaCustomer}`);
-      showFeedback(`Ditemukan ${filteredList.length} dokumen`);
-    } else {
-      showFeedback('Data Sales Quotation tidak ditemukan');
+  const handleExecuteToolbarSearch = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter });
+    if (rows && rows.length > 0) {
+      setSelectedId(rows[0].id);
+      setYellowNote(`${rows[0].noSq} - ${rows[0].namaCustomer}`);
+      showFeedback(`Ditemukan ${rows.length} Sales Quotation dari Supabase`);
+    } else if (rows) {
+      showFeedback('Data Sales Quotation tidak ditemukan di Supabase');
     }
+  };
+
+  const handleResetToolbarSearch = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Sales Quotation)`);
   };
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    setFindQuery(searchTerm);
-    await loadData();
-    setTimeout(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    }, 60);
+    await loadData({ field: 'Semua', term: '', tglFilter: '' });
   };
 
-  const handleOpenPrint = (mode: 'list' | 'detail' = 'list') => {
-    setPrintMode(mode);
+  const handleOpenPrint = (mode?: 'list' | 'detail') => {
+    setPrintMode(mode ?? (selectedSq ? 'detail' : 'list'));
     setIsPrintOpen(true);
   };
 
@@ -762,8 +848,8 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
           title="List Sales Quotation"
           onClose={onClose}
           onFind={handleFind}
-          onPrint={() => handleOpenPrint('list')}
-          onTableView={loadData}
+          onPrint={() => handleOpenPrint()}
+          onTableView={() => loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })}
           onExportExcel={handleExportExcel}
         />
 
@@ -774,7 +860,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
               onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
-              onPrint={() => handleOpenPrint('list')}
+              onPrint={() => handleOpenPrint()}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -950,49 +1036,28 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
         {/* Bottom Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-4 py-1.5 border-t border-[#C0C0C0] gap-3 overflow-x-auto">
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="font-bold text-black text-[11px]">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] shadow-xs text-[11px] text-black outline-none cursor-pointer"
-            >
-              <option value="Semua">Semua</option>
-              <option value="Nama Pelanggan">Nama Pelanggan</option>
-              <option value="No. SQ">No. SQ</option>
-              <option value="Sales">Sales</option>
-              <option value="No. Inquiry">No. Inquiry</option>
-              <option value="Lokasi Stock">Lokasi Stock</option>
-              <option value="Keterangan">Keterangan</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleExecuteToolbarSearch();
-              }}
-              placeholder="Ketik kata kunci..."
-              className="w-[220px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] outline-none"
-            />
-            <button
-              type="button"
-              onClick={handleExecuteToolbarSearch}
-              className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] rounded-[2px] text-[11px] font-semibold cursor-pointer"
-            >
-              Cari
-            </button>
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="h-[22px] px-2 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] rounded-[2px] text-[11px] cursor-pointer"
-              >
-                Reset
-              </button>
-            )}
-          </div>
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteToolbarSearch}
+            onReset={handleResetToolbarSearch}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-56"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No. SQ)' },
+              { value: 'No. SQ', label: 'No. SQ' },
+              { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+              { value: 'Sales', label: 'Sales' },
+              { value: 'No. Inquiry', label: 'No. Inquiry' },
+              { value: 'Lokasi Stock', label: 'Lokasi Stock' },
+              { value: 'Keterangan', label: 'Keterangan' },
+            ]}
+          />
 
           <div className="flex items-center space-x-4 shrink-0">
             <input
@@ -1348,133 +1413,51 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
         )}
 
         {/* Find Modal: Cari & Daftar Sales Quotation */}
-        {isFindOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[800px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
-              <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
-                <span>Cari &amp; Daftar Sales Quotation (Supabase)</span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold whitespace-nowrap">Cari :</span>
-                  <input
-                    ref={findInputRef}
-                    type="text"
-                    value={findQuery}
-                    onChange={(e) => setFindQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && findModalRows.length > 0) {
-                        const first = findModalRows[0];
-                        setSelectedId(first.id);
-                        setYellowNote(`${first.noSq} - ${first.namaCustomer}`);
-                        setSearchTerm(findQuery);
-                        setIsFindOpen(false);
-                        showFeedback(`Dokumen [${first.noSq}] dipilih`);
-                      }
-                    }}
-                    placeholder="Cari No. SQ, Nama Customer, Sales, No. Inquiry, Lokasi Stock..."
-                    className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchTerm(findQuery);
-                      if (findModalRows.length > 0) {
-                        setSelectedId(findModalRows[0].id);
-                        setYellowNote(`${findModalRows[0].noSq} - ${findModalRows[0].namaCustomer}`);
-                        showFeedback(`Ditemukan ${findModalRows.length} dokumen`);
-                      } else {
-                        showFeedback('Data Sales Quotation tidak ditemukan');
-                      }
-                    }}
-                    className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                  >
-                    Cari
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setFindQuery('');
-                      setSearchTerm('');
-                      await loadData();
-                      showFeedback('Data di-refresh dari Supabase');
-                    }}
-                    className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                  >
-                    Refresh
-                  </button>
-                </div>
-                <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
-                  <table className="w-full text-left border-collapse text-[11px]">
-                    <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                      <tr>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">No. SQ</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-24">Tanggal</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899]">Nama Customer</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-24">Sales</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">No. Inquiry</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">Lokasi Stock</th>
-                        <th className="px-2 py-1 text-right w-24">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {findModalRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="text-center py-6 text-gray-500 italic">
-                            Tidak ada data Sales Quotation yang cocok
-                          </td>
-                        </tr>
-                      ) : (
-                        findModalRows.map((q) => (
-                          <tr
-                            key={q.id}
-                            onClick={() => {
-                              setSelectedId(q.id);
-                              setYellowNote(`${q.noSq} - ${q.namaCustomer}`);
-                              setSearchTerm(findQuery);
-                              setIsFindOpen(false);
-                              showFeedback(`Dokumen [${q.noSq} - ${q.namaCustomer}] dipilih`);
-                            }}
-                            className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                              q.id === selectedId ? 'bg-[#FFFF99]' : ''
-                            }`}
-                          >
-                            <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">{q.noSq}</td>
-                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{q.tanggal}</td>
-                            <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">{q.namaCustomer}</td>
-                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{q.sales || '-'}</td>
-                            <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{q.noInquiry || '-'}</td>
-                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{q.lokasiStock || '-'}</td>
-                            <td className="px-2 py-1 text-right font-mono">{q.amount}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="flex justify-between items-center pt-1">
-                  <span className="text-[11px] text-[#555]">
-                    Menampilkan {findModalRows.length} dari {quotationList.length} dokumen. Klik baris untuk memilih record.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsFindOpen(false)}
-                    className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                  >
-                    Tutup
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Sales Quotation"
+          rows={quotationList}
+          selectedId={selectedId}
+          getRowId={(r) => r.id}
+          getSearchValues={(r) => [
+            r.noSq,
+            r.tanggal,
+            r.namaCustomer,
+            r.sales,
+            r.noInquiry,
+            r.lokasiStock,
+            r.keterangan,
+          ]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q, tglFilter: '' });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            setTanggalFilter('');
+            return loadData({ field: 'Semua', term: '', tglFilter: '' });
+          }}
+          onSelectRow={(row, q) => {
+            setSelectedId(row.id);
+            setYellowNote(`${row.noSq} - ${row.namaCustomer}`);
+            setSearchTerm(q);
+            showFeedback(`Dokumen [${row.noSq} - ${row.namaCustomer}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No. SQ', accessor: (r) => r.noSq, widthClass: 'w-28', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-24', align: 'center' },
+            { header: 'Nama Customer', accessor: (r) => r.namaCustomer, bold: true },
+            { header: 'Sales', accessor: (r) => r.sales || '-', widthClass: 'w-24' },
+            { header: 'No. Inquiry', accessor: (r) => r.noInquiry || '-', widthClass: 'w-28', mono: true },
+            { header: 'Lokasi Stock', accessor: (r) => r.lokasiStock || '-', widthClass: 'w-28' },
+            { header: 'Amount', accessor: (r) => r.amount, widthClass: 'w-24', align: 'right', mono: true },
+          ]}
+        />
 
         {/* Dual-mode Print Preview: List Sales Quotation & S.O. Detail */}
         <A4PrintPreviewModal
@@ -1511,10 +1494,20 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
           orientation="landscape"
           columns={
             printMode === 'detail'
-              ? (detailPrintColumns as PrintColumn<any>[])
+              ? selectedSqDetails.length > 0
+                ? (detailPrintColumns as PrintColumn<any>[])
+                : (listPrintColumns as PrintColumn<any>[])
               : (listPrintColumns as PrintColumn<any>[])
           }
-          rows={printMode === 'detail' ? selectedSqDetails : filteredList}
+          rows={
+            printMode === 'detail'
+              ? selectedSqDetails.length > 0
+                ? selectedSqDetails
+                : selectedSq
+                ? [selectedSq]
+                : []
+              : filteredList
+          }
           summaryItems={
             printMode === 'detail'
               ? [
@@ -1525,7 +1518,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                   },
                   {
                     label: 'Total S.O. Detail',
-                    value: formatRupiah(selectedDetailTotal),
+                    value: formatRupiah(selectedDetailTotal > 0 ? selectedDetailTotal : selectedSq?.amountNum || 0),
                   },
                 ]
               : [
@@ -1533,8 +1526,35 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                   { label: 'Total Amount', value: formatRupiah(totalAmount) },
                 ]
           }
+          selectedRow={printMode === 'list' ? selectedSq : undefined}
+          selectedTitle={printMode === 'list' ? 'SALES QUOTATION (RECORD TERPILIH)' : undefined}
+          selectedSubtitle={
+            printMode === 'list' && selectedSq
+              ? `No. SQ: ${selectedSq.noSq} | Customer: ${selectedSq.namaCustomer}`
+              : undefined
+          }
+          selectedMetaLines={
+            printMode === 'list' && selectedSq
+              ? [
+                  { label: 'No. SQ', value: selectedSq.noSq },
+                  { label: 'Tanggal', value: selectedSq.tanggal },
+                  { label: 'Customer', value: selectedSq.namaCustomer },
+                  { label: 'Sales', value: selectedSq.sales || '-' },
+                  { label: 'Amount', value: formatRupiah(selectedSq.amountNum) },
+                ]
+              : undefined
+          }
           toolbarExtra={
             <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
+              <button
+                type="button"
+                onClick={() => setPrintMode('detail')}
+                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                  printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                S.Q. Terpilih (Detail)
+              </button>
               <button
                 type="button"
                 onClick={() => setPrintMode('list')}
@@ -1543,15 +1563,6 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                 }`}
               >
                 List Sales Quotation
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintMode('detail')}
-                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
-                  printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                S.O. Detail
               </button>
             </div>
           }

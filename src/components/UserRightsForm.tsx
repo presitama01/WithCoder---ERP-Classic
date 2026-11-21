@@ -12,6 +12,9 @@ import {
   getCurrentUser,
 } from '../lib/authService';
 import { fetchActiveCompanyProfile, CompanyProfileData } from '../lib/erpApi';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 interface UserRightsFormProps {
   isOpen: boolean;
@@ -26,7 +29,9 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
 }) => {
   const [users, setUsers] = useState<AppUserAccount[]>([]);
   const [selectedUsername, setSelectedUsername] = useState<string>('');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -63,16 +68,21 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
     setTimeout(() => setFeedback(null), 3000);
   };
 
-  const loadUsersList = async () => {
+  const loadUsersList = async (preferredUsername?: string): Promise<AppUserAccount[] | null> => {
     try {
       setIsBusy(true);
       const list = await getAllUsers();
       setUsers(list);
-      if (list.length > 0 && !selectedUsername) {
+      const targetUsername = preferredUsername ?? selectedUsername;
+      if (list.length > 0 && (!targetUsername || !list.some((u) => u.username === targetUsername))) {
         setSelectedUsername(list[0].username);
+      } else if (list.length === 0) {
+        setSelectedUsername('');
       }
+      return list;
     } catch (err: any) {
       showFeedback(`Gagal memuat pengguna: ${err.message}`);
+      return null;
     } finally {
       setIsBusy(false);
     }
@@ -85,15 +95,16 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
     }
   }, [isOpen]);
 
-  const filteredUsers = users.filter((u) => {
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase();
-    return (
-      u.username.toLowerCase().includes(q) ||
-      u.full_name.toLowerCase().includes(q) ||
-      u.role.toLowerCase().includes(q)
-    );
-  });
+  const filterUserRow = (u: AppUserAccount, field: string, term: string) => {
+    const statusLabel = u.is_active ? 'Aktif' : 'Non-Aktif';
+    if (field === 'Kode') return matchesMultiKeyword([u.username], term);
+    if (field === 'Nama Lengkap') return matchesMultiKeyword([u.full_name], term);
+    if (field === 'Role') return matchesMultiKeyword([u.role], term);
+    if (field === 'Status') return matchesMultiKeyword([statusLabel], term);
+    return matchesMultiKeyword([u.username, u.full_name, u.role, statusLabel], term);
+  };
+
+  const filteredUsers = users.filter((u) => filterUserRow(u, searchField, searchTerm));
 
   const selectedUser = users.find((u) => u.username === selectedUsername);
 
@@ -232,10 +243,11 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
     if (!deleteConfirmUser) return;
     try {
       setIsBusy(true);
-      await deleteUserAccount(deleteConfirmUser.id || '', deleteConfirmUser.username);
+      const deletedName = deleteConfirmUser.username;
+      await deleteUserAccount(deleteConfirmUser.id || '', deletedName);
       setDeleteConfirmUser(null);
-      showFeedback(`User ${deleteConfirmUser.username} telah dihapus.`);
-      await loadUsersList();
+      showFeedback(`User ${deletedName} telah dihapus.`);
+      await loadUsersList('');
       onUserUpdated?.();
     } catch (err: any) {
       showFeedback(`Gagal menghapus user: ${err.message}`);
@@ -267,14 +279,55 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
     showFeedback('Laporan otorisasi pengguna diekspor ke Excel.');
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleToolbarCari = async () => {
+    const list = await loadUsersList();
+    if (list) {
+      const matched = list.filter((u) => filterUserRow(u, searchField, searchTerm));
+      if (matched.length > 0) setSelectedUsername(matched[0].username);
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${matched.length} user dari Supabase`
+          : `Menampilkan ${matched.length} user dari Supabase`
+      );
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const list = await loadUsersList();
+    if (list) showFeedback(`Filter direset (${list.length} user)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadUsersList();
   };
 
   const handleToolbarSimpan = async () => {
-    await loadUsersList();
-    showFeedback('Data user tersinkronisasi dengan Supabase.');
+    if (!selectedUser) {
+      showFeedback('Pilih user yang akan disimpan terlebih dahulu.');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      await saveUserAccount({
+        id: selectedUser.id,
+        username: selectedUser.username.trim().toUpperCase(),
+        full_name: (selectedUser.full_name || selectedUser.username).trim(),
+        role: selectedUser.role,
+        is_active: selectedUser.is_active,
+        password: selectedUser.password || '123456',
+        modules: selectedUser.modules,
+      });
+      await loadUsersList(selectedUser.username);
+      onUserUpdated?.();
+      showFeedback(`User [${selectedUser.username}] tersimpan ke Supabase.`);
+    } catch (err: any) {
+      showFeedback(`Gagal menyimpan user: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -295,23 +348,44 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
       />
 
       {/* 2. Form Toolbar Action Buttons */}
-      <div className="bg-[#ECE9D8] border-b border-[#ACA899] px-3 py-1.5 flex items-center justify-between text-[11px] overflow-x-auto">
-        <FormActionButtons
-          onSimpan={handleToolbarSimpan}
-          onBaru={handleOpenAdd}
-          onKoreksi={handleOpenEdit}
-          onHapus={handleDeleteClick}
-          onPrint={() => setIsPrintOpen(true)}
-          onFind={handleFind}
-          isBusy={isBusy}
-          feedback={feedback}
-        />
-        <div className="flex items-center space-x-2 text-[11px] text-gray-700 ml-2 shrink-0">
-          <span className="font-bold">Role Aktif:</span>
-          <span className="px-1.5 py-0.5 bg-white border border-[#7F9DB9] text-blue-900 font-semibold">
-            {getCurrentUser().role}
-          </span>
+      <div className="bg-[#ECE9D8] border-b border-[#ACA899] px-3 py-1.5 flex items-center justify-between gap-2 text-[11px] overflow-x-auto">
+        <div className="flex items-center space-x-2 shrink-0">
+          <FormActionButtons
+            onSimpan={handleToolbarSimpan}
+            onBaru={handleOpenAdd}
+            onKoreksi={handleOpenEdit}
+            onHapus={handleDeleteClick}
+            onPrint={() => setIsPrintOpen(true)}
+            onFind={handleFind}
+            isBusy={isBusy}
+            feedback={feedback}
+          />
+          <div className="flex items-center space-x-1.5 text-[11px] text-gray-700 ml-1 shrink-0">
+            <span className="font-bold">Role:</span>
+            <span className="px-1.5 py-0.5 bg-white border border-[#7F9DB9] text-blue-900 font-semibold">
+              {getCurrentUser().role}
+            </span>
+          </div>
         </div>
+
+        <ToolbarSearchControl
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleToolbarCari}
+          onReset={handleToolbarReset}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          compact
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode (User ID)' },
+            { value: 'Nama Lengkap', label: 'Nama Lengkap' },
+            { value: 'Role', label: 'Role' },
+            { value: 'Status', label: 'Status' },
+          ]}
+        />
       </div>
 
       {/* 3. Main Data Grid */}
@@ -407,27 +481,13 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
           </table>
         </div>
 
-        {/* 4. Bottom Search / FIND Bar */}
+        {/* 4. Bottom Status Bar */}
         <div className="mt-2 bg-[#ECE9D8] border border-[#808080] p-1.5 flex items-center justify-between text-[11px]">
           <div className="flex items-center space-x-2">
-            <span className="font-bold text-[#000080]">Search:</span>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Cari User ID / Nama..."
-              className="w-[240px] h-[21px] px-1.5 bg-white border border-[#7F9DB9] outline-none font-sans"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="px-2 py-0.5 bg-[#E0DFD8] border border-gray-400 hover:bg-gray-200"
-              >
-                Reset
-              </button>
-            )}
+            <span className="font-bold text-[#000080]">User Terpilih:</span>
+            <span className="px-2 py-0.5 bg-white border border-[#7F9DB9] font-semibold">
+              {selectedUser ? `${selectedUser.username} - ${selectedUser.full_name} (${selectedUser.role})` : '-'}
+            </span>
           </div>
 
           <div className="flex items-center space-x-4">
@@ -636,6 +696,40 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="User Rights (Pengguna)"
+        rows={users}
+        selectedId={selectedUsername}
+        getRowId={(r) => r.username}
+        getSearchValues={(r) => [r.username, r.full_name, r.role, r.is_active ? 'Aktif' : 'Non-Aktif']}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={async (q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          const list = await loadUsersList();
+          return list ? list.filter((u) => filterUserRow(u, 'Semua', q)) : null;
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadUsersList();
+        }}
+        onSelectRow={(u, q) => {
+          setSelectedUsername(u.username);
+          setSearchTerm(q);
+          showFeedback(`User [${u.username} - ${u.full_name}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode (User ID)', accessor: (r) => r.username, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'Nama Lengkap', accessor: (r) => r.full_name, bold: true },
+          { header: 'Role / Otoritas', accessor: (r) => r.role, widthClass: 'w-32' },
+          { header: 'Status', accessor: (r) => (r.is_active ? 'Aktif' : 'Non-Aktif'), widthClass: 'w-24', align: 'center' },
+        ]}
+      />
+
       {/* A4 Print Preview Modal */}
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
@@ -656,6 +750,19 @@ export const UserRightsForm: React.FC<UserRightsFormProps> = ({
           { header: 'Admin', accessor: (r) => (r.modules?.admin ? 'YA' : '-'), width: '50px', align: 'center' },
         ]}
         rows={filteredUsers}
+        selectedRow={selectedUser || null}
+        selectedTitle="DETAIL OTORISASI PENGGUNA & HAK AKSES"
+        selectedSubtitle={selectedUser ? `User ID: ${selectedUser.username} - ${selectedUser.full_name}` : undefined}
+        selectedMetaLines={
+          selectedUser
+            ? [
+                { label: 'User ID', value: selectedUser.username },
+                { label: 'Nama Lengkap', value: selectedUser.full_name },
+                { label: 'Role / Otoritas', value: selectedUser.role },
+                { label: 'Status', value: selectedUser.is_active ? 'Aktif' : 'Non-Aktif' },
+              ]
+            : undefined
+        }
       />
     </div>
   );

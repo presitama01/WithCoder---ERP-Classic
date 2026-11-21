@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface SalesInquiryItem {
   id: string;
@@ -71,8 +74,9 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
   const [inquiryList, setInquiryList] = useState<SalesInquiryItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -134,30 +138,93 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
     }
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_bukti',
+    NoBukti: 'no_bukti',
+    'Nama Pelanggan': 'nama_customer',
+    'Nama Sales': 'nama_sales',
+    'No.SQ': 'no_sq',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+  }): Promise<SalesInquiryItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = {
+        orderBy: 'tanggal_si',
+        asc: false,
+        limit: 1000,
+      };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_bukti,nama_customer,nama_sales,no_sq,keterangan,follow';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows] = await Promise.all([
-        erpList<any>('sales_inquiries', { orderBy: 'tanggal_si', asc: false }),
+        erpList<any>('sales_inquiries', queryOpts),
         loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToInquiry);
       setInquiryList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = inquiryList.find((i) => i.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Sales Inquiry yang akan disimpan');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const tglSiIso = selected.tanggalSiIso || toIsoDate(selected.tanggalSi) || todayIso();
+      const saved = await erpUpdate<any>('sales_inquiries', selected.id, {
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        tanggal_si: tglSiIso,
+        tanggal_do: tglSiIso,
+        nama_customer: selected.namaCustomer.trim().toUpperCase(),
+        nama_sales: selected.namaSales.trim().toUpperCase(),
+        qty: Number(selected.qty || 0),
+        keterangan: selected.keterangan.trim(),
+        follow: selected.follow.trim(),
+        tgl_follow: selected.tglFollow && selected.tglFollow !== '-' ? toIsoDate(selected.tglFollow) : null,
+        no_sq: selected.noSq && selected.noSq !== '-' ? selected.noSq.trim().toUpperCase() : '',
+        tgl_sq: selected.tglSq && selected.tglSq !== '-' ? toIsoDate(selected.tglSq) : null,
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(selected.tglCreated) || todayIso(),
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      });
+      const mapped = mapDbToInquiry(saved);
+      setInquiryList((prev) => prev.map((item) => (item.id === selected.id ? mapped : item)));
+      showFeedback(`Sales Inquiry [${mapped.noBukti}] berhasil disimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -298,22 +365,51 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
 
   const filteredList = inquiryList.filter((item) => {
     if (filterIso && item.tanggalSiIso !== filterIso) return false;
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'NoBukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'Nama Sales') return item.namaSales.toLowerCase().includes(term);
-    if (searchField === 'No.SQ') return item.noSq.toLowerCase().includes(term);
-    return (
-      item.noBukti.toLowerCase().includes(term) ||
-      item.namaCustomer.toLowerCase().includes(term) ||
-      item.namaSales.toLowerCase().includes(term)
+    if (searchField === 'Kode' || searchField === 'NoBukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
+    }
+    if (searchField === 'Nama Pelanggan') {
+      return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    }
+    if (searchField === 'Nama Sales') {
+      return matchesMultiKeyword([item.namaSales], searchTerm);
+    }
+    if (searchField === 'No.SQ') {
+      return matchesMultiKeyword([item.noSq], searchTerm);
+    }
+    return matchesMultiKeyword(
+      [item.noBukti, item.tanggalSi, item.namaCustomer, item.namaSales, item.noSq, item.keterangan, item.follow],
+      searchTerm
     );
   });
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const selectedInquiry =
+    filteredList.find((r) => r.id === selectedId) ||
+    inquiryList.find((r) => r.id === selectedId) ||
+    null;
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Sales Inquiry dari Supabase`
+          : 'Data Sales Inquiry tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('Semua');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Sales Inquiry)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   const modalCustomerChoices = Array.from(
@@ -365,7 +461,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         onClose={onClose}
         onFind={handleFind}
         onPrint={() => setIsPrintOpen(true)}
-        onTableView={loadData}
+        onTableView={() => loadData({ field: searchField, term: searchTerm })}
         onExportExcel={handleExportExcel}
       />
 
@@ -474,29 +570,28 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         </table>
       </div>
 
-      <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2">
-          <span className="font-semibold">Search :</span>
-          <select
-            value={searchField}
-            onChange={(e) => setSearchField(e.target.value)}
-            className="px-2 py-0.5 bg-white border border-[#7A7A7A] text-xs rounded"
-          >
-            <option value="Nama Pelanggan">Nama Pelanggan</option>
-            <option value="NoBukti">NoBukti</option>
-            <option value="Nama Sales">Nama Sales</option>
-            <option value="No.SQ">No.SQ</option>
-          </select>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Cari data..."
-            className="px-2 py-0.5 w-64 bg-white border border-[#7A7A7A] text-xs shadow-inner"
-          />
-        </div>
-        <div className="flex items-center space-x-4">
+      <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs gap-2 overflow-x-auto">
+        <ToolbarSearchControl
+          compact
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleExecuteCari}
+          onReset={handleResetCari}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          inputWidthClass="w-56"
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode (NoBukti)' },
+            { value: 'NoBukti', label: 'NoBukti' },
+            { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+            { value: 'Nama Sales', label: 'Nama Sales' },
+            { value: 'No.SQ', label: 'No.SQ' },
+          ]}
+        />
+        <div className="flex items-center space-x-4 shrink-0">
           <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
             {inquiryList.find((r) => r.id === selectedId)?.keterangan || ''}
           </div>
@@ -715,6 +810,80 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
         ]}
         rows={filteredList}
         summaryItems={[{ label: 'Total Inquiry', value: `${filteredList.length} Dokumen` }]}
+        selectedRow={selectedInquiry}
+        selectedTitle="DETAIL INQUIRY PENJUALAN"
+        selectedSubtitle={
+          selectedInquiry
+            ? `No. Bukti: ${selectedInquiry.noBukti} | Customer: ${selectedInquiry.namaCustomer}`
+            : ''
+        }
+        selectedMetaLines={
+          selectedInquiry
+            ? [
+                { label: 'No. Bukti', value: selectedInquiry.noBukti },
+                { label: 'Tanggal SI', value: selectedInquiry.tanggalSi },
+                { label: 'Customer', value: selectedInquiry.namaCustomer },
+                { label: 'Sales', value: selectedInquiry.namaSales || '-' },
+                { label: 'Qty', value: formatMoney(selectedInquiry.qty) },
+                { label: 'Follow', value: selectedInquiry.follow },
+                { label: 'No. SQ', value: selectedInquiry.noSq || '-' },
+                { label: 'Keterangan', value: selectedInquiry.keterangan || '-' },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedInquiry
+            ? [
+                { label: 'No. Bukti Terpilih', value: selectedInquiry.noBukti },
+                { label: 'Qty Inquiry', value: formatMoney(selectedInquiry.qty) },
+              ]
+            : undefined
+        }
+      />
+
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Sales Inquiry"
+        rows={inquiryList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.noBukti,
+          r.tanggalSi,
+          r.namaCustomer,
+          r.namaSales,
+          r.noSq,
+          r.keterangan,
+          r.follow,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          setTanggalFilter('Semua');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Sales Inquiry [${row.noBukti}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode / NoBukti', accessor: (r) => r.noBukti, widthClass: 'w-32', mono: true, bold: true },
+          { header: 'Tanggal SI', accessor: (r) => r.tanggalSi, widthClass: 'w-24', align: 'center' },
+          { header: 'Nama Customer', accessor: (r) => r.namaCustomer, bold: true },
+          { header: 'Nama Sales', accessor: (r) => r.namaSales || '-', widthClass: 'w-28' },
+          { header: 'No. SQ', accessor: (r) => r.noSq || '-', widthClass: 'w-28', mono: true },
+          { header: 'Qty', accessor: (r) => formatMoney(r.qty), widthClass: 'w-16', align: 'right', mono: true },
+          { header: 'Follow', accessor: (r) => r.follow, widthClass: 'w-20' },
+        ]}
       />
     </div>
   );

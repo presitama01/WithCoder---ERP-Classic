@@ -20,6 +20,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface HppPembelianItem {
   id: string;
@@ -55,12 +58,13 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
   const [supplierCatalog, setSupplierCatalog] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [tanggalFilter, setTanggalFilter] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Supplier');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [yellowNote, setYellowNote] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
 
   // Add/Edit Modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -108,11 +112,42 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
     tglUpdate: toDisplayDMyShort(r.tgl_update),
   });
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_bukti',
+    'No.Bukti': 'no_bukti',
+    'Nama Supplier': 'nama_supplier',
+    'No. PO': 'no_po',
+    'No.Faktur Pembelian': 'no_faktur_pembelian',
+    Keterangan: 'keterangan',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<HppPembelianItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoFilter = activeTgl && activeTgl !== 'Semua' ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false, limit: 1000 };
+      if (isoFilter) queryOpts.eq = { tanggal: isoFilter };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_bukti,nama_supplier,no_po,no_faktur_pembelian,keterangan';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows, suppliers] = await Promise.all([
-        erpList<any>('hpp_pembelians', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('hpp_pembelians', queryOpts),
         erpList<any>('master_suppliers', { orderBy: 'nama_supplier', asc: true }).catch(() => []),
       ]);
       const mapped = rows.map(mapRow);
@@ -120,9 +155,13 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       setSupplierCatalog(suppliers.map((s) => s.nama_supplier || '').filter(Boolean));
       if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal memuat HPP Pembelian: ${err.message}`);
+      return null;
     } finally {
       setIsBusy(false);
     }
@@ -237,6 +276,42 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
     }
   };
 
+  const handleToolbarSimpan = async () => {
+    const selected = hppList.find((item) => item.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record HPP Pembelian terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const updated = await erpUpdate<any>('hpp_pembelians', selected.id, {
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_supplier: selected.namaSupplier.trim().toUpperCase(),
+        no_po: selected.noPo.trim().toUpperCase(),
+        no_faktur_pembelian: selected.noFakturPembelian.trim().toUpperCase(),
+        keterangan: selected.keterangan.trim(),
+        nilai_pembelian: selected.nilaiPembelian,
+        jth_tmp: toIsoDate(selected.jthTmp) || selected.tanggalIso || todayIso(),
+        sts_lunas: selected.stsLunas || 'Not Yet',
+        tgl_lunas: toIsoDate(selected.tglLunas) || null,
+        sts_post: selected.stsPost || 'Not Yet',
+        tgl_post: toIsoDate(selected.tglPost) || null,
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      });
+      const mapped = mapRow(updated);
+      setHppList((prev) => prev.map((it) => (it.id === mapped.id ? mapped : it)));
+      setSelectedId(mapped.id);
+      showFeedback(`HPP Pembelian [${mapped.noBukti}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const requestDelete = () => {
     if (!selectedId) {
       showFeedback('Pilih baris yang akan dihapus');
@@ -262,10 +337,28 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
     }
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
-    showFeedback('Ketik kata kunci pencarian di bawah');
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} HPP Pembelian dari Supabase`
+          : 'Data HPP Pembelian tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} HPP Pembelian)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '', tglFilter: '' });
   };
 
   const uniqueTanggalOptions = Array.from(
@@ -278,22 +371,27 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
       item.tanggal.toLowerCase() === tanggalFilter.trim().toLowerCase();
 
     if (!matchesTanggal) return false;
-    if (!searchTerm.trim()) return true;
-
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'No.Bukti') {
-      return item.noBukti.toLowerCase().includes(term);
-    } else if (searchField === 'No. PO') {
-      return item.noPo.toLowerCase().includes(term);
-    } else if (searchField === 'No.Faktur Pembelian') {
-      return item.noFakturPembelian.toLowerCase().includes(term);
-    } else if (searchField === 'Keterangan') {
-      return item.keterangan.toLowerCase().includes(term);
+    if (searchField === 'Kode' || searchField === 'No.Bukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
     }
-    return item.namaSupplier.toLowerCase().includes(term);
+    if (searchField === 'Nama Supplier') return matchesMultiKeyword([item.namaSupplier], searchTerm);
+    if (searchField === 'No. PO') return matchesMultiKeyword([item.noPo], searchTerm);
+    if (searchField === 'No.Faktur Pembelian') {
+      return matchesMultiKeyword([item.noFakturPembelian], searchTerm);
+    }
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    return matchesMultiKeyword(
+      [item.noBukti, item.tanggal, item.namaSupplier, item.noPo, item.noFakturPembelian, item.keterangan],
+      searchTerm
+    );
   });
 
   const totalNilai = filteredList.reduce((sum, item) => sum + item.nilaiPembelian, 0);
+
+  const selectedHpp =
+    filteredList.find((item) => item.id === selectedId) ||
+    hppList.find((item) => item.id === selectedId) ||
+    null;
 
   const handleExportExcel = async () => {
     try {
@@ -348,7 +446,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })}
           onExportExcel={handleExportExcel}
         />
 
@@ -356,7 +454,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-b border-[#C0C0C0] overflow-x-auto">
           <div className="flex items-center space-x-3">
             <FormActionButtons
-              onSimpan={() => (selectedId ? handleKoreksi() : handleBaru())}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={requestDelete}
@@ -469,28 +567,27 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
 
         {/* Bottom Footer & Search Bar */}
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-4 py-2 border-t border-[#C0C0C0] gap-3 overflow-x-auto">
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="font-bold text-black text-[11px]">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] shadow-xs text-[11px] text-black outline-none cursor-pointer"
-            >
-              <option value="Nama Supplier">Nama Supplier</option>
-              <option value="No.Bukti">No.Bukti</option>
-              <option value="No. PO">No. PO</option>
-              <option value="No.Faktur Pembelian">No.Faktur Pembelian</option>
-              <option value="Keterangan">Keterangan</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Ketik untuk mencari..."
-              className="w-[260px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] outline-none"
-            />
-          </div>
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-[210px]"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.Bukti)' },
+              { value: 'No.Bukti', label: 'No.Bukti' },
+              { value: 'Nama Supplier', label: 'Nama Supplier' },
+              { value: 'No. PO', label: 'No. PO' },
+              { value: 'No.Faktur Pembelian', label: 'No.Faktur Pembelian' },
+              { value: 'Keterangan', label: 'Keterangan' },
+            ]}
+          />
 
           <div className="flex items-center space-x-6 shrink-0">
             <input
@@ -721,6 +818,76 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
           summaryItems={[
             { label: 'Total Dokumen', value: `${filteredList.length} Dokumen` },
             { label: 'Total Nilai HPP Pembelian', value: formatRupiah(totalNilai) },
+          ]}
+          selectedRow={selectedHpp}
+          selectedTitle="HPP PEMBELIAN (RECORD TERPILIH)"
+          selectedSubtitle={
+            selectedHpp ? `No. Bukti: ${selectedHpp.noBukti} | Supplier: ${selectedHpp.namaSupplier}` : undefined
+          }
+          selectedMetaLines={
+            selectedHpp
+              ? [
+                  { label: 'No. Bukti', value: selectedHpp.noBukti },
+                  { label: 'Tanggal', value: selectedHpp.tanggal },
+                  { label: 'Nama Supplier', value: selectedHpp.namaSupplier },
+                  { label: 'No. PO', value: selectedHpp.noPo || '-' },
+                  { label: 'No. Faktur', value: selectedHpp.noFakturPembelian || '-' },
+                  { label: 'Sts. Lunas', value: selectedHpp.stsLunas },
+                  { label: 'Keterangan', value: selectedHpp.keterangan || '-' },
+                ]
+              : undefined
+          }
+          selectedSummaryItems={
+            selectedHpp
+              ? [
+                  { label: 'No. Bukti', value: selectedHpp.noBukti },
+                  { label: 'Nilai Pembelian', value: formatRupiah(selectedHpp.nilaiPembelian) },
+                ]
+              : undefined
+          }
+        />
+
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="HPP Pembelian"
+          rows={hppList}
+          selectedId={selectedId}
+          getRowId={(r) => r.id}
+          getSearchValues={(r) => [
+            r.noBukti,
+            r.tanggal,
+            r.namaSupplier,
+            r.noPo,
+            r.noFakturPembelian,
+            r.keterangan,
+            r.nilaiPembelian,
+          ]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q, tglFilter: '' });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            setTanggalFilter('');
+            return loadData({ field: 'Semua', term: '', tglFilter: '' });
+          }}
+          onSelectRow={(row, q) => {
+            setSelectedId(row.id);
+            setSearchTerm(q);
+            showFeedback(`HPP Pembelian [${row.noBukti} - ${row.namaSupplier}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.Bukti', accessor: (r) => r.noBukti, widthClass: 'w-32', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-22', align: 'center' },
+            { header: 'Nama Supplier', accessor: (r) => r.namaSupplier, bold: true },
+            { header: 'No. PO', accessor: (r) => r.noPo, widthClass: 'w-28', mono: true },
+            { header: 'No. Faktur', accessor: (r) => r.noFakturPembelian, widthClass: 'w-28', mono: true },
+            { header: 'Nilai Pembelian', accessor: (r) => formatMoney(r.nilaiPembelian), widthClass: 'w-28', align: 'right', mono: true },
           ]}
         />
       </div>

@@ -39,6 +39,15 @@ interface A4PrintPreviewModalProps<T = any> {
   printedBy?: string;
   fileName?: string;
   toolbarExtra?: React.ReactNode;
+  selectedRow?: T | null;
+  selectedRows?: T[];
+  selectedTitle?: string;
+  selectedSubtitle?: string;
+  selectedMetaLines?: { label: string; value: string }[];
+  selectedColumns?: PrintColumn<any>[];
+  selectedSummaryItems?: PrintSummaryItem[];
+  selectedShowSignatures?: boolean;
+  defaultPrintScope?: 'selected' | 'all';
 }
 
 function parseWidthPx(w?: string): number | null {
@@ -144,10 +153,63 @@ export function A4PrintPreviewModal<T = any>({
   printedBy,
   fileName,
   toolbarExtra,
+  selectedRow,
+  selectedRows,
+  selectedTitle,
+  selectedSubtitle,
+  selectedMetaLines,
+  selectedColumns,
+  selectedSummaryItems,
+  selectedShowSignatures,
+  defaultPrintScope,
 }: A4PrintPreviewModalProps<T>) {
+  const hasSelectedScope = Boolean(
+    selectedRow || (selectedRows && selectedRows.length > 0)
+  );
+  const [printScope, setPrintScope] = useState<'selected' | 'all'>(
+    defaultPrintScope ?? (hasSelectedScope ? 'selected' : 'all')
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setPrintScope(defaultPrintScope ?? (hasSelectedScope ? 'selected' : 'all'));
+  }, [isOpen, defaultPrintScope, hasSelectedScope]);
+
+  const isSelectedActive = printScope === 'selected' && hasSelectedScope;
+  const effectiveTitle = isSelectedActive ? selectedTitle || title : title;
+  const effectiveSubtitle = isSelectedActive ? (selectedSubtitle ?? subtitle) : subtitle;
+  const effectiveMetaLines = isSelectedActive ? (selectedMetaLines ?? metaLines) : metaLines;
+  const effectiveColumns = (isSelectedActive
+    ? selectedColumns || columns
+    : columns) as PrintColumn<T>[];
+  const effectiveRows = isSelectedActive
+    ? selectedRows && selectedRows.length > 0
+      ? selectedRows
+      : selectedRow
+      ? [selectedRow]
+      : rows
+    : rows;
+  const effectiveSummaryItems = isSelectedActive
+    ? selectedSummaryItems ?? [
+        {
+          label: 'Record Dicetak',
+          value: `${
+            selectedRows && selectedRows.length > 0
+              ? selectedRows.length
+              : selectedRow
+              ? 1
+              : rows.length
+          } Record Terpilih`,
+        },
+      ]
+    : summaryItems;
+  const effectiveShowSignatures = isSelectedActive
+    ? selectedShowSignatures ?? showSignatures
+    : showSignatures;
+
   const recommendedOrientation = useMemo(
-    () => computeRecommendedOrientation(columns, rows, requestedOrientation),
-    [columns, rows, requestedOrientation]
+    () => computeRecommendedOrientation(effectiveColumns, effectiveRows, requestedOrientation),
+    [effectiveColumns, effectiveRows, requestedOrientation]
   );
 
   const [company, setCompany] = useState<CompanyProfileData>(FALLBACK_COMPANY_PROFILE);
@@ -198,19 +260,20 @@ export function A4PrintPreviewModal<T = any>({
   }, [printedBy, isOpen]);
 
   const normalizedColWidths = useMemo(
-    () => computeNormalizedColWidths(columns, orientation),
-    [columns, orientation]
+    () => computeNormalizedColWidths(effectiveColumns, orientation),
+    [effectiveColumns, orientation]
   );
 
   // Paginate rows cleanly onto A4 pages respecting compact 8pt font and 10-12mm margins
   const pages = useMemo(() => {
     const isLand = orientation === 'landscape';
-    const metaRowsPenalty = Math.ceil((metaLines.length || 0) / 2);
+    const metaRowsPenalty = Math.ceil((effectiveMetaLines.length || 0) / 2);
     const firstPageUnits = Math.max(10, (isLand ? 22 : 34) - metaRowsPenalty);
     const nextPageUnits = isLand ? 30 : 44;
-    const footerSignatureReserve = (showSignatures ? 5 : 0) + (summaryItems.length > 0 ? 2 : 0);
+    const footerSignatureReserve =
+      (effectiveShowSignatures ? 5 : 0) + (effectiveSummaryItems.length > 0 ? 2 : 0);
 
-    if (rows.length === 0) {
+    if (effectiveRows.length === 0) {
       return [[] as { row: T; globalIndex: number }[]];
     }
 
@@ -218,8 +281,8 @@ export function A4PrintPreviewModal<T = any>({
     let currentPage: { row: T; globalIndex: number }[] = [];
     let usedUnits = 0;
 
-    rows.forEach((row, idx) => {
-      const units = estimateRowLines(row, columns, isLand);
+    effectiveRows.forEach((row, idx) => {
+      const units = estimateRowLines(row, effectiveColumns, isLand);
       const limit = result.length === 0 ? firstPageUnits : nextPageUnits;
 
       if (currentPage.length > 0 && usedUnits + units > limit) {
@@ -249,7 +312,14 @@ export function A4PrintPreviewModal<T = any>({
     }
 
     return result;
-  }, [rows, columns, orientation, metaLines.length, showSignatures, summaryItems.length]);
+  }, [
+    effectiveRows,
+    effectiveColumns,
+    orientation,
+    effectiveMetaLines.length,
+    effectiveShowSignatures,
+    effectiveSummaryItems.length,
+  ]);
 
   if (!isOpen) return null;
 
@@ -269,15 +339,15 @@ export function A4PrintPreviewModal<T = any>({
     try {
       setIsSavingPdf(true);
       exportToPdf<T>({
-        fileName: fileName || title,
-        title,
-        subtitle,
-        metaLines,
+        fileName: fileName || effectiveTitle,
+        title: effectiveTitle,
+        subtitle: effectiveSubtitle,
+        metaLines: effectiveMetaLines,
         companyProfile: company,
-        columns,
-        rows,
-        summaryItems,
-        showSignatures,
+        columns: effectiveColumns,
+        rows: effectiveRows,
+        summaryItems: effectiveSummaryItems,
+        showSignatures: effectiveShowSignatures,
         orientation,
         printedBy: activeUser,
       });
@@ -291,11 +361,11 @@ export function A4PrintPreviewModal<T = any>({
 
   const handleExport = () => {
     exportToExcel<T>({
-      fileName: fileName || title,
-      sheetTitle: title,
-      subtitle,
+      fileName: fileName || effectiveTitle,
+      sheetTitle: effectiveTitle,
+      subtitle: effectiveSubtitle,
       companyProfile: company,
-      columns: columns.map((c) => ({
+      columns: effectiveColumns.map((c) => ({
         header: c.header,
         align: c.align,
         accessor: (row: T, idx: number) => {
@@ -313,7 +383,7 @@ export function A4PrintPreviewModal<T = any>({
           return (row as any)[c.accessor];
         },
       })),
-      rows,
+      rows: effectiveRows,
     });
     showNotice('File Excel berhasil diunduh.');
   };
@@ -348,7 +418,7 @@ export function A4PrintPreviewModal<T = any>({
             PRINT PREVIEW (A4 {orientation === 'landscape' ? 'Landscape' : 'Portrait'})
           </span>
           <span className="text-[10.5px] text-gray-300 border-l border-gray-600 pl-2.5 truncate">
-            {title} • {rows.length} baris • {totalPages} halaman • User: {activeUser}
+            {effectiveTitle} • {effectiveRows.length} baris • {totalPages} halaman • User: {activeUser}
             {isLoadingCompany ? ' • Memuat Kop...' : ''}
           </span>
           {actionNotice && (
@@ -359,6 +429,32 @@ export function A4PrintPreviewModal<T = any>({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+          {hasSelectedScope && !toolbarExtra && (
+            <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
+              <button
+                type="button"
+                onClick={() => setPrintScope('selected')}
+                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                  printScope === 'selected'
+                    ? 'bg-[#0055EA] text-white'
+                    : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                Record Terpilih
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintScope('all')}
+                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                  printScope === 'all'
+                    ? 'bg-[#0055EA] text-white'
+                    : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                Semua Data ({rows.length})
+              </button>
+            </div>
+          )}
           {toolbarExtra}
           <button
             type="button"
@@ -473,7 +569,7 @@ export function A4PrintPreviewModal<T = any>({
                   ) : (
                     <div className="border-b border-black pb-1 flex items-center justify-between text-[7.5pt]">
                       <span className="font-bold uppercase">
-                        {company.company_name} — {title} (Lanjutan)
+                        {company.company_name} — {effectiveTitle} (Lanjutan)
                       </span>
                       <span>
                         Halaman {pageIdx + 1} dari {totalPages}
@@ -487,16 +583,16 @@ export function A4PrintPreviewModal<T = any>({
                   <div className="mb-2">
                     <div className="text-center mb-1.5">
                       <h2 className="text-[10pt] font-bold uppercase underline tracking-wide">
-                        {title}
+                        {effectiveTitle}
                       </h2>
-                      {subtitle && (
-                        <div className="text-[8pt] text-gray-800 mt-0.5">{subtitle}</div>
+                      {effectiveSubtitle && (
+                        <div className="text-[8pt] text-gray-800 mt-0.5">{effectiveSubtitle}</div>
                       )}
                     </div>
 
-                    {metaLines.length > 0 && (
+                    {effectiveMetaLines.length > 0 && (
                       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border border-black/40 bg-[#F9FAFB] px-2.5 py-1 text-[7.5pt]">
-                        {metaLines.map((m, idx) => (
+                        {effectiveMetaLines.map((m, idx) => (
                           <div key={idx} className="flex min-w-0">
                             <span className="font-semibold w-[115px] shrink-0">{m.label}</span>
                             <span className="mr-1">:</span>
@@ -518,7 +614,7 @@ export function A4PrintPreviewModal<T = any>({
                       >
                         No
                       </th>
-                      {columns.map((col, colIdx) => (
+                      {effectiveColumns.map((col, colIdx) => (
                         <th
                           key={colIdx}
                           style={{ width: normalizedColWidths[colIdx] }}
@@ -539,7 +635,7 @@ export function A4PrintPreviewModal<T = any>({
                     {pageRows.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={columns.length + 1}
+                          colSpan={effectiveColumns.length + 1}
                           className="border border-black px-3 py-5 text-center text-gray-600 italic text-[8pt]"
                         >
                           Tidak ada data untuk filter / periode yang dipilih.
@@ -551,7 +647,7 @@ export function A4PrintPreviewModal<T = any>({
                           <td className="border border-black px-1 py-[3px] text-center align-top">
                             {globalIndex + 1}
                           </td>
-                          {columns.map((col, colIdx) => {
+                          {effectiveColumns.map((col, colIdx) => {
                             const cellVal =
                               typeof col.accessor === 'function'
                                 ? col.accessor(row, globalIndex)
@@ -578,10 +674,10 @@ export function A4PrintPreviewModal<T = any>({
                 </table>
 
                 {/* Summary Totals & Signatures only on Final Page */}
-                {isLastPage && summaryItems.length > 0 && (
+                {isLastPage && effectiveSummaryItems.length > 0 && (
                   <div className="mt-2.5 flex justify-end">
                     <div className="border border-black bg-[#F3F4F6] px-2.5 py-1 min-w-[220px] text-[8pt]">
-                      {summaryItems.map((item, idx) => (
+                      {effectiveSummaryItems.map((item, idx) => (
                         <div key={idx} className="flex justify-between space-x-5 font-bold">
                           <span>{item.label}</span>
                           <span className="tabular-nums">{item.value}</span>
@@ -591,7 +687,7 @@ export function A4PrintPreviewModal<T = any>({
                   </div>
                 )}
 
-                {isLastPage && showSignatures && (
+                {isLastPage && effectiveShowSignatures && (
                   <div className="mt-4 grid grid-cols-3 gap-6 text-center text-[8pt]">
                     <div>
                       <div>Dibuat Oleh,</div>

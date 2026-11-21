@@ -19,6 +19,9 @@ import {
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
 import { WORLD_CURRENCIES } from '../lib/currencies';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface PurchaseOrderItem {
   id: string;
@@ -174,8 +177,6 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
-  const [findQuery, setFindQuery] = useState<string>('');
-  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [newNoBukti, setNewNoBukti] = useState<string>('');
@@ -280,6 +281,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
+    Kode: 'no_bukti',
     'No.PR': 'no_pr',
     'Nama Supplier': 'nama_supplier',
     'No.Bukti': 'no_bukti',
@@ -353,12 +355,64 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   };
 
   const handleToolbarSimpan = async () => {
-    const rows = await loadData({
-      field: searchField,
-      term: searchTerm,
-      tglFilter: tanggalFilter,
-    });
-    if (rows !== null) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = poList.find((p) => p.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record Purchase Order terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const details = poDetailsMap[selected.id] || [];
+      const headerPayload: Record<string, any> = {
+        id: selected.id,
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        no_pr: selected.noPr.trim().toUpperCase() || null,
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_supplier: selected.namaSupplier.trim().toUpperCase(),
+        delivery_to: selected.deliveryTo.trim().toUpperCase(),
+        delivery: selected.delivery.trim(),
+        mata_uang: selected.mataUang.trim().toUpperCase() || 'IDR',
+        keterangan: selected.keterangan.trim(),
+        nilai_po: selected.nilaiPoNum,
+        ppn: selected.ppnPct,
+        nilai_ppn: selected.nilaiPpnNum,
+        deposit: parseNum(selected.deposit),
+        tgl_lunas: selected.tglLunas !== '-' ? toIsoDate(selected.tglLunas) : null,
+        tgl_kirim: selected.tglKirim !== '-' ? toIsoDate(selected.tglKirim) : null,
+        persen: parseNum(selected.persen),
+        po_close: selected.poClose,
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      };
+      const detailPayloads = details.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 0),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+        'purchase-order',
+        headerPayload,
+        detailPayloads
+      );
+      const savedHeader = mapDbToPo(res.header);
+      const savedDetails = (res.details || []).map((d, idx) => mapDbToPoDetail(d, idx));
+      setPoList((prev) => prev.map((p) => (p.id === savedHeader.id ? savedHeader : p)));
+      setPoDetailsMap((prev) => ({ ...prev, [savedHeader.id]: savedDetails }));
+      setSelectedId(savedHeader.id);
+      showFeedback(`Purchase Order [${savedHeader.noBukti}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -771,49 +825,33 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
   const filterIso = tanggalFilter && tanggalFilter !== 'Semua' ? toIsoDate(tanggalFilter) : null;
 
+  const matchesPoRow = (item: PurchaseOrderItem, termVal: string) => {
+    if (searchField === 'Kode' || searchField === 'No.Bukti') return matchesMultiKeyword([item.noBukti], termVal);
+    if (searchField === 'No.PR') return matchesMultiKeyword([item.noPr], termVal);
+    if (searchField === 'Nama Supplier') return matchesMultiKeyword([item.namaSupplier], termVal);
+    if (searchField === 'Delivery To') return matchesMultiKeyword([item.deliveryTo], termVal);
+    if (searchField === 'Mata Uang') return matchesMultiKeyword([item.mataUang], termVal);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], termVal);
+    if (searchField === 'PO.Close') return matchesMultiKeyword([item.poClose], termVal);
+    return matchesMultiKeyword(
+      [
+        item.noBukti,
+        item.noPr,
+        item.tanggal,
+        item.namaSupplier,
+        item.deliveryTo,
+        item.delivery,
+        item.mataUang,
+        item.keterangan,
+        item.poClose,
+      ],
+      termVal
+    );
+  };
+
   const filteredPoList = poList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.trim().toLowerCase();
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'No.PR') return item.noPr.toLowerCase().includes(term);
-    if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(term);
-    if (searchField === 'Delivery To') return item.deliveryTo.toLowerCase().includes(term);
-    if (searchField === 'Mata Uang') return item.mataUang.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    if (searchField === 'PO.Close') return item.poClose.toLowerCase().includes(term);
-    return (
-      item.noBukti.toLowerCase().includes(term) ||
-      item.noPr.toLowerCase().includes(term) ||
-      item.namaSupplier.toLowerCase().includes(term) ||
-      item.deliveryTo.toLowerCase().includes(term) ||
-      item.delivery.toLowerCase().includes(term) ||
-      item.mataUang.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term) ||
-      item.poClose.toLowerCase().includes(term)
-    );
-  });
-
-  const findModalRows = poList.filter((item) => {
-    if (!findQuery.trim()) return true;
-    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
-    const searchable = [
-      item.noBukti,
-      item.noPr,
-      item.tanggal,
-      item.namaSupplier,
-      item.deliveryTo,
-      item.delivery,
-      item.mataUang,
-      item.keterangan,
-      item.poClose,
-      item.ppn,
-      item.nilaiPpn,
-      item.nilaiPo,
-    ]
-      .join(' ')
-      .toLowerCase();
-    return tokens.every((t) => searchable.includes(t));
+    return matchesPoRow(item, searchTerm);
   });
 
   const totalNilaiPo = filteredPoList.reduce((acc, r) => acc + r.nilaiPoNum, 0);
@@ -821,27 +859,9 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
   const handleSearchTermChange = (val: string) => {
     setSearchTerm(val);
-    const clean = val.trim().toLowerCase();
     const matched = poList.filter((item) => {
       if (filterIso && item.tanggalIso !== filterIso) return false;
-      if (!clean) return true;
-      if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(clean);
-      if (searchField === 'No.PR') return item.noPr.toLowerCase().includes(clean);
-      if (searchField === 'Nama Supplier') return item.namaSupplier.toLowerCase().includes(clean);
-      if (searchField === 'Delivery To') return item.deliveryTo.toLowerCase().includes(clean);
-      if (searchField === 'Mata Uang') return item.mataUang.toLowerCase().includes(clean);
-      if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(clean);
-      if (searchField === 'PO.Close') return item.poClose.toLowerCase().includes(clean);
-      return (
-        item.noBukti.toLowerCase().includes(clean) ||
-        item.noPr.toLowerCase().includes(clean) ||
-        item.namaSupplier.toLowerCase().includes(clean) ||
-        item.deliveryTo.toLowerCase().includes(clean) ||
-        item.delivery.toLowerCase().includes(clean) ||
-        item.mataUang.toLowerCase().includes(clean) ||
-        item.keterangan.toLowerCase().includes(clean) ||
-        item.poClose.toLowerCase().includes(clean)
-      );
+      return matchesPoRow(item, val);
     });
     if (matched.length > 0 && !matched.some((m) => m.id === selectedId)) {
       setSelectedId(matched[0].id);
@@ -878,12 +898,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    setFindQuery(searchTerm);
     await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
-    setTimeout(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    }, 60);
   };
 
   const handleOpenPrint = (mode: 'list' | 'detail' = 'list') => {
@@ -999,7 +1014,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           title="List Purchase Order"
           onClose={onClose}
           onFind={handleFind}
-          onPrint={() => handleOpenPrint('list')}
+          onPrint={() => handleOpenPrint(selectedPo ? 'detail' : 'list')}
           onTableView={() =>
             loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })
           }
@@ -1013,7 +1028,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
               onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
-              onPrint={() => handleOpenPrint('list')}
+              onPrint={() => handleOpenPrint(selectedPo ? 'detail' : 'list')}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -1236,52 +1251,29 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
         </div>
 
         <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0] gap-2 overflow-x-auto">
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="font-semibold text-gray-800">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="bg-white border border-[#7A7A7A] px-1.5 py-0.5 rounded-xs text-xs"
-            >
-              <option value="Semua">Semua</option>
-              <option value="No.PR">No.PR</option>
-              <option value="Nama Supplier">Nama Supplier</option>
-              <option value="No.Bukti">No.Bukti</option>
-              <option value="Delivery To">Delivery To</option>
-              <option value="Mata Uang">Mata Uang</option>
-              <option value="Keterangan">Keterangan</option>
-              <option value="PO.Close">PO.Close</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => handleSearchTermChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleExecuteToolbarSearch();
-              }}
-              placeholder="Cari data..."
-              className="w-56 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
-            />
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={handleExecuteToolbarSearch}
-              className="px-2.5 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs font-semibold cursor-pointer"
-            >
-              Cari
-            </button>
-            {(searchTerm || searchField !== 'Semua') && (
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={handleResetSearch}
-                className="px-2 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs cursor-pointer"
-              >
-                Reset
-              </button>
-            )}
-          </div>
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={handleSearchTermChange}
+            onCari={handleExecuteToolbarSearch}
+            onReset={handleResetSearch}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-56"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.Bukti)' },
+              { value: 'No.PR', label: 'No.PR' },
+              { value: 'Nama Supplier', label: 'Nama Supplier' },
+              { value: 'No.Bukti', label: 'No.Bukti' },
+              { value: 'Delivery To', label: 'Delivery To' },
+              { value: 'Mata Uang', label: 'Mata Uang' },
+              { value: 'Keterangan', label: 'Keterangan' },
+              { value: 'PO.Close', label: 'PO.Close' },
+            ]}
+          />
 
           <div className="flex items-center space-x-4 shrink-0">
             <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
@@ -1748,158 +1740,56 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           </div>
         )}
 
-        {/* Find Modal: Cari & Daftar Purchase Order */}
-        {isFindOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[960px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
-              <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
-                <span>Cari &amp; Daftar Purchase Order (Supabase)</span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold whitespace-nowrap">Cari :</span>
-                  <input
-                    ref={findInputRef}
-                    type="text"
-                    value={findQuery}
-                    onChange={(e) => setFindQuery(e.target.value)}
-                    onKeyDown={async (e) => {
-                      if (e.key === 'Enter') {
-                        if (findModalRows.length > 0 && !findQuery.trim()) {
-                          const first = findModalRows[0];
-                          setSelectedId(first.id);
-                          setSearchTerm(findQuery);
-                          setIsFindOpen(false);
-                          showFeedback(`Purchase Order [${first.noBukti}] dipilih`);
-                        } else {
-                          const rows = await loadData({
-                            field: 'Semua',
-                            term: findQuery,
-                            tglFilter: 'Semua',
-                          });
-                          setSearchField('Semua');
-                          setSearchTerm(findQuery);
-                          if (rows && rows.length > 0) {
-                            setSelectedId(rows[0].id);
-                            showFeedback(`Ditemukan ${rows.length} Purchase Order dari Supabase`);
-                          } else if (rows) {
-                            showFeedback('Data Purchase Order tidak ditemukan di Supabase');
-                          }
-                        }
-                      }
-                    }}
-                    placeholder="Cari No.Bukti, No.PR, Nama Supplier, Delivery To, Mata Uang, Keterangan..."
-                    className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                  />
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={async () => {
-                      const rows = await loadData({
-                        field: 'Semua',
-                        term: findQuery,
-                        tglFilter: 'Semua',
-                      });
-                      setSearchField('Semua');
-                      setSearchTerm(findQuery);
-                      if (rows && rows.length > 0) {
-                        setSelectedId(rows[0].id);
-                        showFeedback(`Ditemukan ${rows.length} Purchase Order dari Supabase`);
-                      } else if (rows) {
-                        showFeedback('Data Purchase Order tidak ditemukan di Supabase');
-                      }
-                    }}
-                    className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                  >
-                    Cari
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={async () => {
-                      setFindQuery('');
-                      setSearchTerm('');
-                      setSearchField('Semua');
-                      await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
-                      showFeedback('Data Purchase Order di-refresh dari Supabase');
-                    }}
-                    className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                  >
-                    Refresh
-                  </button>
-                </div>
-                <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
-                  <table className="w-full text-left border-collapse text-[11px]">
-                    <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                      <tr>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.Bukti</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.PR</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-22">Tanggal</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899]">Nama Supplier</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] w-28">Delivery To</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] text-center w-14">PPN</th>
-                        <th className="px-2 py-1 border-r border-[#ACA899] text-right w-24">Nominal PPN</th>
-                        <th className="px-2 py-1 text-right w-24">Nilai PO</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {findModalRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="text-center py-6 text-gray-500 italic">
-                            Tidak ada data Purchase Order yang cocok
-                          </td>
-                        </tr>
-                      ) : (
-                        findModalRows.map((p) => (
-                          <tr
-                            key={p.id}
-                            onClick={() => {
-                              setSelectedId(p.id);
-                              setSearchTerm(findQuery);
-                              setIsFindOpen(false);
-                              showFeedback(`Purchase Order [${p.noBukti} - ${p.namaSupplier}] dipilih`);
-                            }}
-                            className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                              p.id === selectedId ? 'bg-[#FFFF99]' : ''
-                            }`}
-                          >
-                            <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">{p.noBukti}</td>
-                            <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{p.noPr || '-'}</td>
-                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{p.tanggal}</td>
-                            <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">{p.namaSupplier}</td>
-                            <td className="px-2 py-1 border-r border-[#E0E0E0]">{p.deliveryTo || '-'}</td>
-                            <td className="px-2 py-1 text-center border-r border-[#E0E0E0]">{p.ppn}</td>
-                            <td className="px-2 py-1 text-right font-mono border-r border-[#E0E0E0]">{p.nilaiPpn}</td>
-                            <td className="px-2 py-1 text-right font-mono font-semibold">{p.nilaiPo}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="flex justify-between items-center pt-1">
-                  <span className="text-[11px] text-[#555]">
-                    Menampilkan {findModalRows.length} dari {poList.length} Purchase Order. Klik baris untuk memilih record.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsFindOpen(false)}
-                    className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                  >
-                    Tutup
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Purchase Order"
+          rows={poList}
+          selectedId={selectedId}
+          getRowId={(p) => p.id}
+          getSearchValues={(p) => [
+            p.noBukti,
+            p.noPr,
+            p.tanggal,
+            p.namaSupplier,
+            p.deliveryTo,
+            p.delivery,
+            p.mataUang,
+            p.keterangan,
+            p.poClose,
+            p.ppn,
+            p.nilaiPpn,
+            p.nilaiPo,
+          ]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q, tglFilter: 'Semua' });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            setTanggalFilter('Semua');
+            return loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+          }}
+          onSelectRow={(p, q) => {
+            setSelectedId(p.id);
+            setSearchTerm(q);
+            showFeedback(`Purchase Order [${p.noBukti} - ${p.namaSupplier}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.Bukti', accessor: (p) => p.noBukti, widthClass: 'w-28', mono: true, bold: true },
+            { header: 'No.PR', accessor: (p) => p.noPr || '-', widthClass: 'w-28', mono: true },
+            { header: 'Tanggal', accessor: (p) => p.tanggal, widthClass: 'w-22' },
+            { header: 'Nama Supplier', accessor: (p) => p.namaSupplier, bold: true },
+            { header: 'Delivery To', accessor: (p) => p.deliveryTo || '-', widthClass: 'w-28' },
+            { header: 'PPN', accessor: (p) => p.ppn, widthClass: 'w-14', align: 'center' },
+            { header: 'Nominal PPN', accessor: (p) => p.nilaiPpn, widthClass: 'w-24', align: 'right', mono: true },
+            { header: 'Nilai PO', accessor: (p) => p.nilaiPo, widthClass: 'w-24', align: 'right', mono: true, bold: true },
+          ]}
+        />
 
         <A4PrintPreviewModal
           isOpen={isPrintOpen}
@@ -1939,8 +1829,22 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
               : []
           }
           orientation="landscape"
-          columns={printMode === 'detail' ? (detailPrintColumns as PrintColumn<any>[]) : (listPrintColumns as PrintColumn<any>[])}
-          rows={printMode === 'detail' ? selectedPoDetails : filteredPoList}
+          columns={
+            printMode === 'detail'
+              ? selectedPoDetails.length > 0
+                ? (detailPrintColumns as PrintColumn<any>[])
+                : (listPrintColumns as PrintColumn<any>[])
+              : (listPrintColumns as PrintColumn<any>[])
+          }
+          rows={
+            printMode === 'detail'
+              ? selectedPoDetails.length > 0
+                ? selectedPoDetails
+                : selectedPo
+                ? [selectedPo]
+                : []
+              : filteredPoList
+          }
           summaryItems={
             printMode === 'detail'
               ? [
@@ -1968,8 +1872,36 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                   { label: 'Total Nilai PO', value: formatRupiah(totalNilaiPo) },
                 ]
           }
+          selectedRow={printMode === 'list' ? selectedPo : undefined}
+          selectedTitle={printMode === 'list' ? 'PURCHASE ORDER (RECORD TERPILIH)' : undefined}
+          selectedSubtitle={
+            printMode === 'list' && selectedPo
+              ? `No. Bukti: ${selectedPo.noBukti} | Supplier: ${selectedPo.namaSupplier}`
+              : undefined
+          }
+          selectedMetaLines={
+            printMode === 'list' && selectedPo
+              ? [
+                  { label: 'No. Bukti', value: selectedPo.noBukti },
+                  { label: 'No. PR', value: selectedPo.noPr || '-' },
+                  { label: 'Tanggal', value: selectedPo.tanggal },
+                  { label: 'Supplier', value: selectedPo.namaSupplier },
+                  { label: 'PPN (%)', value: selectedPo.ppn },
+                  { label: 'Nilai PO', value: `${selectedPo.mataUang} ${selectedPo.nilaiPo}` },
+                ]
+              : undefined
+          }
           toolbarExtra={
             <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
+              <button
+                type="button"
+                onClick={() => setPrintMode('detail')}
+                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                  printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                P.O. Terpilih (Detail)
+              </button>
               <button
                 type="button"
                 onClick={() => setPrintMode('list')}
@@ -1978,15 +1910,6 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                 }`}
               >
                 List Purchase Order
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintMode('detail')}
-                className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
-                  printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
-                }`}
-              >
-                P.O. Detail
               </button>
             </div>
           }

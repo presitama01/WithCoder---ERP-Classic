@@ -123,8 +123,21 @@ export const FormModal: React.FC<FormModalProps> = ({
     setIsEditOpen(true);
   };
 
+  const handleToolbarSimpan = () => {
+    const targetRow = rows[selectedRowIdx];
+    if (!targetRow) {
+      showFeedback('Pilih baris data terlebih dahulu');
+      return;
+    }
+    setRows((prev) => prev.map((r, idx) => (idx === selectedRowIdx ? [...targetRow] : r)));
+    showFeedback(`Rekord terpilih [${targetRow[1] || targetRow[0] || formTitle}] tersimpan`);
+  };
+
   const handleHapus = () => {
-    if (rows.length === 0 || selectedRowIdx < 0 || selectedRowIdx >= rows.length) return;
+    if (rows.length === 0 || selectedRowIdx < 0 || selectedRowIdx >= rows.length) {
+      showFeedback('Pilih baris data yang akan dihapus');
+      return;
+    }
     const updated = rows.filter((_, idx) => idx !== selectedRowIdx);
     setRows(updated);
     setSelectedRowIdx(Math.max(0, Math.min(selectedRowIdx, updated.length - 1)));
@@ -183,7 +196,7 @@ export const FormModal: React.FC<FormModalProps> = ({
         <div className="flex items-center justify-between px-2 py-1.5 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] overflow-x-auto min-w-max">
           <div className="flex items-center space-x-2">
             <FormActionButtons
-              onSimpan={() => showFeedback(`Data ${formTitle} tersimpan`)}
+              onSimpan={handleToolbarSimpan}
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleHapus}
@@ -325,6 +338,21 @@ export const FormModal: React.FC<FormModalProps> = ({
             accessor: (r: string[]) => r[idx] || '',
           }))}
           rows={filteredRows.map((f) => f.row)}
+          selectedRow={rows[selectedRowIdx] || null}
+          selectedTitle={`${formTitle.toUpperCase()} (RECORD TERPILIH)`}
+          selectedSubtitle={
+            rows[selectedRowIdx]
+              ? `Rekord: ${rows[selectedRowIdx][1] || rows[selectedRowIdx][0] || '-'}`
+              : undefined
+          }
+          selectedMetaLines={
+            rows[selectedRowIdx]
+              ? columns.slice(0, 6).map((c, i) => ({
+                  label: c,
+                  value: rows[selectedRowIdx][i] || '-',
+                }))
+              : undefined
+          }
         />
     </div>
   );

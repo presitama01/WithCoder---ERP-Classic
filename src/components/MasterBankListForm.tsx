@@ -4,6 +4,9 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface BankItem {
   id: string;
@@ -22,7 +25,8 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
   const [banks, setBanks] = useState<BankItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Bank');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [isFindOpen, setIsFindOpen] = useState(false);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [newAccNumber, setNewAccNumber] = useState('');
@@ -44,10 +48,31 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'acc_number',
+    'Acc Number': 'acc_number',
+    'Acc Name': 'acc_name',
+    'Nama Bank': 'nama_bank',
+    Cabang: 'cabang',
+  };
+
+  const loadData = async (opts?: { field?: string; term?: string }): Promise<BankItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('master_banks', { orderBy: 'nama_bank', asc: true });
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'nama_bank', asc: true, limit: 1000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'acc_number,acc_name,nama_bank,cabang';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      const rows = await erpList<any>('master_banks', queryOpts);
       const mapped: BankItem[] = rows.map((r) => ({
         id: r.id,
         accNumber: r.acc_number,
@@ -58,19 +83,46 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
       setBanks(mapped);
       if (mapped.length > 0 && !mapped.some((b) => b.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = banks.find((b) => b.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_banks', selected.id, {
+        acc_number: selected.accNumber.trim(),
+        acc_name: selected.accName.trim().toUpperCase(),
+        nama_bank: selected.namaBank.trim().toUpperCase(),
+        cabang: selected.cabang.trim().toUpperCase(),
+      });
+      const mapped: BankItem = {
+        id: saved.id,
+        accNumber: saved.acc_number,
+        accName: saved.acc_name,
+        namaBank: saved.nama_bank,
+        cabang: saved.cabang || '',
+      };
+      setBanks((prev) => prev.map((b) => (b.id === selected.id ? mapped : b)));
+      showFeedback(`Rekening [${mapped.accNumber} - ${mapped.namaBank}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -176,13 +228,35 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
   };
 
   const filteredBanks = banks.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Acc Number') return item.accNumber.toLowerCase().includes(term);
-    if (searchField === 'Acc Name') return item.accName.toLowerCase().includes(term);
-    if (searchField === 'Cabang') return item.cabang.toLowerCase().includes(term);
-    return item.namaBank.toLowerCase().includes(term);
+    if (searchField === 'Kode' || searchField === 'Acc Number') return matchesMultiKeyword([item.accNumber], searchTerm);
+    if (searchField === 'Acc Name') return matchesMultiKeyword([item.accName], searchTerm);
+    if (searchField === 'Nama Bank') return matchesMultiKeyword([item.namaBank], searchTerm);
+    if (searchField === 'Cabang') return matchesMultiKeyword([item.cabang], searchTerm);
+    return matchesMultiKeyword([item.accNumber, item.accName, item.namaBank, item.cabang], searchTerm);
   });
+
+  const selectedBank =
+    filteredBanks.find((b) => b.id === selectedId) ||
+    banks.find((b) => b.id === selectedId) ||
+    null;
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Rekening Bank dari Supabase`
+          : 'Data Rekening Bank tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Bank)`);
+  };
 
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
@@ -201,9 +275,9 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
     showFeedback('Export Excel selesai');
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   return (
@@ -217,11 +291,11 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm })}
           onExportExcel={handleExportExcel}
         />
 
-        <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
+        <div className="shrink-0 flex items-center h-[48px] px-3 space-x-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
@@ -233,29 +307,23 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
             feedback={feedback}
           />
 
-          <div className="flex items-center space-x-2">
-            <span className="font-bold text-[11px] text-black">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[24px] px-2 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-sans font-medium text-black outline-none cursor-pointer"
-            >
-              <option value="Nama Bank">Nama Bank</option>
-              <option value="Acc Number">Acc Number</option>
-              <option value="Acc Name">Acc Name</option>
-              <option value="Cabang">Cabang</option>
-            </select>
-            <div className="w-[260px]">
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Ketik untuk FIND..."
-                className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
-              />
-            </div>
-          </div>
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (Acc Number)' },
+              { value: 'Nama Bank', label: 'Nama Bank' },
+              { value: 'Acc Name', label: 'Acc Name' },
+              { value: 'Cabang', label: 'Cabang' },
+            ]}
+          />
         </div>
 
         <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
@@ -405,6 +473,39 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
         )}
       </div>
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Master Bank"
+        rows={banks}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [r.accNumber, r.accName, r.namaBank, r.cabang]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Bank [${row.accNumber} - ${row.namaBank}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode / Acc Number', accessor: (r) => r.accNumber, widthClass: 'w-36', mono: true, bold: true },
+          { header: 'Acc Name', accessor: (r) => r.accName, bold: true },
+          { header: 'Nama Bank', accessor: (r) => r.namaBank, widthClass: 'w-36' },
+          { header: 'Cabang', accessor: (r) => r.cabang || '-', widthClass: 'w-36' },
+        ]}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -417,6 +518,19 @@ export const MasterBankListForm: React.FC<MasterBankListFormProps> = ({ isOpen, 
           { header: 'Cabang', accessor: 'cabang', width: '130px' },
         ]}
         rows={filteredBanks}
+        selectedRow={selectedBank}
+        selectedTitle="DETAIL MASTER REKENING BANK"
+        selectedSubtitle={selectedBank ? `No. Rekening: ${selectedBank.accNumber}` : undefined}
+        selectedMetaLines={
+          selectedBank
+            ? [
+                { label: 'Acc Number', value: selectedBank.accNumber },
+                { label: 'Acc Name', value: selectedBank.accName },
+                { label: 'Nama Bank', value: selectedBank.namaBank },
+                { label: 'Cabang', value: selectedBank.cabang || '-' },
+              ]
+            : undefined
+        }
       />
     </div>
   );

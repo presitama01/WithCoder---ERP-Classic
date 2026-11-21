@@ -14,6 +14,9 @@ import {
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 interface CompanyProfileFormProps {
   isOpen: boolean;
@@ -68,25 +71,52 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
   const [isPrintOpen, setIsPrintOpen] = useState(false);
 
   const [isFindOpen, setIsFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState('');
+  const [searchField, setSearchField] = useState('Semua');
+  const [searchTerm, setSearchTerm] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const companyNameRef = useRef<HTMLInputElement>(null);
-  const findInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadProfiles = async (targetCode?: string) => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'profile_code',
+    'Company Name': 'company_name',
+    'No. NPWP': 'no_npwp',
+    Alamat: 'address',
+    Phone: 'phone',
+    Email: 'mail',
+  };
+
+  const loadProfiles = async (
+    targetCode?: string,
+    opts?: { field?: string; term?: string; applyFirstMatch?: boolean }
+  ): Promise<CompanyProfileData[] | null> => {
     try {
       setIsBusy(true);
-      let rows = await erpList<CompanyProfileData>('company_profiles', {
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = {
         orderBy: 'profile_code',
         asc: true,
-      });
-      if (!rows || rows.length === 0) {
+        limit: 500,
+      };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'profile_code,company_name,no_npwp,address,phone,mail';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      let rows = await erpList<CompanyProfileData>('company_profiles', queryOpts);
+      if (!activeTerm && (!rows || rows.length === 0)) {
         try {
           const seeded = await erpUpsert<CompanyProfileData>(
             'company_profiles',
@@ -101,13 +131,21 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         }
       }
       setProfiles(rows);
-      const code = targetCode || formData.profileCode || '01';
-      const found = rows.find((r) => r.profile_code === code) || rows[0];
-      if (found) {
-        setFormData(mapDbToForm(found));
+      if (opts?.applyFirstMatch) {
+        if (rows.length > 0) {
+          setFormData(mapDbToForm(rows[0]));
+        }
+      } else {
+        const code = targetCode || formData.profileCode || '01';
+        const found = rows.find((r) => r.profile_code === code) || rows[0];
+        if (found) {
+          setFormData(mapDbToForm(found));
+        }
       }
+      return rows;
     } catch (err: any) {
       showFeedback(`Error: ${err.message}`);
+      return null;
     } finally {
       setIsBusy(false);
     }
@@ -233,8 +271,47 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
 
   const openFindModal = async () => {
     setIsFindOpen(true);
-    await loadProfiles();
-    setTimeout(() => findInputRef.current?.focus(), 60);
+    await loadProfiles(undefined, { field: 'Semua', term: '' });
+  };
+
+  const handleToolbarCari = async () => {
+    const rows = await loadProfiles(undefined, {
+      field: searchField,
+      term: searchTerm,
+      applyFirstMatch: true,
+    });
+    if (rows && rows.length > 0) {
+      showFeedback(`Ditemukan ${rows.length} profil di Supabase [${rows[0].profile_code}]`);
+    } else if (rows) {
+      showFeedback('Profil perusahaan tidak ditemukan di Supabase');
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadProfiles('01', { field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} profil)`);
+  };
+
+  const handleSearchTermChange = (val: string) => {
+    setSearchTerm(val);
+    if (!val.trim()) return;
+    const matched = profiles.find((p) => {
+      if (searchField === 'Kode') return matchesMultiKeyword([p.profile_code], val);
+      if (searchField === 'Company Name') return matchesMultiKeyword([p.company_name], val);
+      if (searchField === 'No. NPWP') return matchesMultiKeyword([p.no_npwp], val);
+      if (searchField === 'Alamat') return matchesMultiKeyword([p.address], val);
+      if (searchField === 'Phone') return matchesMultiKeyword([p.phone], val);
+      if (searchField === 'Email') return matchesMultiKeyword([p.mail], val);
+      return matchesMultiKeyword(
+        [p.profile_code, p.company_name, p.no_npwp, p.address, p.phone, p.mail],
+        val
+      );
+    });
+    if (matched) {
+      setFormData(mapDbToForm(matched));
+    }
   };
 
   const handleExportExcel = () => {
@@ -277,23 +354,6 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
     new Set(['01', '02', ...profiles.map((p) => p.profile_code), formData.profileCode])
   ).sort();
 
-  const filteredProfiles = profiles.filter((p) => {
-    if (!findQuery.trim()) return true;
-    const qParts = findQuery.toLowerCase().trim().split(/\s+/);
-    const searchable = [
-      p.profile_code || '',
-      p.company_name || '',
-      p.no_npwp || '',
-      p.address || '',
-      p.phone || '',
-      p.mail || '',
-    ]
-      .join(' ')
-      .toLowerCase();
-
-    return qParts.every((part) => searchable.includes(part));
-  });
-
   const printRows = [
     { field: 'Profile Code', value: formData.profileCode },
     { field: 'Company Name', value: formData.companyName },
@@ -323,7 +383,7 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
           onExportExcel={handleExportExcel}
         />
 
-        <div className="shrink-0 flex items-center h-[48px] px-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans">
+        <div className="shrink-0 flex items-center gap-2 h-[48px] px-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
             onSimpan={handleSave}
             onBaru={handleBaru}
@@ -333,6 +393,25 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
             onFind={openFindModal}
             isBusy={isBusy}
             feedback={feedback}
+          />
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={handleSearchTermChange}
+            onCari={handleToolbarCari}
+            onReset={handleToolbarReset}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode' },
+              { value: 'Company Name', label: 'Company Name' },
+              { value: 'No. NPWP', label: 'No. NPWP' },
+              { value: 'Alamat', label: 'Alamat' },
+              { value: 'Phone', label: 'Phone' },
+              { value: 'Email', label: 'Email' },
+            ]}
           />
         </div>
 
@@ -502,123 +581,46 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         </div>
       </div>
 
-      {/* Find & Search Modal */}
-      {isFindOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[660px] max-h-[82vh] flex flex-col text-xs">
-            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold">
-              <span>Cari &amp; Daftar Profil Perusahaan (Supabase)</span>
-              <button
-                type="button"
-                onClick={() => setIsFindOpen(false)}
-                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-2">
-                <span className="font-bold whitespace-nowrap">Search :</span>
-                <input
-                  ref={findInputRef}
-                  type="text"
-                  value={findQuery}
-                  onChange={(e) => setFindQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      loadProfiles();
-                      showFeedback(`Pencarian selesai: ${filteredProfiles.length} profil ditemukan`);
-                    }
-                  }}
-                  placeholder="Cari Kode, Nama Perusahaan, NPWP, Alamat, Telepon, Email..."
-                  className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    loadProfiles();
-                    showFeedback(`Pencarian selesai: ${filteredProfiles.length} profil ditemukan`);
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Cari
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFindQuery('');
-                    loadProfiles();
-                    showFeedback('Data di-refresh dari Supabase');
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="flex-1 min-h-[220px] overflow-auto bg-white border border-[#7F9DB9]">
-                <table className="w-full text-left border-collapse text-[11px]">
-                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                    <tr>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-14 text-center">Kode</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">Company Name</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">No. NPWP</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">Phone</th>
-                      <th className="px-2 py-1">Email</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredProfiles.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="text-center py-6 text-gray-500 italic">
-                          Tidak ada profil perusahaan yang cocok
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredProfiles.map((p) => (
-                        <tr
-                          key={p.id || p.profile_code}
-                          onClick={() => {
-                            setFormData(mapDbToForm(p));
-                            setIsFindOpen(false);
-                            showFeedback(`Profil [${p.profile_code}] dimuat`);
-                          }}
-                          className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                            p.profile_code === formData.profileCode ? 'bg-[#FFFF99]' : ''
-                          }`}
-                        >
-                          <td className="px-2 py-1 font-mono font-bold text-center border-r border-[#E0E0E0]">
-                            {p.profile_code}
-                          </td>
-                          <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">
-                            {p.company_name}
-                          </td>
-                          <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">
-                            {p.no_npwp || '-'}
-                          </td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{p.phone || '-'}</td>
-                          <td className="px-2 py-1">{p.mail || '-'}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-[11px] text-[#555]">
-                  Klik baris untuk memuat profil ke form.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Company Profile"
+        rows={profiles}
+        selectedId={formData.profileCode}
+        getRowId={(r) => r.profile_code}
+        getSearchValues={(r) => [
+          r.profile_code,
+          r.company_name,
+          r.no_npwp,
+          r.address,
+          r.phone,
+          r.mail,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadProfiles(undefined, { field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadProfiles(undefined, { field: 'Semua', term: '' });
+        }}
+        onSelectRow={(p, q) => {
+          setFormData(mapDbToForm(p));
+          setSearchTerm(q);
+          showFeedback(`Profil [${p.profile_code}] dimuat`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (r) => r.profile_code, widthClass: 'w-16', align: 'center', mono: true, bold: true },
+          { header: 'Company Name', accessor: (r) => r.company_name, bold: true },
+          { header: 'No. NPWP', accessor: (r) => r.no_npwp || '-', mono: true },
+          { header: 'Phone', accessor: (r) => r.phone || '-' },
+          { header: 'Email', accessor: (r) => r.mail || '-' },
+        ]}
+      />
 
       {/* Delete Confirmation Modal */}
       {confirmDeleteId && (
@@ -659,6 +661,12 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         onClose={() => setIsPrintOpen(false)}
         title="DATA COMPANY PROFILE"
         subtitle={`Kode Profil: ${formData.profileCode}`}
+        metaLines={[
+          { label: 'Kode Profil', value: formData.profileCode },
+          { label: 'Company Name', value: formData.companyName },
+          { label: 'No. NPWP', value: formData.noNpwp || '-' },
+          { label: 'Email', value: formData.mail || '-' },
+        ]}
         columns={[
           { header: 'Field Informasi', accessor: 'field', width: '180px' },
           { header: 'Keterangan / Isi', accessor: 'value' },

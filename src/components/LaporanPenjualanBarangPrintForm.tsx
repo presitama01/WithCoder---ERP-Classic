@@ -3,6 +3,9 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
   erpCreate,
   erpDelete,
@@ -54,6 +57,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Add / Koreksi Modal
@@ -83,6 +87,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
@@ -90,8 +95,34 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadLiveRows = async (): Promise<any[]> => {
-    const rows = await erpList<any>('faktur_penjualans', { orderBy: 'tanggal', asc: false });
+  const loadLiveRows = async (opts?: {
+    field?: string;
+    term?: string;
+    skipSearch?: boolean;
+  }): Promise<any[]> => {
+    const activeField = opts?.field ?? searchField;
+    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
+    const SEARCH_COL_MAP: Record<string, string> = {
+      Kode: 'no_bukti',
+      'No.Faktur': 'no_bukti',
+      Customer: 'nama_customer',
+      'No.SO': 'no_so',
+      Sales: 'sales',
+      Jenis: 'jenis_faktur',
+    };
+    const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false };
+    if (activeTerm) {
+      if (activeField !== 'Semua' && SEARCH_COL_MAP[activeField]) {
+        queryOpts.searchCol = SEARCH_COL_MAP[activeField];
+        queryOpts.searchVal = activeTerm;
+      } else {
+        queryOpts.orSearch =
+          'no_bukti,jenis_faktur,nama_customer,no_so,po_no,no_sj,sales,keterangan';
+        queryOpts.searchVal = activeTerm;
+      }
+    }
+
+    const rows = await erpList<any>('faktur_penjualans', queryOpts);
     const mapped = rows.map((r) => ({
       ...r,
       id: String(r.id),
@@ -120,6 +151,8 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
       setSelectedId(mapped[0].id);
+    } else if (mapped.length === 0) {
+      setSelectedId('');
     }
     return mapped;
   };
@@ -178,22 +211,29 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
       if (!r.nama_customer.toLowerCase().includes(customerFilter.trim().toLowerCase())) return false;
     }
     if (searchTerm.trim()) {
-      const q = searchTerm.trim().toLowerCase();
-      if (searchField === 'No.Faktur') return r.no_bukti.toLowerCase().includes(q);
-      if (searchField === 'Customer') return r.nama_customer.toLowerCase().includes(q);
-      if (searchField === 'No.SO') return r.no_so.toLowerCase().includes(q);
-      if (searchField === 'Sales') return r.sales.toLowerCase().includes(q);
-      if (searchField === 'Jenis') return r.jenis_faktur.toLowerCase().includes(q);
-      return (
-        r.no_bukti.toLowerCase().includes(q) ||
-        r.nama_customer.toLowerCase().includes(q) ||
-        r.no_so.toLowerCase().includes(q) ||
-        r.jenis_faktur.toLowerCase().includes(q) ||
-        r.keterangan.toLowerCase().includes(q)
+      if (searchField === 'Kode' || searchField === 'No.Faktur') {
+        return matchesMultiKeyword([r.no_bukti], searchTerm);
+      }
+      if (searchField === 'Customer') return matchesMultiKeyword([r.nama_customer], searchTerm);
+      if (searchField === 'No.SO') return matchesMultiKeyword([r.no_so], searchTerm);
+      if (searchField === 'Sales') return matchesMultiKeyword([r.sales], searchTerm);
+      if (searchField === 'Jenis') return matchesMultiKeyword([r.jenis_faktur], searchTerm);
+      return matchesMultiKeyword(
+        [r.no_bukti, r.jenis_faktur, r.tanggal_display, r.nama_customer, r.no_so, r.po_no, r.no_sj, r.sales, r.keterangan, r.sts_lunas],
+        searchTerm
       );
     }
     return true;
   });
+
+  const selectedTableRow =
+    filteredTableRows.find((r) => r.id === selectedId) ||
+    tableRows.find((r) => r.id === selectedId) ||
+    null;
+
+  const selectedPenjPrintRow = selectedTableRow
+    ? { ...selectedTableRow, tanggal: selectedTableRow.tanggal_display || toDisplayDMyShort(selectedTableRow.tanggal) }
+    : null;
 
   const handleBaru = () => {
     setEditingId(null);
@@ -333,6 +373,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
     try {
       setIsBusy(true);
       await erpDelete('faktur_penjualans', confirmDeleteRow.id);
+      if (confirmDeleteRow.id === selectedId) setSelectedId('');
       setConfirmDeleteRow(null);
       await loadLiveRows();
       showFeedback('Faktur Penjualan dihapus dari Supabase');
@@ -344,8 +385,37 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   };
 
   const handleSimpan = async () => {
+    const selected = selectedTableRow;
+    if (!selected) {
+      showFeedback('Pilih baris Faktur Penjualan terlebih dahulu untuk disimpan');
+      return;
+    }
     try {
       setIsBusy(true);
+      await erpUpdate('faktur_penjualans', selected.id, {
+        jenis_faktur: selected.jenis_faktur || 'REGULAR',
+        no_bukti: selected.no_bukti,
+        tanggal: toIsoDate(selected.tanggal) || todayIso(),
+        nama_customer: selected.nama_customer,
+        no_so: selected.no_so || '',
+        po_no: selected.po_no || '',
+        no_sj: selected.no_sj || '',
+        no_faktur_pajak: selected.no_faktur_pajak || '',
+        sales: selected.sales || '',
+        jth_tmp: toIsoDate(selected.jth_tmp) || toIsoDate(selected.tanggal) || todayIso(),
+        ppn: Number(selected.ppn_num ?? 11),
+        nilai_penjualan: Number(selected.nilai || 0),
+        keterangan: selected.keterangan || '',
+        lokasi_stock: selected.lokasi_stock || '01 - OFFICE',
+        sts_lunas: selected.sts_lunas || 'Not Yet',
+        tgl_lunas: toIsoDate(selected.tgl_lunas) || null,
+        sts_print: selected.sts_print || 'Not Yet',
+        tgl_print: toIsoDate(selected.tgl_print) || null,
+        sts_post: selected.sts_post || 'Not Yet',
+        tgl_post: toIsoDate(selected.tgl_post) || null,
+        diupdate_oleh: getCurrentUser().username || 'ADMIN',
+        tgl_update: todayIso(),
+      });
       localStorage.setItem(
         'withcoder_preset_penjualan_barang',
         JSON.stringify({ tglStart, tglEnd, lokasiStock, bentukLaporan })
@@ -356,7 +426,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
         lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
       });
       await loadLiveRows();
-      showFeedback('Parameter & data Penjualan Barang tersinkron ke Supabase');
+      showFeedback(`Data Faktur Penjualan [${selected.no_bukti}] tersimpan ke Supabase`);
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -365,14 +435,42 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   };
 
   const handleFind = async () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+    setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows();
-      showFeedback('Data Penjualan dimuat ulang dari Supabase');
+      await loadLiveRows({ skipSearch: true });
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarCari = async () => {
+    try {
+      setIsBusy(true);
+      const res = await loadLiveRows({ field: searchField, term: searchTerm });
+      showFeedback(
+        searchTerm.trim()
+          ? `Hasil cari Supabase: ${res.length} faktur ditemukan`
+          : `Data dimuat ulang (${res.length} faktur)`
+      );
+    } catch (err: any) {
+      showFeedback(`Gagal mencari: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    try {
+      setIsBusy(true);
+      await loadLiveRows({ field: 'Semua', term: '' });
+      showFeedback('Filter pencarian direset');
+    } catch (err: any) {
+      showFeedback(`Gagal reset: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
@@ -415,11 +513,31 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      setPrintScopeOnOpen('all');
       const data = await fetchReportData();
       setPreviewRows(data);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat laporan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handlePrintSelected = async () => {
+    if (!selectedTableRow) {
+      showFeedback('Pilih baris Faktur Penjualan yang akan dicetak terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      setPrintScopeOnOpen('selected');
+      const data = await fetchReportData().catch(() => []);
+      setPreviewRows(data);
+      setIsPrintOpen(true);
+    } catch {
+      setPreviewRows([]);
+      setIsPrintOpen(true);
     } finally {
       setIsBusy(false);
     }
@@ -466,7 +584,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
         title="Laporan Penjualan Barang"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePreview}
+        onPrint={handlePrintSelected}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
@@ -486,7 +604,7 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleRequestHapus}
-              onPrint={handlePreview}
+              onPrint={handlePrintSelected}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -716,38 +834,28 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
         {/* Live Supabase Search & Data Grid Panel */}
         <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
-              >
-                <option value="Semua">Semua Kolom</option>
-                <option value="No.Faktur">No.Faktur</option>
-                <option value="Customer">Customer</option>
-                <option value="No.SO">No.SO</option>
-                <option value="Sales">Sales</option>
-                <option value="Jenis">Jenis</option>
-              </select>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') loadLiveRows();
-                }}
+            <div className="flex items-center">
+              <ToolbarSearchControl
+                compact
+                searchField={searchField}
+                onSearchFieldChange={setSearchField}
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onCari={handleToolbarCari}
+                onReset={handleToolbarReset}
+                options={[
+                  { value: 'Semua', label: 'Semua Kolom' },
+                  { value: 'Kode', label: 'Kode (No.Faktur)' },
+                  { value: 'No.Faktur', label: 'No.Faktur' },
+                  { value: 'Customer', label: 'Customer' },
+                  { value: 'No.SO', label: 'No.SO' },
+                  { value: 'Sales', label: 'Sales' },
+                  { value: 'Jenis', label: 'Jenis' },
+                ]}
+                inputRef={searchInputRef}
+                isBusy={isBusy}
                 placeholder="Cari No.Faktur, Customer, No.SO, Sales..."
-                className="w-[230px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
               />
-              <button
-                type="button"
-                onClick={() => loadLiveRows()}
-                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
-              >
-                Cari / Refresh
-              </button>
             </div>
             <span className="text-[11px] text-black">
               Data Supabase (<b>faktur_penjualans</b>): <b>{filteredTableRows.length}</b> baris
@@ -1129,12 +1237,78 @@ export const LaporanPenjualanBarangPrintForm: React.FC<
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Faktur Penjualan"
+        rows={tableRows}
+        columns={[
+          { header: 'No.Faktur', accessor: (r) => r.no_bukti, mono: true, bold: true },
+          { header: 'Jenis', accessor: (r) => r.jenis_faktur, align: 'center' },
+          { header: 'Tanggal', accessor: (r) => r.tanggal_display, align: 'center' },
+          { header: 'Customer', accessor: (r) => r.nama_customer },
+          { header: 'No.SO', accessor: (r) => r.no_so || '-', mono: true },
+          { header: 'Sales', accessor: (r) => r.sales || '-', align: 'center' },
+          { header: 'Nilai (Rp)', accessor: (r) => formatMoney(r.nilai), align: 'right', mono: true, bold: true },
+          { header: 'Status', accessor: (r) => r.sts_lunas, align: 'center' },
+        ]}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.no_bukti,
+          r.jenis_faktur,
+          r.tanggal_display,
+          r.nama_customer,
+          r.no_so,
+          r.po_no,
+          r.no_sj,
+          r.sales,
+          r.keterangan,
+          r.sts_lunas,
+        ]}
+        selectedId={selectedId}
+        onSelectRow={(r) => {
+          setSelectedId(r.id);
+          showFeedback(`Faktur Penjualan [${r.no_bukti}] dipilih`);
+        }}
+        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
+        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        isBusy={isBusy}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={bentukLaporan.toUpperCase()}
         subtitle={`Periode: ${tglStart} s/d ${tglEnd}`}
         orientation="landscape"
+        defaultPrintScope={printScopeOnOpen}
+        selectedRow={selectedPenjPrintRow}
+        selectedTitle="CETAK FAKTUR PENJUALAN TERPILIH"
+        selectedSubtitle={
+          selectedPenjPrintRow
+            ? `No.Faktur: ${selectedPenjPrintRow.no_bukti} | Customer: ${selectedPenjPrintRow.nama_customer}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedPenjPrintRow
+            ? [
+                { label: 'No.Faktur', value: selectedPenjPrintRow.no_bukti },
+                { label: 'Jenis', value: selectedPenjPrintRow.jenis_faktur },
+                { label: 'Tanggal', value: selectedPenjPrintRow.tanggal },
+                { label: 'Customer', value: selectedPenjPrintRow.nama_customer },
+                { label: 'No.SO', value: selectedPenjPrintRow.no_so || '-' },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedPenjPrintRow
+            ? [
+                { label: 'PPN', value: selectedPenjPrintRow.ppn },
+                { label: 'Nilai Penjualan', value: formatRupiah(selectedPenjPrintRow.nilai) },
+                { label: 'Status Lunas', value: selectedPenjPrintRow.sts_lunas },
+              ]
+            : undefined
+        }
         metaLines={[
           { label: 'Periode Tanggal', value: `${tglStart} s/d ${tglEnd}` },
           { label: 'Lokasi Stock', value: lokasiStock },

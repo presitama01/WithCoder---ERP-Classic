@@ -16,6 +16,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface PurchaseRequestItem {
   id: string;
@@ -59,8 +62,9 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
   const [prList, setPrList] = useState<PurchaseRequestItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('No.PR');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
@@ -107,30 +111,88 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
     }
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_pr',
+    'No.PR': 'no_pr',
+    'Delivery To': 'delivery_to',
+    Delivery: 'delivery',
+    'No. PO': 'no_po',
+    'Dibuat Oleh': 'dibuat_oleh',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    tglFilter?: string;
+  }): Promise<PurchaseRequestItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const activeTgl = opts?.tglFilter ?? tanggalFilter;
+      const isoFilter = activeTgl && activeTgl !== 'Semua' ? toIsoDate(activeTgl) : null;
+
+      const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false, limit: 1000 };
+      if (isoFilter) queryOpts.eq = { tanggal: isoFilter };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_pr,delivery_to,delivery,no_po,dibuat_oleh';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows] = await Promise.all([
-        erpList<any>('purchase_requests', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('purchase_requests', queryOpts),
         loadMasterLokasi(),
       ]);
       const mapped = rows.map(mapDbToPr);
       setPrList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = prList.find((p) => p.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record Purchase Request terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const saved = await erpUpdate<any>('purchase_requests', selected.id, {
+        no_pr: selected.noPr.trim().toUpperCase(),
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        delivery_to: selected.deliveryTo.trim().toUpperCase(),
+        delivery: selected.delivery.trim(),
+        no_po: selected.noPo.trim().toUpperCase(),
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      });
+      const mapped = mapDbToPr(saved);
+      setPrList((prev) => prev.map((p) => (p.id === mapped.id ? mapped : p)));
+      setSelectedId(mapped.id);
+      showFeedback(`Purchase Request [${mapped.noPr}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -254,17 +316,44 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
 
   const filteredPrList = prList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'No.PR') return item.noPr.toLowerCase().includes(term);
-    if (searchField === 'Delivery To') return item.deliveryTo.toLowerCase().includes(term);
-    if (searchField === 'No. PO') return item.noPo.toLowerCase().includes(term);
-    return item.noPr.toLowerCase().includes(term) || item.deliveryTo.toLowerCase().includes(term);
+    if (searchField === 'Kode' || searchField === 'No.PR') return matchesMultiKeyword([item.noPr], searchTerm);
+    if (searchField === 'Delivery To') return matchesMultiKeyword([item.deliveryTo], searchTerm);
+    if (searchField === 'Delivery') return matchesMultiKeyword([item.delivery], searchTerm);
+    if (searchField === 'No. PO') return matchesMultiKeyword([item.noPo], searchTerm);
+    if (searchField === 'Dibuat Oleh') return matchesMultiKeyword([item.dibuatOleh], searchTerm);
+    return matchesMultiKeyword(
+      [item.noPr, item.tanggal, item.deliveryTo, item.delivery, item.noPo, item.dibuatOleh],
+      searchTerm
+    );
   });
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const selectedPr =
+    filteredPrList.find((p) => p.id === selectedId) ||
+    prList.find((p) => p.id === selectedId) ||
+    null;
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Purchase Request dari Supabase`
+          : 'Data Purchase Request tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('Semua');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Purchase Request)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
   };
 
   const handleExportExcel = async () => {
@@ -301,7 +390,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })}
           onExportExcel={handleExportExcel}
         />
 
@@ -412,29 +501,30 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           </table>
         </div>
 
-        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0]">
-          <div className="flex items-center space-x-2">
-            <span className="font-semibold text-gray-800">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="bg-white border border-[#7A7A7A] px-1.5 py-0.5 rounded-xs text-xs"
-            >
-              <option value="No.PR">No.PR</option>
-              <option value="Delivery To">Delivery To</option>
-              <option value="No. PO">No. PO</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Cari data..."
-              className="w-64 px-1.5 py-0.5 bg-white border border-[#7A7A7A] rounded-xs text-xs focus:outline-none"
-            />
-          </div>
+        <div className="shrink-0 flex items-center justify-between bg-[#ECE9D8] px-3 py-1.5 border-t border-[#C0C0C0] gap-2 overflow-x-auto">
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-56"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.PR)' },
+              { value: 'No.PR', label: 'No.PR' },
+              { value: 'Delivery To', label: 'Delivery To' },
+              { value: 'Delivery', label: 'Delivery' },
+              { value: 'No. PO', label: 'No. PO' },
+              { value: 'Dibuat Oleh', label: 'Dibuat Oleh' },
+            ]}
+          />
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-4 shrink-0">
             <div className="w-64 h-5 bg-[#FFFF99] border border-[#C0C0C0] rounded-xs px-2 text-[10px] flex items-center text-gray-700 truncate">
               {prList.find((r) => r.id === selectedId)?.deliveryTo || ''}
             </div>
@@ -602,6 +692,65 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
           ]}
           rows={filteredPrList}
           summaryItems={[{ label: 'Total Record', value: `${filteredPrList.length} Dokumen` }]}
+          selectedRow={selectedPr}
+          selectedTitle="PURCHASE REQUEST (RECORD TERPILIH)"
+          selectedSubtitle={selectedPr ? `No. PR: ${selectedPr.noPr} | Tanggal: ${selectedPr.tanggal}` : undefined}
+          selectedMetaLines={
+            selectedPr
+              ? [
+                  { label: 'No. PR', value: selectedPr.noPr },
+                  { label: 'Tanggal', value: selectedPr.tanggal },
+                  { label: 'Delivery To', value: selectedPr.deliveryTo || '-' },
+                  { label: 'Delivery', value: selectedPr.delivery || '-' },
+                  { label: 'No. PO', value: selectedPr.noPo || '-' },
+                  { label: 'Dibuat Oleh', value: selectedPr.dibuatOleh },
+                ]
+              : undefined
+          }
+          selectedSummaryItems={
+            selectedPr
+              ? [
+                  { label: 'No. PR Terpilih', value: selectedPr.noPr },
+                  { label: 'Delivery To', value: selectedPr.deliveryTo || '-' },
+                ]
+              : undefined
+          }
+        />
+
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Purchase Request"
+          rows={prList}
+          selectedId={selectedId}
+          getRowId={(r) => r.id}
+          getSearchValues={(r) => [r.noPr, r.tanggal, r.deliveryTo, r.delivery, r.noPo, r.dibuatOleh]}
+          initialQuery={searchTerm}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => {
+            setSearchField('Semua');
+            setSearchTerm(q);
+            return loadData({ field: 'Semua', term: q, tglFilter: 'Semua' });
+          }}
+          onRefreshSupabase={() => {
+            setSearchField('Semua');
+            setSearchTerm('');
+            setTanggalFilter('Semua');
+            return loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+          }}
+          onSelectRow={(row, q) => {
+            setSelectedId(row.id);
+            setSearchTerm(q);
+            showFeedback(`Purchase Request [${row.noPr}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.PR', accessor: (r) => r.noPr, widthClass: 'w-32', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-24', align: 'center' },
+            { header: 'Delivery To', accessor: (r) => r.deliveryTo, bold: true },
+            { header: 'Delivery', accessor: (r) => r.delivery, widthClass: 'w-24' },
+            { header: 'No. PO', accessor: (r) => r.noPo, widthClass: 'w-32', mono: true },
+            { header: 'Dibuat Oleh', accessor: (r) => r.dibuatOleh, widthClass: 'w-28' },
+          ]}
         />
       </div>
     </div>

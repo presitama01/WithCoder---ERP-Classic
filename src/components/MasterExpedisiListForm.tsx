@@ -4,6 +4,9 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface ExpedisiItem {
   id: string;
@@ -39,7 +42,8 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   const [expedisiList, setExpedisiList] = useState<ExpedisiItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Expedisi');
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [isFindOpen, setIsFindOpen] = useState(false);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,27 +65,70 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'kode_expedisi',
+    'Nama Expedisi': 'nama_expedisi',
+    Kota: 'kota',
+    Alamat: 'alamat',
+  };
+
+  const loadData = async (opts?: { field?: string; term?: string }): Promise<ExpedisiItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('master_expedisis', { orderBy: 'kode_expedisi', asc: true });
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'kode_expedisi', asc: true, limit: 1000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'kode_expedisi,nama_expedisi,alamat,kota,phone1,phone2';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      const rows = await erpList<any>('master_expedisis', queryOpts);
       const mapped = rows.map(mapDbToItem);
       setExpedisiList(mapped);
       if (mapped.length > 0 && !mapped.some((x) => x.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = expedisiList.find((x) => x.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_expedisis', selected.id, {
+        kode_expedisi: selected.kodeExpedisi.trim().toUpperCase(),
+        nama_expedisi: selected.namaExpedisi.trim().toUpperCase(),
+        alamat: selected.alamat.trim(),
+        kota: selected.kota.trim().toUpperCase(),
+        phone1: selected.phone1.trim(),
+        phone2: selected.phone2.trim(),
+      });
+      const mapped = mapDbToItem(saved);
+      setExpedisiList((prev) => prev.map((x) => (x.id === selected.id ? mapped : x)));
+      showFeedback(`Expedisi [${mapped.kodeExpedisi} - ${mapped.namaExpedisi}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -180,12 +227,38 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
   };
 
   const filteredExpedisi = expedisiList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Kode') return item.kodeExpedisi.toLowerCase().includes(term);
-    if (searchField === 'Kota') return item.kota.toLowerCase().includes(term);
-    return item.namaExpedisi.toLowerCase().includes(term);
+    if (searchField === 'Kode') return matchesMultiKeyword([item.kodeExpedisi], searchTerm);
+    if (searchField === 'Nama Expedisi') return matchesMultiKeyword([item.namaExpedisi], searchTerm);
+    if (searchField === 'Kota') return matchesMultiKeyword([item.kota], searchTerm);
+    if (searchField === 'Alamat') return matchesMultiKeyword([item.alamat], searchTerm);
+    return matchesMultiKeyword(
+      [item.kodeExpedisi, item.namaExpedisi, item.alamat, item.kota, item.phone1, item.phone2],
+      searchTerm
+    );
   });
+
+  const selectedExpedisi =
+    filteredExpedisi.find((x) => x.id === selectedId) ||
+    expedisiList.find((x) => x.id === selectedId) ||
+    null;
+
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} Expedisi dari Supabase`
+          : 'Data Expedisi tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Expedisi)`);
+  };
 
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
@@ -206,9 +279,9 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
     showFeedback('Export Excel selesai');
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   return (
@@ -222,11 +295,11 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
           onClose={onClose}
           onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
-          onTableView={loadData}
+          onTableView={() => loadData({ field: searchField, term: searchTerm })}
           onExportExcel={handleExportExcel}
         />
 
-        <div className="shrink-0 flex items-center h-[48px] px-3 space-x-4 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
+        <div className="shrink-0 flex items-center h-[48px] px-3 space-x-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto">
           <FormActionButtons
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
@@ -238,28 +311,23 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
             feedback={feedback}
           />
 
-          <div className="flex items-center space-x-2">
-            <span className="font-bold text-[11px] text-black">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[24px] px-2 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-sans font-medium text-black outline-none cursor-pointer"
-            >
-              <option value="Nama Expedisi">Nama Expedisi</option>
-              <option value="Kode">Kode Expedisi</option>
-              <option value="Kota">Kota</option>
-            </select>
-            <div className="w-[300px]">
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Ketik untuk FIND..."
-                className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
-              />
-            </div>
-          </div>
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleExecuteCari}
+            onReset={handleResetCari}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode' },
+              { value: 'Nama Expedisi', label: 'Nama Expedisi' },
+              { value: 'Kota', label: 'Kota' },
+              { value: 'Alamat', label: 'Alamat' },
+            ]}
+          />
         </div>
 
         <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
@@ -411,6 +479,40 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Master Expedisi"
+        rows={expedisiList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [r.kodeExpedisi, r.namaExpedisi, r.alamat, r.kota, r.phone1, r.phone2]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Expedisi [${row.kodeExpedisi} - ${row.namaExpedisi}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (r) => r.kodeExpedisi, widthClass: 'w-24', mono: true, bold: true },
+          { header: 'Nama Expedisi', accessor: (r) => r.namaExpedisi, bold: true },
+          { header: 'Alamat', accessor: (r) => r.alamat || '-' },
+          { header: 'Kota', accessor: (r) => r.kota || '-', widthClass: 'w-28' },
+          { header: 'Phone 1', accessor: (r) => r.phone1 || '-', widthClass: 'w-28' },
+        ]}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -424,6 +526,19 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
           { header: 'Telepon', accessor: 'phone1', width: '100px' },
         ]}
         rows={filteredExpedisi}
+        selectedRow={selectedExpedisi}
+        selectedTitle="DETAIL MASTER EXPEDISI"
+        selectedSubtitle={selectedExpedisi ? `Kode: ${selectedExpedisi.kodeExpedisi}` : undefined}
+        selectedMetaLines={
+          selectedExpedisi
+            ? [
+                { label: 'Kode Expedisi', value: selectedExpedisi.kodeExpedisi },
+                { label: 'Nama Expedisi', value: selectedExpedisi.namaExpedisi },
+                { label: 'Kota', value: selectedExpedisi.kota || '-' },
+                { label: 'Telepon', value: selectedExpedisi.phone1 || '-' },
+              ]
+            : undefined
+        }
       />
     </div>
   );

@@ -13,6 +13,9 @@ import {
   parseNum,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface BarangItem {
   id: string;
@@ -71,8 +74,9 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
   const [typeOptions, setTypeOptions] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Description');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [filterSemua, setFilterSemua] = useState<string>('SEMUA-nya');
+  const [isFindOpen, setIsFindOpen] = useState(false);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -146,30 +150,83 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     return loadedCats;
   };
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'kode',
+    'Nama Barang': 'nama_barang',
+    Merk: 'merk',
+    Category: 'category',
+    Tipe: 'tipe',
+    Unit: 'unit',
+  };
+
+  const loadData = async (opts?: { field?: string; term?: string }): Promise<BarangItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'kode', asc: true, limit: 2000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'kode,nama_barang,unit,merk,category,tipe';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
       const [rows] = await Promise.all([
-        erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
+        erpList<any>('master_barangs', queryOpts),
         loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToItem);
       setBarangList(mapped);
       if (mapped.length > 0 && !mapped.some((b) => b.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = barangList.find((b) => b.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih record yang akan disimpan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('master_barangs', selected.id, {
+        kode: selected.kode.trim().toUpperCase(),
+        nama_barang: selected.namaBarang.trim().toUpperCase(),
+        unit: selected.unit.trim().toUpperCase() || 'PCS',
+        merk: selected.merk.trim().toUpperCase(),
+        category: selected.category.trim().toUpperCase(),
+        tipe: selected.tipe.trim().toUpperCase(),
+        stock: Number(selected.stock) || 0,
+        cost: Number(selected.cost) || 0,
+        price: Number(selected.price) || 0,
+        disc: Number(selected.disc) || 0,
+        q_min: Number(selected.qMin) || 0,
+        qty_po: Number(selected.qtyPo) || 0,
+        qty_so: Number(selected.qtySo) || 0,
+        not_print: Boolean(selected.notPrint),
+      });
+      const mapped = mapDbToItem(saved);
+      setBarangList((prev) => prev.map((b) => (b.id === selected.id ? mapped : b)));
+      showFeedback(`Barang [${mapped.kode} - ${mapped.namaBarang}] tersimpan ke Supabase`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -315,12 +372,22 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     if (filterSemua !== 'SEMUA-nya' && item.category.toUpperCase() !== filterSemua) {
       return false;
     }
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Kode') return item.kode.toLowerCase().includes(term);
-    if (searchField === 'Merk') return item.merk.toLowerCase().includes(term);
-    return item.namaBarang.toLowerCase().includes(term);
+    if (searchField === 'Kode') return matchesMultiKeyword([item.kode], searchTerm);
+    if (searchField === 'Nama Barang') return matchesMultiKeyword([item.namaBarang], searchTerm);
+    if (searchField === 'Merk') return matchesMultiKeyword([item.merk], searchTerm);
+    if (searchField === 'Category') return matchesMultiKeyword([item.category], searchTerm);
+    if (searchField === 'Tipe') return matchesMultiKeyword([item.tipe], searchTerm);
+    if (searchField === 'Unit') return matchesMultiKeyword([item.unit], searchTerm);
+    return matchesMultiKeyword(
+      [item.kode, item.namaBarang, item.unit, item.merk, item.category, item.tipe],
+      searchTerm
+    );
   });
+
+  const selectedBarang =
+    filteredList.find((b) => b.id === selectedId) ||
+    barangList.find((b) => b.id === selectedId) ||
+    null;
 
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
@@ -345,9 +412,28 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     showFeedback('Export Excel selesai');
   };
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleToolbarCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} barang dari Supabase`
+          : `Menampilkan ${rows.length} barang dari Supabase`
+      );
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setFilterSemua('SEMUA-nya');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} barang)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   const allCategoryChoices = Array.from(
@@ -395,9 +481,9 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
 
       <div
         id="master-barang-toolbar"
-        className="flex items-center justify-between h-[52px] px-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans min-w-max overflow-x-auto"
+        className="flex items-center justify-between gap-2 h-[52px] px-3 bg-[#ECE9D8] border-b border-[#ACA899] text-[11px] font-sans overflow-x-auto"
       >
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3 shrink-0">
           <FormActionButtons
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
@@ -408,51 +494,45 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
             isBusy={isBusy}
             feedback={feedback}
           />
-
-          <div className="flex items-center space-x-2">
-            <span className="font-bold text-[11px] text-black">Search :</span>
-
-            <div className="relative">
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[24px] px-2 pr-6 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-sans font-medium text-black appearance-none outline-none cursor-pointer"
-              >
-                <option value="Description">Description</option>
-                <option value="Kode">Kode</option>
-                <option value="Merk">Merk</option>
-              </select>
-              <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
-            </div>
-
-            <div className="w-[300px]">
-              <input
-                ref={searchInputRef}
-                id="barang-search-input"
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Ketik untuk FIND..."
-                className="w-full h-[24px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 text-[11px] font-sans outline-none focus:border-[#316AC5]"
-              />
-            </div>
-          </div>
         </div>
 
-        <div className="relative w-[170px] mr-2">
-          <select
-            value={filterSemua}
-            onChange={(e) => setFilterSemua(e.target.value)}
-            className="w-full h-[24px] bg-white border border-[#7F9DB9] text-[11px] px-2 pr-5 appearance-none outline-none font-sans focus:border-[#316AC5] cursor-pointer"
-          >
-            <option value="SEMUA-nya">SEMUA-nya</option>
-            {allCategoryChoices.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
-          <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
+          <ToolbarSearchControl
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={handleToolbarCari}
+            onReset={handleToolbarReset}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-[185px]"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode' },
+              { value: 'Nama Barang', label: 'Nama Barang' },
+              { value: 'Merk', label: 'Merk' },
+              { value: 'Category', label: 'Category' },
+              { value: 'Tipe', label: 'Tipe' },
+              { value: 'Unit', label: 'Unit' },
+            ]}
+          />
+
+          <div className="relative w-[145px] shrink-0">
+            <select
+              value={filterSemua}
+              onChange={(e) => setFilterSemua(e.target.value)}
+              className="w-full h-[24px] bg-white border border-[#7F9DB9] text-[11px] px-2 pr-5 appearance-none outline-none font-sans focus:border-[#316AC5] cursor-pointer"
+            >
+              <option value="SEMUA-nya">SEMUA-nya</option>
+              {allCategoryChoices.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+            <div className="absolute right-1 top-2 pointer-events-none text-[8px] text-black">▼</div>
+          </div>
         </div>
       </div>
 
@@ -784,6 +864,43 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Master Barang"
+        rows={barangList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [r.kode, r.namaBarang, r.unit, r.merk, r.category, r.tipe]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Barang [${row.kode} - ${row.namaBarang}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode', accessor: (r) => r.kode, widthClass: 'w-24', mono: true, bold: true },
+          { header: 'Nama Barang', accessor: (r) => r.namaBarang, bold: true },
+          { header: 'Unit', accessor: (r) => r.unit, widthClass: 'w-14', align: 'center' },
+          { header: 'Merk', accessor: (r) => r.merk || '-', widthClass: 'w-24' },
+          { header: 'Category', accessor: (r) => r.category || '-', widthClass: 'w-24' },
+          { header: 'Tipe', accessor: (r) => r.tipe || '-', widthClass: 'w-24' },
+          { header: 'Stock', accessor: (r) => formatMoney(r.stock), widthClass: 'w-16', align: 'right', mono: true },
+          { header: 'Price', accessor: (r) => formatMoney(r.price), widthClass: 'w-24', align: 'right', mono: true },
+        ]}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -801,6 +918,27 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
           { header: 'Harga Jual', accessor: (r) => formatMoney(r.price), align: 'right', width: '95px' },
         ]}
         rows={filteredList}
+        selectedRow={selectedBarang}
+        selectedTitle="DETAIL DATA MASTER BARANG"
+        selectedSubtitle={selectedBarang ? `Kode: ${selectedBarang.kode} - ${selectedBarang.namaBarang}` : undefined}
+        selectedMetaLines={
+          selectedBarang
+            ? [
+                { label: 'Kode Barang', value: selectedBarang.kode },
+                { label: 'Nama Barang', value: selectedBarang.namaBarang },
+                { label: 'Merk / Kategori', value: [selectedBarang.merk, selectedBarang.category].filter(Boolean).join(' / ') || '-' },
+                { label: 'Tipe / Unit', value: [selectedBarang.tipe, selectedBarang.unit].filter(Boolean).join(' / ') || '-' },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedBarang
+            ? [
+                { label: 'Stock Tersedia', value: `${formatMoney(selectedBarang.stock)} ${selectedBarang.unit}` },
+                { label: 'Harga Jual', value: formatMoney(selectedBarang.price) },
+              ]
+            : undefined
+        }
       />
     </div>
   );

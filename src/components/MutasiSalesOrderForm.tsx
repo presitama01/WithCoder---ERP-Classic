@@ -17,6 +17,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface MutasiSoItem {
   id: string;
@@ -54,8 +57,9 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
   const [periodeStart, setPeriodeStart] = useState<string>('01-01-2018');
   const [periodeEnd, setPeriodeEnd] = useState<string>(() => toDisplayDmy(todayIso()));
   const [jenisTransaksi, setJenisTransaksi] = useState<string>('Semua Berdasarkan Periode');
-  const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const [selectedId, setSelectedId] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -83,13 +87,41 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+  }): Promise<MutasiSoItem[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+
+      const itemQuery: Record<string, any> = { orderBy: 'created_at', asc: false, limit: 1000 };
+      const orderQuery: Record<string, any> = { orderBy: 'tanggal', asc: false, limit: 1000 };
+
+      if (activeTerm) {
+        if (activeField === 'Kode') {
+          itemQuery.orSearch = 'no_so,kode_barang';
+          itemQuery.searchVal = activeTerm;
+        } else if (activeField === 'No.SO') {
+          itemQuery.searchCol = 'no_so';
+          itemQuery.searchVal = activeTerm;
+        } else if (activeField === 'Nama Barang') {
+          itemQuery.searchCol = 'nama_barang';
+          itemQuery.searchVal = activeTerm;
+        } else if (activeField === 'Nama Pelanggan' || activeField === 'Customer') {
+          orderQuery.searchCol = 'nama_customer';
+          orderQuery.searchVal = activeTerm;
+        } else if (activeField === 'No.PO') {
+          orderQuery.searchCol = 'po_no';
+          orderQuery.searchVal = activeTerm;
+        }
+      }
+
       const [items, orders, sjItems] = await Promise.all([
-        erpList<any>('sales_order_items', { orderBy: 'created_at', asc: false }),
-        erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-        erpList<any>('surat_jalan_items', { orderBy: 'tanggal', asc: false }),
+        erpList<any>('sales_order_items', itemQuery),
+        erpList<any>('sales_orders', orderQuery),
+        erpList<any>('surat_jalan_items', { orderBy: 'tanggal', asc: false, limit: 1000 }),
       ]);
 
       const orderById = new Map<string, any>();
@@ -99,7 +131,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         if (o.no_bukti) orderByNo.set(String(o.no_bukti).toUpperCase(), o);
       }
 
-      const mappedSo: MutasiSoItem[] = items.map((it) => {
+      let mappedSo: MutasiSoItem[] = items.map((it) => {
         const parent =
           (it.so_id && orderById.get(it.so_id)) ||
           orderByNo.get(String(it.no_so || '').toUpperCase());
@@ -122,6 +154,22 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         };
       });
 
+      if (activeTerm) {
+        if (activeField === 'Nama Pelanggan' || activeField === 'Customer' || activeField === 'No.PO') {
+          mappedSo = mappedSo.filter((it) =>
+            (it.soId && orderById.has(it.soId)) ||
+            orderByNo.has(String(it.noSo || '').toUpperCase())
+          );
+        } else if (activeField === 'Semua') {
+          mappedSo = mappedSo.filter((it) =>
+            matchesMultiKeyword(
+              [it.noSo, it.noPo, it.customer, it.kodeBarang, it.namaBarang, it.unit],
+              activeTerm
+            )
+          );
+        }
+      }
+
       const mappedSj: SjDetailItem[] = sjItems.map((sj) => ({
         id: sj.id,
         soItemId: sj.so_item_id || null,
@@ -135,19 +183,42 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
       setSjList(mappedSj);
       if (mappedSo.length > 0 && !mappedSo.some((r) => r.id === selectedId)) {
         setSelectedId(mappedSo[0].id);
+      } else if (mappedSo.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mappedSo;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = soList.find((s) => s.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Mutasi SO yang akan disimpan');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      await erpUpdate('sales_order_items', selected.id, {
+        so_id: selected.soId,
+        no_so: selected.noSo.trim().toUpperCase(),
+        kode_barang: selected.kodeBarang.trim().toUpperCase(),
+        nama_barang: selected.namaBarang.trim().toUpperCase(),
+        unit: selected.unit.trim().toUpperCase() || 'PCS',
+        pesan: Number(selected.pesan || 0),
+        kirim: Number(selected.kirim || 0),
+      });
+      await loadData({ field: searchField, term: searchTerm });
+      showFeedback(`Mutasi SO [${selected.noSo} - ${selected.kodeBarang}] berhasil disimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -279,36 +350,51 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
     if (jenisTransaksi === 'Closed SO' && item.sisa > 0) {
       return false;
     }
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
+    if (searchField === 'Kode') return matchesMultiKeyword([item.noSo, item.kodeBarang], searchTerm);
     if (searchField === 'Nama Pelanggan' || searchField === 'Customer') {
-      return item.customer.toLowerCase().includes(term);
-    } else if (searchField === 'No.SO') {
-      return item.noSo.toLowerCase().includes(term);
-    } else if (searchField === 'No.PO') {
-      return item.noPo.toLowerCase().includes(term);
-    } else if (searchField === 'Nama Barang') {
-      return item.namaBarang.toLowerCase().includes(term);
+      return matchesMultiKeyword([item.customer], searchTerm);
     }
-    return (
-      item.customer.toLowerCase().includes(term) ||
-      item.noSo.toLowerCase().includes(term) ||
-      item.namaBarang.toLowerCase().includes(term)
+    if (searchField === 'No.SO') return matchesMultiKeyword([item.noSo], searchTerm);
+    if (searchField === 'No.PO') return matchesMultiKeyword([item.noPo], searchTerm);
+    if (searchField === 'Nama Barang') return matchesMultiKeyword([item.namaBarang, item.kodeBarang], searchTerm);
+    return matchesMultiKeyword(
+      [item.noSo, item.noPo, item.customer, item.kodeBarang, item.namaBarang, item.unit],
+      searchTerm
     );
   });
 
   const selectedSoRow = filteredList.find((r) => r.id === selectedId);
-  const visibleSjList = selectedSoRow
+  const activeSelectedSo = selectedSoRow || soList.find((r) => r.id === selectedId) || null;
+  const visibleSjList = activeSelectedSo
     ? sjList.filter(
         (sj) =>
-          (sj.soItemId && sj.soItemId === selectedSoRow.id) ||
-          (sj.kodeBarang && sj.kodeBarang === selectedSoRow.kodeBarang)
+          (sj.soItemId && sj.soItemId === activeSelectedSo.id) ||
+          (sj.kodeBarang && sj.kodeBarang === activeSelectedSo.kodeBarang)
       )
     : sjList;
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleExecuteCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows) {
+      showFeedback(
+        rows.length > 0
+          ? `Ditemukan ${rows.length} item Mutasi SO dari Supabase`
+          : 'Data Mutasi SO tidak ditemukan di Supabase'
+      );
+    }
+  };
+
+  const handleResetCari = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setJenisTransaksi('Semua Berdasarkan Periode');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Mutasi SO)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   const handleExportExcel = async () => {
@@ -344,7 +430,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         onClose={onClose}
         onFind={handleFind}
         onPrint={() => setIsPrintOpen(true)}
-        onTableView={loadData}
+        onTableView={() => loadData({ field: searchField, term: searchTerm })}
         onExportExcel={handleExportExcel}
       />
 
@@ -393,24 +479,26 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
             </select>
           </div>
 
-          <div className="flex items-center space-x-2 flex-1 justify-end min-w-[360px]">
-            <span className="font-bold text-black">Search :</span>
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value)}
-              className="h-[22px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] shadow-2xs text-[11px] text-black outline-none cursor-pointer"
-            >
-              <option value="Nama Pelanggan">Nama Pelanggan</option>
-              <option value="No.SO">No.SO</option>
-              <option value="No.PO">No.PO</option>
-              <option value="Nama Barang">Nama Barang</option>
-            </select>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="flex-1 max-w-[360px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] outline-none"
+          <div className="flex items-center flex-1 justify-end min-w-[420px]">
+            <ToolbarSearchControl
+              compact
+              searchField={searchField}
+              onSearchFieldChange={setSearchField}
+              searchTerm={searchTerm}
+              onSearchTermChange={setSearchTerm}
+              onCari={handleExecuteCari}
+              onReset={handleResetCari}
+              inputRef={searchInputRef}
+              isBusy={isBusy}
+              inputWidthClass="w-52"
+              options={[
+                { value: 'Semua', label: 'Semua' },
+                { value: 'Kode', label: 'Kode (No.SO/Brg)' },
+                { value: 'No.SO', label: 'No.SO' },
+                { value: 'No.PO', label: 'No.PO' },
+                { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+                { value: 'Nama Barang', label: 'Nama Barang' },
+              ]}
             />
           </div>
         </div>
@@ -675,6 +763,72 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
             label: 'Total Sisa Kirim',
             value: String(filteredList.reduce((acc, r) => acc + r.sisa, 0)),
           },
+        ]}
+        selectedRow={activeSelectedSo}
+        selectedTitle="DETAIL MUTASI SALES ORDER"
+        selectedSubtitle={
+          activeSelectedSo
+            ? `No. SO: ${activeSelectedSo.noSo} | Customer: ${activeSelectedSo.customer}`
+            : ''
+        }
+        selectedMetaLines={
+          activeSelectedSo
+            ? [
+                { label: 'No. SO', value: activeSelectedSo.noSo },
+                { label: 'No. PO', value: activeSelectedSo.noPo || '-' },
+                { label: 'Customer', value: activeSelectedSo.customer || '-' },
+                { label: 'Kode Barang', value: activeSelectedSo.kodeBarang || '-' },
+                { label: 'Nama Barang', value: activeSelectedSo.namaBarang || '-' },
+                { label: 'Pesan / Kirim / Sisa', value: `${activeSelectedSo.pesan} / ${activeSelectedSo.kirim} / ${activeSelectedSo.sisa}` },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          activeSelectedSo
+            ? [
+                { label: 'Qty Pesan', value: `${activeSelectedSo.pesan} ${activeSelectedSo.unit}` },
+                { label: 'Qty Kirim', value: `${activeSelectedSo.kirim} ${activeSelectedSo.unit}` },
+                { label: 'Sisa Kirim', value: `${activeSelectedSo.sisa} ${activeSelectedSo.unit}` },
+              ]
+            : undefined
+        }
+      />
+
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Mutasi Sales Order"
+        rows={soList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [r.noSo, r.noPo, r.customer, r.kodeBarang, r.namaBarang, r.unit]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          setJenisTransaksi('Semua Berdasarkan Periode');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Mutasi SO [${row.noSo} - ${row.kodeBarang}] dipilih`);
+        }}
+        columns={[
+          { header: 'No.SO', accessor: (r) => r.noSo, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'No.PO', accessor: (r) => r.noPo, widthClass: 'w-24', mono: true },
+          { header: 'Customer', accessor: (r) => r.customer, bold: true },
+          { header: 'Kode Brg', accessor: (r) => r.kodeBarang, widthClass: 'w-24', mono: true },
+          { header: 'Nama Barang', accessor: (r) => r.namaBarang },
+          { header: 'Pesan', accessor: (r) => String(r.pesan), widthClass: 'w-14', align: 'right', mono: true },
+          { header: 'Kirim', accessor: (r) => String(r.kirim), widthClass: 'w-14', align: 'right', mono: true },
+          { header: 'Sisa', accessor: (r) => String(r.sisa), widthClass: 'w-14', align: 'right', mono: true, bold: true },
         ]}
       />
     </div>

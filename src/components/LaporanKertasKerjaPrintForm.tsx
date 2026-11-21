@@ -3,6 +3,9 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
   erpCompositeSave,
   erpDelete,
@@ -49,6 +52,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Add / Koreksi Modal for jurnal_umums + jurnal_umum_details
@@ -65,6 +69,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
@@ -72,8 +77,32 @@ export const LaporanKertasKerjaPrintForm: React.FC<
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadLiveRows = async (): Promise<any[]> => {
-    const rows = await erpList<any>('jurnal_umums', { orderBy: 'tanggal', asc: false });
+  const loadLiveRows = async (opts?: {
+    field?: string;
+    term?: string;
+    skipSearch?: boolean;
+  }): Promise<any[]> => {
+    const activeField = opts?.field ?? searchField;
+    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
+    const SEARCH_COL_MAP: Record<string, string> = {
+      Kode: 'no_bukti',
+      'No.Bukti': 'no_bukti',
+      Kategori: 'kategori',
+      Keterangan: 'keterangan',
+      Status: 'sts_post',
+    };
+    const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false };
+    if (activeTerm) {
+      if (activeField !== 'Semua' && SEARCH_COL_MAP[activeField]) {
+        queryOpts.searchCol = SEARCH_COL_MAP[activeField];
+        queryOpts.searchVal = activeTerm;
+      } else {
+        queryOpts.orSearch = 'no_bukti,kategori,keterangan,sts_post,dibuat_oleh';
+        queryOpts.searchVal = activeTerm;
+      }
+    }
+
+    const rows = await erpList<any>('jurnal_umums', queryOpts);
     const mapped = rows.map((r) => ({
       ...r,
       id: String(r.id),
@@ -89,6 +118,8 @@ export const LaporanKertasKerjaPrintForm: React.FC<
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
       setSelectedId(mapped[0].id);
+    } else if (mapped.length === 0) {
+      setSelectedId('');
     }
     return mapped;
   };
@@ -127,20 +158,24 @@ export const LaporanKertasKerjaPrintForm: React.FC<
       return false;
     }
     if (searchTerm.trim()) {
-      const q = searchTerm.trim().toLowerCase();
-      if (searchField === 'No.Bukti') return r.no_bukti.toLowerCase().includes(q);
-      if (searchField === 'Kategori') return r.kategori.toLowerCase().includes(q);
-      if (searchField === 'Keterangan') return r.keterangan.toLowerCase().includes(q);
-      if (searchField === 'Status') return r.sts_post.toLowerCase().includes(q);
-      return (
-        r.no_bukti.toLowerCase().includes(q) ||
-        r.kategori.toLowerCase().includes(q) ||
-        r.keterangan.toLowerCase().includes(q) ||
-        r.sts_post.toLowerCase().includes(q)
+      if (searchField === 'Kode' || searchField === 'No.Bukti') {
+        return matchesMultiKeyword([r.no_bukti], searchTerm);
+      }
+      if (searchField === 'Kategori') return matchesMultiKeyword([r.kategori], searchTerm);
+      if (searchField === 'Keterangan') return matchesMultiKeyword([r.keterangan], searchTerm);
+      if (searchField === 'Status') return matchesMultiKeyword([r.sts_post], searchTerm);
+      return matchesMultiKeyword(
+        [r.no_bukti, r.tanggal_display, r.kategori, r.keterangan, r.sts_post, r.dibuat_oleh],
+        searchTerm
       );
     }
     return true;
   });
+
+  const selectedTableRow =
+    filteredTableRows.find((r) => r.id === selectedId) ||
+    tableRows.find((r) => r.id === selectedId) ||
+    null;
 
   const handleBaru = () => {
     setModalError(null);
@@ -280,6 +315,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
     try {
       setIsBusy(true);
       await erpDelete('jurnal_umums', confirmDeleteRow.id);
+      if (confirmDeleteRow.id === selectedId) setSelectedId('');
       setConfirmDeleteRow(null);
       await loadLiveRows();
       showFeedback('Jurnal Kertas Kerja dihapus dari Supabase');
@@ -291,8 +327,40 @@ export const LaporanKertasKerjaPrintForm: React.FC<
   };
 
   const handleSimpan = async () => {
+    const selected = selectedTableRow;
+    if (!selected) {
+      showFeedback('Pilih baris Jurnal Kertas Kerja terlebih dahulu untuk disimpan');
+      return;
+    }
     try {
       setIsBusy(true);
+      const dets = await erpList<any>('jurnal_umum_details', {
+        eq: { jurnal_id: selected.id },
+        orderBy: 'created_at',
+        asc: true,
+      }).catch(() => []);
+      const mappedDetails = dets.map((d) => ({
+        kode_akun: (d.kode_akun || '').trim().toUpperCase(),
+        nama_akun: (d.nama_akun || '').trim(),
+        debet: Number(d.debet || 0),
+        kredit: Number(d.kredit || 0),
+        keterangan: (d.keterangan || '').trim(),
+      }));
+      await erpCompositeSave(
+        'jurnal-umum',
+        {
+          id: selected.id,
+          no_bukti: selected.no_bukti,
+          tanggal: selected.tanggal_iso || toIsoDate(selected.tanggal) || todayIso(),
+          kategori: selected.kategori || 'Jurnal Umum',
+          keterangan: selected.keterangan || '',
+          saldo_debet: Number(selected.saldo_debet || 0),
+          sts_post: selected.sts_post || 'Not Yet',
+          diupdate_oleh: getCurrentUser().username || 'ADMIN',
+          tgl_update: todayIso(),
+        },
+        mappedDetails
+      );
       localStorage.setItem(
         'withcoder_preset_kertas_kerja',
         JSON.stringify({ periode, bentukLaporan })
@@ -301,7 +369,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
         month_active: periode.trim() || undefined,
       });
       await loadLiveRows();
-      showFeedback('Parameter & data Kertas Kerja tersinkron ke Supabase');
+      showFeedback(`Data Jurnal [${selected.no_bukti}] tersimpan ke Supabase`);
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -310,14 +378,42 @@ export const LaporanKertasKerjaPrintForm: React.FC<
   };
 
   const handleFind = async () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+    setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows();
-      showFeedback('Data Kertas Kerja dimuat ulang dari Supabase');
+      await loadLiveRows({ skipSearch: true });
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarCari = async () => {
+    try {
+      setIsBusy(true);
+      const res = await loadLiveRows({ field: searchField, term: searchTerm });
+      showFeedback(
+        searchTerm.trim()
+          ? `Hasil cari Supabase: ${res.length} jurnal ditemukan`
+          : `Data dimuat ulang (${res.length} jurnal)`
+      );
+    } catch (err: any) {
+      showFeedback(`Gagal mencari: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    try {
+      setIsBusy(true);
+      await loadLiveRows({ field: 'Semua', term: '' });
+      showFeedback('Filter pencarian direset');
+    } catch (err: any) {
+      showFeedback(`Gagal reset: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
@@ -391,11 +487,31 @@ export const LaporanKertasKerjaPrintForm: React.FC<
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      setPrintScopeOnOpen('all');
       const data = await fetchReportData();
       setPreviewRows(data);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat laporan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handlePrintSelected = async () => {
+    if (!selectedTableRow) {
+      showFeedback('Pilih baris Jurnal Kertas Kerja yang akan dicetak terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      setPrintScopeOnOpen('selected');
+      const data = await fetchReportData().catch(() => []);
+      setPreviewRows(data);
+      setIsPrintOpen(true);
+    } catch {
+      setPreviewRows([]);
+      setIsPrintOpen(true);
     } finally {
       setIsBusy(false);
     }
@@ -447,7 +563,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
         title="Laporan Kertas Kerja"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePreview}
+        onPrint={handlePrintSelected}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
@@ -467,7 +583,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleRequestHapus}
-              onPrint={handlePreview}
+              onPrint={handlePrintSelected}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -546,37 +662,27 @@ export const LaporanKertasKerjaPrintForm: React.FC<
         {/* Live Supabase Search & Jurnal Sumber Kertas Kerja Panel */}
         <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
-              >
-                <option value="Semua">Semua Kolom</option>
-                <option value="No.Bukti">No.Bukti</option>
-                <option value="Kategori">Kategori</option>
-                <option value="Keterangan">Keterangan</option>
-                <option value="Status">Status</option>
-              </select>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') loadLiveRows();
-                }}
+            <div className="flex items-center">
+              <ToolbarSearchControl
+                compact
+                searchField={searchField}
+                onSearchFieldChange={setSearchField}
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onCari={handleToolbarCari}
+                onReset={handleToolbarReset}
+                options={[
+                  { value: 'Semua', label: 'Semua Kolom' },
+                  { value: 'Kode', label: 'Kode (No.Bukti)' },
+                  { value: 'No.Bukti', label: 'No.Bukti' },
+                  { value: 'Kategori', label: 'Kategori' },
+                  { value: 'Keterangan', label: 'Keterangan' },
+                  { value: 'Status', label: 'Status' },
+                ]}
+                inputRef={searchInputRef}
+                isBusy={isBusy}
                 placeholder="Cari No.Bukti Jurnal, Kategori, Keterangan..."
-                className="w-[240px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
               />
-              <button
-                type="button"
-                onClick={() => loadLiveRows()}
-                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
-              >
-                Cari / Refresh
-              </button>
             </div>
             <span className="text-[11px] text-black">
               Data Supabase (<b>jurnal_umums</b>): <b>{filteredTableRows.length}</b> baris
@@ -904,12 +1010,81 @@ export const LaporanKertasKerjaPrintForm: React.FC<
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Jurnal Kertas Kerja"
+        rows={tableRows}
+        columns={[
+          { header: 'No.Bukti', accessor: (r) => r.no_bukti, mono: true, bold: true },
+          { header: 'Tanggal', accessor: (r) => r.tanggal_display, align: 'center' },
+          { header: 'Kategori', accessor: (r) => r.kategori },
+          { header: 'Keterangan', accessor: (r) => r.keterangan },
+          { header: 'Saldo Debet', accessor: (r) => formatRupiah(r.saldo_debet), align: 'right', mono: true, bold: true },
+          { header: 'Status', accessor: (r) => r.sts_post, align: 'center' },
+          { header: 'Dibuat Oleh', accessor: (r) => r.dibuat_oleh, align: 'center' },
+        ]}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.no_bukti,
+          r.tanggal_display,
+          r.kategori,
+          r.keterangan,
+          r.sts_post,
+          r.dibuat_oleh,
+        ]}
+        selectedId={selectedId}
+        onSelectRow={(r) => {
+          setSelectedId(r.id);
+          showFeedback(`Jurnal [${r.no_bukti}] dipilih`);
+        }}
+        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
+        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        isBusy={isBusy}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={bentukLaporan.toUpperCase()}
         subtitle={`Periode: ${periode}`}
         orientation="portrait"
+        defaultPrintScope={printScopeOnOpen}
+        selectedRow={selectedTableRow}
+        selectedTitle="CETAK JURNAL KERTAS KERJA TERPILIH"
+        selectedSubtitle={
+          selectedTableRow
+            ? `No.Bukti: ${selectedTableRow.no_bukti} | Kategori: ${selectedTableRow.kategori}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedTableRow
+            ? [
+                { label: 'No.Bukti', value: selectedTableRow.no_bukti },
+                { label: 'Tanggal', value: selectedTableRow.tanggal_display },
+                { label: 'Kategori', value: selectedTableRow.kategori },
+                { label: 'Status Post', value: selectedTableRow.sts_post },
+                { label: 'Dibuat Oleh', value: selectedTableRow.dibuat_oleh },
+              ]
+            : undefined
+        }
+        selectedColumns={[
+          { header: 'No.Bukti', accessor: 'no_bukti', width: '95px' },
+          { header: 'Tanggal', accessor: 'tanggal_display', align: 'center', width: '75px' },
+          { header: 'Kategori', accessor: 'kategori', width: '95px' },
+          { header: 'Keterangan', accessor: 'keterangan' },
+          { header: 'Saldo Debet', accessor: (r) => formatMoney(r.saldo_debet), align: 'right', width: '95px' },
+          { header: 'Status', accessor: 'sts_post', align: 'center', width: '65px' },
+          { header: 'Dibuat Oleh', accessor: 'dibuat_oleh', align: 'center', width: '80px' },
+        ]}
+        selectedSummaryItems={
+          selectedTableRow
+            ? [
+                { label: 'Saldo Debet', value: formatRupiah(selectedTableRow.saldo_debet) },
+                { label: 'Status Posting', value: selectedTableRow.sts_post },
+              ]
+            : undefined
+        }
         metaLines={[
           { label: 'Periode (mm-yyyy)', value: periode },
           { label: 'Bentuk Laporan', value: bentukLaporan },

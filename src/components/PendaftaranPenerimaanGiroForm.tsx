@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface PenerimaanGiroItem {
   id: string;
@@ -55,11 +58,11 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
 
   const [giroList, setGiroList] = useState<PenerimaanGiroItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
-  const [findQuery, setFindQuery] = useState<string>('');
 
   const [customerOptions, setCustomerOptions] = useState<any[]>([]);
   const [bankOptions, setBankOptions] = useState<string[]>([]);
@@ -480,21 +483,103 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
   };
 
   const filteredList = giroList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      item.customer.toLowerCase().includes(term) ||
-      item.noCekGiro.toLowerCase().includes(term) ||
-      item.bank.toLowerCase().includes(term) ||
-      item.idCustomer.toLowerCase().includes(term)
+    if (searchField === 'Kode') return matchesMultiKeyword([item.noCekGiro, item.idCustomer], searchTerm);
+    if (searchField === 'Customer') return matchesMultiKeyword([item.customer], searchTerm);
+    if (searchField === 'ID Customer') return matchesMultiKeyword([item.idCustomer], searchTerm);
+    if (searchField === 'No. Cek / Giro') return matchesMultiKeyword([item.noCekGiro], searchTerm);
+    if (searchField === 'Bank') return matchesMultiKeyword([item.bank], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    return matchesMultiKeyword(
+      [item.idCustomer, item.customer, item.noCekGiro, item.bank, item.due, item.keterangan],
+      searchTerm
     );
   });
 
   const totalAmountPaid = filteredList.reduce((sum, i) => sum + i.amountPaid, 0);
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const selectedGiro =
+    filteredList.find((g) => g.id === selectedId) ||
+    giroList.find((g) => g.id === selectedId) ||
+    null;
+
+  const SEARCH_DETAIL_COL_MAP: Record<string, string> = {
+    Kode: 'no_cek_giro',
+    Customer: 'customer',
+    'ID Customer': 'id_customer',
+    'No. Cek / Giro': 'no_cek_giro',
+    Bank: 'bank',
+    Keterangan: 'keterangan',
+  };
+
+  const searchDetailSupabase = async (fieldVal: string, termVal: string) => {
+    if (!headerId) return;
+    try {
+      setIsBusy(true);
+      const clean = termVal.trim();
+      const queryOpts: Record<string, any> = {
+        eq: { header_id: headerId },
+        orderBy: 'no_urut',
+        asc: true,
+      };
+      if (clean) {
+        const col = SEARCH_DETAIL_COL_MAP[fieldVal];
+        if (col) {
+          queryOpts.searchCol = col;
+          queryOpts.searchVal = clean;
+        } else {
+          queryOpts.orSearch = 'id_customer,customer,no_cek_giro,bank,keterangan';
+          queryOpts.searchVal = clean;
+        }
+      }
+      const dets = await erpList<any>('giro_penjualan_details', queryOpts);
+      const mapped: PenerimaanGiroItem[] = dets.map((d, i) => ({
+        id: d.id,
+        no: Number(d.no_urut ?? i + 1),
+        idCustomer: d.id_customer || '',
+        customer: d.customer || '',
+        noCekGiro: d.no_cek_giro || '',
+        bank: d.bank || '',
+        due: toDisplayDmy(d.due),
+        amountPaid: Number(d.amount_paid || 0),
+        keterangan: d.keterangan || '',
+      }));
+      setGiroList(mapped);
+      setSelectedId(mapped[0]?.id || '');
+      showFeedback(
+        clean
+          ? `Ditemukan ${mapped.length} baris giro dari Supabase`
+          : `Menampilkan ${mapped.length} baris giro`
+      );
+    } catch (err: any) {
+      showFeedback(`Gagal cari giro: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const searchHeadersSupabase = async (q: string): Promise<GiroPenjualanHeader[] | null> => {
+    try {
+      const clean = q.trim();
+      const queryOpts: Record<string, any> = {
+        orderBy: 'created_at',
+        asc: false,
+        limit: 100,
+      };
+      if (clean) {
+        queryOpts.orSearch = 'no_bukti,dibuat_oleh';
+        queryOpts.searchVal = clean;
+      }
+      const headers = await erpList<GiroPenjualanHeader>('giro_penjualan_headers', queryOpts);
+      setSavedHeaders(headers);
+      return headers;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await searchHeadersSupabase('');
   };
 
   const handleExportExcel = async () => {
@@ -519,12 +604,6 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
     showFeedback('Export Excel selesai');
   };
 
-  const filteredHeaders = savedHeaders.filter((h) => {
-    if (!findQuery.trim()) return true;
-    const q = findQuery.toLowerCase().trim();
-    return (h.no_bukti || '').toLowerCase().includes(q);
-  });
-
   return (
     <div
       id="pendaftaran-penerimaan-giro-form"
@@ -534,13 +613,13 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
         <FormHeaderBanner
           title="Pendaftaran Penerimaan Giro"
           onClose={onClose}
-          onFind={() => setIsFindOpen(true)}
+          onFind={handleFind}
           onPrint={() => setIsPrintOpen(true)}
           onTableView={loadInitialData}
           onExportExcel={handleExportExcel}
         />
 
-        <div className="shrink-0 bg-[#ECE9D8] border-b border-[#ACA899] px-3 py-2 flex items-center flex-wrap gap-4">
+        <div className="shrink-0 bg-[#ECE9D8] border-b border-[#ACA899] px-3 py-2 flex items-center flex-wrap gap-3">
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-black w-[65px]">No.Bukti :</span>
             <input
@@ -551,7 +630,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
             />
             <button
               type="button"
-              onClick={() => setIsFindOpen(true)}
+              onClick={handleFind}
               className="px-2 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7F9DB9] text-[10px] font-bold cursor-pointer"
             >
               Pilih...
@@ -565,18 +644,31 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
               format="dmy"
             />
           </div>
-          <div className="flex-1" />
-          <div className="flex items-center space-x-1 px-2">
-            <span className="text-gray-700">Cari:</span>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Customer / No Cek / Bank..."
-              className="px-2 py-0.5 bg-white border border-[#7F9DB9] rounded-[1px] text-black text-xs w-[190px] focus:outline-none focus:border-blue-600"
-            />
-          </div>
+          <ToolbarSearchControl
+            compact
+            searchField={searchField}
+            onSearchFieldChange={setSearchField}
+            searchTerm={searchTerm}
+            onSearchTermChange={setSearchTerm}
+            onCari={() => searchDetailSupabase(searchField, searchTerm)}
+            onReset={() => {
+              setSearchField('Semua');
+              setSearchTerm('');
+              return searchDetailSupabase('Semua', '');
+            }}
+            inputRef={searchInputRef}
+            isBusy={isBusy}
+            inputWidthClass="w-[160px]"
+            options={[
+              { value: 'Semua', label: 'Semua' },
+              { value: 'Kode', label: 'Kode (No.Giro)' },
+              { value: 'Customer', label: 'Customer' },
+              { value: 'ID Customer', label: 'ID Customer' },
+              { value: 'No. Cek / Giro', label: 'No. Cek / Giro' },
+              { value: 'Bank', label: 'Bank' },
+              { value: 'Keterangan', label: 'Keterangan' },
+            ]}
+          />
         </div>
 
         <div className="shrink-0 h-[44px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center px-3 space-x-2 overflow-x-auto">
@@ -900,67 +992,28 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
           </div>
         )}
 
-        {isFindOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[460px] flex flex-col text-xs">
-              <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold">
-                <span>Pilih Dokumen Penerimaan Giro</span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="p-3 space-y-2">
-                <input
-                  type="text"
-                  value={findQuery}
-                  onChange={(e) => setFindQuery(e.target.value)}
-                  placeholder="Cari No.Bukti / Tanggal..."
-                  className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9]"
-                />
-                <div className="h-[220px] overflow-auto bg-white border border-[#7F9DB9]">
-                  <table className="w-full text-left border-collapse text-[11px]">
-                    <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                      <tr>
-                        <th className="px-2 py-1 border-r border-[#ACA899]">No.Bukti</th>
-                        <th className="px-2 py-1">Tanggal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredHeaders.map((h, i) => (
-                        <tr
-                          key={h.id}
-                          onClick={async () => {
-                            await loadHeaderDetails(h, i);
-                            setIsFindOpen(false);
-                          }}
-                          className="cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white"
-                        >
-                          <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">
-                            {h.no_bukti}
-                          </td>
-                          <td className="px-2 py-1">{toDisplayDmy(h.tanggal)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setIsFindOpen(false)}
-                    className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                  >
-                    Tutup
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <SupabaseFindModal
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+          tableLabel="Pendaftaran Penerimaan Giro"
+          rows={savedHeaders}
+          selectedId={headerId}
+          getRowId={(h) => h.id}
+          getSearchValues={(h) => [h.no_bukti, toDisplayDmy(h.tanggal), h.dibuat_oleh]}
+          isBusy={isBusy}
+          onSearchSupabase={(q) => searchHeadersSupabase(q)}
+          onRefreshSupabase={() => searchHeadersSupabase('')}
+          onSelectRow={async (hdr) => {
+            const idx = savedHeaders.findIndex((x) => x.id === hdr.id);
+            await loadHeaderDetails(hdr, idx >= 0 ? idx : 0);
+            showFeedback(`Dokumen Giro [${hdr.no_bukti}] dipilih`);
+          }}
+          columns={[
+            { header: 'Kode / No.Bukti', accessor: (h) => h.no_bukti, widthClass: 'w-40', mono: true, bold: true },
+            { header: 'Tanggal', accessor: (h) => toDisplayDmy(h.tanggal), widthClass: 'w-32', align: 'center' },
+            { header: 'Dibuat Oleh', accessor: (h) => h.dibuat_oleh || '-' },
+          ]}
+        />
 
         {confirmDeleteTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1022,6 +1075,27 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
           summaryItems={[
             { label: 'Total Amount Paid', value: formatRupiah(totalAmountPaid) },
           ]}
+          selectedRow={selectedGiro}
+          selectedTitle="BUKTI PENERIMAAN GIRO (RECORD TERPILIH)"
+          selectedSubtitle={
+            selectedGiro ? `No. Bukti: ${noBukti} | No. Giro: ${selectedGiro.noCekGiro}` : undefined
+          }
+          selectedMetaLines={
+            selectedGiro
+              ? [
+                  { label: 'No. Bukti', value: noBukti },
+                  { label: 'Tanggal', value: tanggal },
+                  { label: 'Customer', value: `${selectedGiro.idCustomer} - ${selectedGiro.customer}` },
+                  { label: 'No. Cek / Giro', value: selectedGiro.noCekGiro },
+                  { label: 'Bank / Due', value: `${selectedGiro.bank} / ${selectedGiro.due}` },
+                ]
+              : undefined
+          }
+          selectedSummaryItems={
+            selectedGiro
+              ? [{ label: 'Amount Paid Terpilih', value: formatRupiah(selectedGiro.amountPaid) }]
+              : undefined
+          }
         />
       </div>
     </div>

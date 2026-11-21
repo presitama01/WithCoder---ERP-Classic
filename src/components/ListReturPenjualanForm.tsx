@@ -19,6 +19,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface ReturPenjualanItem {
   id: string;
@@ -83,7 +86,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   const [returList, setReturList] = useState<ReturPenjualanItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [searchField, setSearchField] = useState<string>('Nama Pelanggan');
+  const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
@@ -92,6 +95,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [newNoBukti, setNewNoBukti] = useState<string>('');
@@ -114,27 +118,87 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadData = async (): Promise<boolean> => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'no_bukti',
+    'No.Bukti': 'no_bukti',
+    'Nama Pelanggan': 'nama_customer',
+    'No.Faktur': 'no_faktur',
+    Keterangan: 'keterangan',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+  }): Promise<ReturPenjualanItem[] | null> => {
     try {
       setIsBusy(true);
-      const rows = await erpList<any>('retur_penjualans', { orderBy: 'tanggal', asc: false });
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = {
+        orderBy: 'tanggal',
+        asc: false,
+        limit: 1000,
+      };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'no_bukti,nama_customer,no_faktur,keterangan,lokasi_stock,sts_post';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+      const rows = await erpList<any>('retur_penjualans', queryOpts);
       const mapped = rows.map(mapDbToReturJual);
       setReturList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
         setSelectedId(mapped[0].id);
+      } else if (mapped.length === 0) {
+        setSelectedId('');
       }
-      return true;
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal load: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleToolbarSimpan = async () => {
-    const ok = await loadData();
-    if (ok) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = returList.find((r) => r.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Retur Penjualan terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const saved = await erpUpdate<any>('retur_penjualans', selected.id, {
+        no_bukti: selected.noBukti,
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_customer: selected.namaCustomer,
+        no_faktur: selected.noFaktur,
+        nilai_retur: selected.nilaiReturNum,
+        keterangan: selected.keterangan,
+        disc: parseNum(selected.disc),
+        ppn: parseNum(selected.ppn),
+        lokasi_stock: selected.lokasiStock || '01 - OFFICE',
+        sts_print: selected.stsPrint || 'Not Yet',
+        tgl_print: toIsoDate(selected.tglPrint) || null,
+        sts_post: selected.stsPost || 'Posting',
+        tgl_post: toIsoDate(selected.tglPost) || null,
+        diupdate_oleh: getCurrentUser().username || 'ADMIN',
+        tgl_update: todayIso(),
+      });
+      const mapped = mapDbToReturJual(saved);
+      setReturList((prev) => prev.map((r) => (r.id === selected.id ? mapped : r)));
+      showFeedback(`Data Retur Penjualan [${mapped.noBukti}] tersimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -272,22 +336,58 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
   const filteredList = returList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
     if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    return (
-      item.noBukti.toLowerCase().includes(term) ||
-      item.namaCustomer.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term)
+    if (searchField === 'Kode' || searchField === 'No.Bukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
+    }
+    if (searchField === 'Nama Pelanggan') return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    if (searchField === 'No.Faktur') return matchesMultiKeyword([item.noFaktur], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    return matchesMultiKeyword(
+      [
+        item.noBukti,
+        item.tanggal,
+        item.namaCustomer,
+        item.noFaktur,
+        item.keterangan,
+        item.lokasiStock,
+        item.stsPost,
+      ],
+      searchTerm
     );
   });
 
+  const selectedRetur =
+    filteredList.find((r) => r.id === selectedId) ||
+    returList.find((r) => r.id === selectedId) ||
+    null;
+
   const totalNilai = filteredList.reduce((acc, r) => acc + r.nilaiReturNum, 0);
 
-  const handleFind = () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+  const handleToolbarCari = async () => {
+    const rows = await loadData({ field: searchField, term: searchTerm });
+    if (rows && rows.length > 0) {
+      setSelectedId(rows[0].id);
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} Retur Penjualan di Supabase`
+          : `Menampilkan ${rows.length} Retur Penjualan dari Supabase`
+      );
+    } else if (rows) {
+      showFeedback('Data Retur Penjualan tidak ditemukan di Supabase');
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    setTanggalFilter('Semua');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} Retur Penjualan)`);
+  };
+
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
   const handleExportExcel = async () => {
@@ -322,7 +422,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
         onClose={onClose}
         onFind={handleFind}
         onPrint={() => setIsPrintOpen(true)}
-        onTableView={loadData}
+        onTableView={() => loadData({ field: searchField, term: searchTerm })}
         onExportExcel={handleExportExcel}
       />
 
@@ -445,26 +545,25 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
       </div>
 
       <div className="bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2">
-          <span className="font-semibold">Search :</span>
-          <select
-            value={searchField}
-            onChange={(e) => setSearchField(e.target.value)}
-            className="px-2 py-0.5 bg-white border border-[#7A7A7A] text-xs rounded"
-          >
-            <option value="Nama Pelanggan">Nama Pelanggan</option>
-            <option value="No.Bukti">No.Bukti</option>
-            <option value="Keterangan">Keterangan</option>
-          </select>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Cari data..."
-            className="px-2 py-0.5 w-64 bg-white border border-[#7A7A7A] text-xs shadow-inner"
-          />
-        </div>
+        <ToolbarSearchControl
+          compact
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleToolbarCari}
+          onReset={handleToolbarReset}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode (No.Bukti)' },
+            { value: 'No.Bukti', label: 'No.Bukti' },
+            { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+            { value: 'No.Faktur', label: 'No.Faktur' },
+            { value: 'Keterangan', label: 'Keterangan' },
+          ]}
+        />
         <div className="flex items-center space-x-4">
           <div className="w-64 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
             {returList.find((r) => r.id === selectedId)?.namaCustomer || ''}
@@ -650,6 +749,51 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Retur Penjualan"
+        rows={returList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.noBukti,
+          r.tanggal,
+          r.namaCustomer,
+          r.noFaktur,
+          r.keterangan,
+          r.lokasiStock,
+          r.stsPost,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        placeholder="Cari Kode (No.Bukti), Customer, No.Faktur, Keterangan..."
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(r, q) => {
+          setSelectedId(r.id);
+          setSearchTerm(q);
+          showFeedback(`Retur Penjualan [${r.noBukti} - ${r.namaCustomer}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode / No.Bukti', accessor: (r) => r.noBukti, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-22' },
+          { header: 'Nama Customer', accessor: (r) => r.namaCustomer, bold: true },
+          { header: 'No.Faktur Ref', accessor: (r) => r.noFaktur || '-', widthClass: 'w-28', mono: true },
+          { header: 'Keterangan', accessor: (r) => r.keterangan || '-' },
+          { header: 'Nilai Retur', accessor: (r) => r.nilaiRetur, widthClass: 'w-28', align: 'right', mono: true },
+          { header: 'Status', accessor: (r) => r.stsPost, widthClass: 'w-20', align: 'center' },
+        ]}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -671,6 +815,33 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
           { label: 'Total Retur Penjualan', value: `${filteredList.length} Dokumen` },
           { label: 'Total Nilai Retur', value: formatRupiah(totalNilai) },
         ]}
+        selectedRow={selectedRetur}
+        selectedTitle="DETAIL RETUR PENJUALAN"
+        selectedSubtitle={
+          selectedRetur
+            ? `No.Bukti: ${selectedRetur.noBukti} | Customer: ${selectedRetur.namaCustomer}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedRetur
+            ? [
+                { label: 'No.Bukti', value: selectedRetur.noBukti },
+                { label: 'Tanggal', value: selectedRetur.tanggal },
+                { label: 'Customer', value: selectedRetur.namaCustomer },
+                { label: 'No.Faktur Ref', value: selectedRetur.noFaktur || '-' },
+                { label: 'Lokasi Stock', value: selectedRetur.lokasiStock },
+                { label: 'Sts.Post', value: selectedRetur.stsPost },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedRetur
+            ? [
+                { label: 'Disc / PPN', value: `${selectedRetur.disc} / ${selectedRetur.ppn}` },
+                { label: 'Nilai Retur', value: formatRupiah(selectedRetur.nilaiReturNum) },
+              ]
+            : undefined
+        }
       />
     </div>
   );

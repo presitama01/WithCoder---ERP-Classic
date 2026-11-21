@@ -3,6 +3,9 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
   erpCreate,
   erpDelete,
@@ -73,6 +76,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Add / Koreksi Modal
@@ -93,6 +97,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<SoDetailGridRow | null>(null);
 
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
@@ -100,11 +105,125 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadLiveRows = async (): Promise<SoDetailGridRow[]> => {
-    const [items, orders] = await Promise.all([
-      erpList<any>('sales_order_items', { orderBy: 'created_at', asc: false }),
-      erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-    ]);
+  const loadLiveRows = async (opts?: {
+    field?: string;
+    term?: string;
+    skipSearch?: boolean;
+  }): Promise<SoDetailGridRow[]> => {
+    const activeField = opts?.field ?? searchField;
+    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
+
+    let items: any[] = [];
+    let orders: any[] = [];
+
+    if (activeTerm) {
+      if (activeField === 'No.SO') {
+        [items, orders] = await Promise.all([
+          erpList<any>('sales_order_items', {
+            orderBy: 'created_at',
+            asc: false,
+            searchCol: 'no_so',
+            searchVal: activeTerm,
+          }),
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        ]);
+      } else if (activeField === 'Kode Barang') {
+        [items, orders] = await Promise.all([
+          erpList<any>('sales_order_items', {
+            orderBy: 'created_at',
+            asc: false,
+            searchCol: 'kode_barang',
+            searchVal: activeTerm,
+          }),
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        ]);
+      } else if (activeField === 'Nama Barang') {
+        [items, orders] = await Promise.all([
+          erpList<any>('sales_order_items', {
+            orderBy: 'created_at',
+            asc: false,
+            searchCol: 'nama_barang',
+            searchVal: activeTerm,
+          }),
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        ]);
+      } else if (activeField === 'Kode') {
+        [items, orders] = await Promise.all([
+          erpList<any>('sales_order_items', {
+            orderBy: 'created_at',
+            asc: false,
+            orSearch: 'no_so,kode_barang,nama_barang',
+            searchVal: activeTerm,
+          }),
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        ]);
+      } else if (activeField === 'Customer' || activeField === 'No.PO') {
+        const orderCol = activeField === 'Customer' ? 'nama_customer' : 'po_no';
+        const [allItems, matchedOrders] = await Promise.all([
+          erpList<any>('sales_order_items', { orderBy: 'created_at', asc: false }),
+          erpList<any>('sales_orders', {
+            orderBy: 'tanggal',
+            asc: false,
+            searchCol: orderCol,
+            searchVal: activeTerm,
+          }),
+        ]);
+        orders = matchedOrders;
+        const matchedIds = new Set(matchedOrders.map((o) => String(o.id)));
+        const matchedNos = new Set(
+          matchedOrders.map((o) => String(o.no_bukti || '').toUpperCase()).filter(Boolean)
+        );
+        items = allItems.filter(
+          (it) =>
+            (it.so_id && matchedIds.has(String(it.so_id))) ||
+            matchedNos.has(String(it.no_so || '').toUpperCase())
+        );
+      } else {
+        const [itemHits, orderHits, allOrders] = await Promise.all([
+          erpList<any>('sales_order_items', {
+            orderBy: 'created_at',
+            asc: false,
+            orSearch: 'no_so,kode_barang,nama_barang,unit',
+            searchVal: activeTerm,
+          }),
+          erpList<any>('sales_orders', {
+            orderBy: 'tanggal',
+            asc: false,
+            orSearch: 'no_bukti,nama_customer,po_no,sales,lokasi_stock',
+            searchVal: activeTerm,
+          }),
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+        ]);
+        orders = allOrders;
+        const seen = new Map<string, any>();
+        for (const it of itemHits) seen.set(String(it.id), it);
+        if (orderHits.length > 0) {
+          const allItems = await erpList<any>('sales_order_items', {
+            orderBy: 'created_at',
+            asc: false,
+          });
+          const hitIds = new Set(orderHits.map((o) => String(o.id)));
+          const hitNos = new Set(
+            orderHits.map((o) => String(o.no_bukti || '').toUpperCase()).filter(Boolean)
+          );
+          for (const it of allItems) {
+            if (
+              (it.so_id && hitIds.has(String(it.so_id))) ||
+              hitNos.has(String(it.no_so || '').toUpperCase())
+            ) {
+              seen.set(String(it.id), it);
+            }
+          }
+        }
+        items = Array.from(seen.values());
+      }
+    } else {
+      [items, orders] = await Promise.all([
+        erpList<any>('sales_order_items', { orderBy: 'created_at', asc: false }),
+        erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+      ]);
+    }
+
     const orderById = new Map<string, any>();
     const orderByNo = new Map<string, any>();
     for (const o of orders) {
@@ -145,6 +264,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
       setSelectedId(mapped[0].id);
+    } else if (mapped.length === 0) {
+      setSelectedId('');
     }
     return mapped;
   };
@@ -216,22 +337,24 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
       if (!r.customer.toLowerCase().includes(customerFilter.trim().toLowerCase())) return false;
     }
     if (searchTerm.trim()) {
-      const q = searchTerm.trim().toLowerCase();
-      if (searchField === 'No.SO') return r.no_so.toLowerCase().includes(q);
-      if (searchField === 'Customer') return r.customer.toLowerCase().includes(q);
-      if (searchField === 'Kode Barang') return r.kode_barang.toLowerCase().includes(q);
-      if (searchField === 'Nama Barang') return r.nama_barang.toLowerCase().includes(q);
-      if (searchField === 'No.PO') return r.no_po.toLowerCase().includes(q);
-      return (
-        r.no_so.toLowerCase().includes(q) ||
-        r.customer.toLowerCase().includes(q) ||
-        r.kode_barang.toLowerCase().includes(q) ||
-        r.nama_barang.toLowerCase().includes(q) ||
-        r.no_po.toLowerCase().includes(q)
+      if (searchField === 'Kode') return matchesMultiKeyword([r.no_so, r.kode_barang], searchTerm);
+      if (searchField === 'No.SO') return matchesMultiKeyword([r.no_so], searchTerm);
+      if (searchField === 'Customer') return matchesMultiKeyword([r.customer], searchTerm);
+      if (searchField === 'Kode Barang') return matchesMultiKeyword([r.kode_barang], searchTerm);
+      if (searchField === 'Nama Barang') return matchesMultiKeyword([r.nama_barang], searchTerm);
+      if (searchField === 'No.PO') return matchesMultiKeyword([r.no_po], searchTerm);
+      return matchesMultiKeyword(
+        [r.no_so, r.tanggal, r.customer, r.no_po, r.kode_barang, r.nama_barang, r.unit, r.lokasi_stock, r.so_close],
+        searchTerm
       );
     }
     return true;
   });
+
+  const selectedTableRow =
+    filteredTableRows.find((r) => r.id === selectedId) ||
+    tableRows.find((r) => r.id === selectedId) ||
+    null;
 
   const handleBaru = () => {
     setEditingId(null);
@@ -352,6 +475,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     try {
       setIsBusy(true);
       await erpDelete('sales_order_items', confirmDeleteRow.id);
+      if (confirmDeleteRow.id === selectedId) setSelectedId('');
       setConfirmDeleteRow(null);
       await loadLiveRows();
       showFeedback('Baris Sales Order dihapus dari Supabase');
@@ -363,8 +487,22 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   };
 
   const handleSimpan = async () => {
+    const selected = selectedTableRow;
+    if (!selected) {
+      showFeedback('Pilih baris item Sales Order terlebih dahulu untuk disimpan');
+      return;
+    }
     try {
       setIsBusy(true);
+      await erpUpdate('sales_order_items', selected.id, {
+        so_id: selected.so_id,
+        no_so: selected.no_so,
+        kode_barang: selected.kode_barang,
+        nama_barang: selected.nama_barang,
+        unit: selected.unit || 'PCS',
+        pesan: Number(selected.pesan || 0),
+        kirim: Number(selected.kirim || 0),
+      });
       localStorage.setItem(
         'withcoder_preset_so_detail',
         JSON.stringify({ tglStart, tglEnd, lokasiStock, bentukLaporan })
@@ -375,7 +513,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
         lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
       });
       await loadLiveRows();
-      showFeedback('Parameter & data Sales Order Detail tersinkron ke Supabase');
+      showFeedback(`Data Sales Order Detail [${selected.no_so} - ${selected.kode_barang}] tersimpan ke Supabase`);
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -384,14 +522,42 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   };
 
   const handleFind = async () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+    setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows();
-      showFeedback('Data Supabase dimuat ulang - ketik kata kunci pencarian');
+      await loadLiveRows({ skipSearch: true });
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarCari = async () => {
+    try {
+      setIsBusy(true);
+      const res = await loadLiveRows({ field: searchField, term: searchTerm });
+      showFeedback(
+        searchTerm.trim()
+          ? `Hasil cari Supabase: ${res.length} baris ditemukan`
+          : `Data dimuat ulang (${res.length} baris)`
+      );
+    } catch (err: any) {
+      showFeedback(`Gagal mencari: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    try {
+      setIsBusy(true);
+      await loadLiveRows({ field: 'Semua', term: '' });
+      showFeedback('Filter pencarian direset');
+    } catch (err: any) {
+      showFeedback(`Gagal reset: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
@@ -403,7 +569,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     const isDetailMode = bentukLaporan.startsWith('01');
 
     if (isDetailMode) {
-      const fresh = await loadLiveRows();
+      const fresh = await loadLiveRows({ skipSearch: true });
       return fresh.filter((r) => {
         if (startIso && r.tanggalIso && r.tanggalIso < startIso) return false;
         if (endIso && r.tanggalIso && r.tanggalIso > endIso) return false;
@@ -450,11 +616,31 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      setPrintScopeOnOpen('all');
       const data = await fetchReportData();
       setPreviewRows(data);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat laporan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handlePrintSelected = async () => {
+    if (!selectedTableRow) {
+      showFeedback('Pilih baris Sales Order Detail yang akan dicetak terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      setPrintScopeOnOpen('selected');
+      const data = await fetchReportData().catch(() => filteredTableRows);
+      setPreviewRows(data.length > 0 ? data : filteredTableRows);
+      setIsPrintOpen(true);
+    } catch {
+      setPreviewRows(filteredTableRows);
+      setIsPrintOpen(true);
     } finally {
       setIsBusy(false);
     }
@@ -537,7 +723,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
         title="Sales Order Detail"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePreview}
+        onPrint={handlePrintSelected}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
@@ -557,7 +743,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleRequestHapus}
-              onPrint={handlePreview}
+              onPrint={handlePrintSelected}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -766,38 +952,28 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
         {/* Live Supabase Search & Data Grid Panel */}
         <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
-              >
-                <option value="Semua">Semua Kolom</option>
-                <option value="No.SO">No.SO</option>
-                <option value="Customer">Customer</option>
-                <option value="Kode Barang">Kode Barang</option>
-                <option value="Nama Barang">Nama Barang</option>
-                <option value="No.PO">No.PO</option>
-              </select>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') loadLiveRows();
-                }}
-                placeholder="Cari No.SO, Customer, Kode/Nama Barang..."
-                className="w-[230px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
+            <div className="flex items-center">
+              <ToolbarSearchControl
+                compact
+                searchField={searchField}
+                onSearchFieldChange={setSearchField}
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onCari={handleToolbarCari}
+                onReset={handleToolbarReset}
+                options={[
+                  { value: 'Semua', label: 'Semua Kolom' },
+                  { value: 'Kode', label: 'Kode (No.SO / Brg)' },
+                  { value: 'No.SO', label: 'No.SO' },
+                  { value: 'Customer', label: 'Customer' },
+                  { value: 'Kode Barang', label: 'Kode Barang' },
+                  { value: 'Nama Barang', label: 'Nama Barang' },
+                  { value: 'No.PO', label: 'No.PO' },
+                ]}
+                inputRef={searchInputRef}
+                isBusy={isBusy}
+                placeholder="Cari No.SO, Kode/Nama Barang, Customer..."
               />
-              <button
-                type="button"
-                onClick={() => loadLiveRows()}
-                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
-              >
-                Cari / Refresh
-              </button>
             </div>
             <span className="text-[11px] text-black">
               Data Supabase (<b>sales_order_items</b>): <b>{filteredTableRows.length}</b> baris
@@ -1100,12 +1276,90 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
         </div>
       )}
 
+      <SupabaseFindModal<SoDetailGridRow>
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Sales Order Detail"
+        rows={tableRows}
+        columns={[
+          { header: 'No.SO', accessor: (r) => r.no_so, mono: true, bold: true },
+          { header: 'Tanggal', accessor: (r) => r.tanggal, align: 'center' },
+          { header: 'Customer', accessor: (r) => r.customer },
+          { header: 'No.PO', accessor: (r) => r.no_po || '-', mono: true },
+          { header: 'Kode Brg', accessor: (r) => r.kode_barang, mono: true },
+          { header: 'Nama Barang', accessor: (r) => r.nama_barang },
+          { header: 'Unit', accessor: (r) => r.unit, align: 'center' },
+          { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', mono: true },
+          { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', mono: true, bold: true },
+        ]}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.no_so,
+          r.tanggal,
+          r.customer,
+          r.no_po,
+          r.kode_barang,
+          r.nama_barang,
+          r.unit,
+          r.lokasi_stock,
+          r.so_close,
+        ]}
+        selectedId={selectedId}
+        onSelectRow={(r) => {
+          setSelectedId(r.id);
+          showFeedback(`Sales Order Detail [${r.no_so} - ${r.kode_barang}] dipilih`);
+        }}
+        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
+        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        isBusy={isBusy}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={bentukLaporan.toUpperCase()}
         subtitle={`Periode: ${tglStart} s/d ${tglEnd}`}
         orientation="landscape"
+        defaultPrintScope={printScopeOnOpen}
+        selectedRow={selectedTableRow}
+        selectedTitle="CETAK DETAIL ITEM SALES ORDER"
+        selectedSubtitle={
+          selectedTableRow
+            ? `No.SO: ${selectedTableRow.no_so} | Kode: ${selectedTableRow.kode_barang}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedTableRow
+            ? [
+                { label: 'No. Sales Order', value: selectedTableRow.no_so },
+                { label: 'Tanggal', value: selectedTableRow.tanggal },
+                { label: 'Customer', value: selectedTableRow.customer || '-' },
+                { label: 'No. PO', value: selectedTableRow.no_po || '-' },
+                { label: 'Lokasi Stock', value: selectedTableRow.lokasi_stock || '-' },
+              ]
+            : undefined
+        }
+        selectedColumns={[
+          { header: 'No.SO', accessor: 'no_so', width: '95px' },
+          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '75px' },
+          { header: 'Customer', accessor: 'customer' },
+          { header: 'No.PO', accessor: 'no_po', width: '85px' },
+          { header: 'Kode Brg', accessor: 'kode_barang', width: '80px' },
+          { header: 'Nama Barang', accessor: 'nama_barang' },
+          { header: 'Unit', accessor: 'unit', align: 'center', width: '45px' },
+          { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '55px' },
+          { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '55px' },
+          { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', width: '55px' },
+        ]}
+        selectedSummaryItems={
+          selectedTableRow
+            ? [
+                { label: 'Qty Pesan', value: formatMoney(selectedTableRow.pesan) },
+                { label: 'Qty Kirim', value: formatMoney(selectedTableRow.kirim) },
+                { label: 'Qty Sisa', value: formatMoney(selectedTableRow.sisa) },
+              ]
+            : undefined
+        }
         metaLines={[
           { label: 'Periode Tanggal', value: `${tglStart} s/d ${tglEnd}` },
           { label: 'Lokasi Stock', value: lokasiStock },

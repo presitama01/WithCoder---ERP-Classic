@@ -3,6 +3,9 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
   erpCreate,
   erpDelete,
@@ -50,6 +53,7 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Add / Koreksi Modal for stock_awal
@@ -69,6 +73,7 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
 
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
@@ -76,8 +81,33 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
     setTimeout(() => setFeedback(null), 2500);
   };
 
-  const loadLiveRows = async (): Promise<any[]> => {
-    const rows = await erpList<any>('stock_awal', { orderBy: 'item_code', asc: true });
+  const loadLiveRows = async (opts?: {
+    field?: string;
+    term?: string;
+    skipSearch?: boolean;
+  }): Promise<any[]> => {
+    const activeField = opts?.field ?? searchField;
+    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
+    const SEARCH_COL_MAP: Record<string, string> = {
+      Kode: 'item_code',
+      'Item Code': 'item_code',
+      Description: 'description',
+      Merk: 'merk',
+      Lokasi: 'lokasi',
+      Periode: 'periode',
+    };
+    const queryOpts: Record<string, any> = { orderBy: 'item_code', asc: true };
+    if (activeTerm) {
+      if (activeField !== 'Semua' && SEARCH_COL_MAP[activeField]) {
+        queryOpts.searchCol = SEARCH_COL_MAP[activeField];
+        queryOpts.searchVal = activeTerm;
+      } else {
+        queryOpts.orSearch = 'item_code,description,merk,category,lokasi,periode';
+        queryOpts.searchVal = activeTerm;
+      }
+    }
+
+    const rows = await erpList<any>('stock_awal', queryOpts);
     const mapped = rows.map((r) => ({
       ...r,
       id: String(r.id),
@@ -95,6 +125,8 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
       setSelectedId(mapped[0].id);
+    } else if (mapped.length === 0) {
+      setSelectedId('');
     }
     return mapped;
   };
@@ -164,23 +196,25 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
       if (!r.item_code.toLowerCase().includes(itemCode.trim().toLowerCase())) return false;
     }
     if (searchTerm.trim()) {
-      const q = searchTerm.trim().toLowerCase();
-      if (searchField === 'Item Code') return r.item_code.toLowerCase().includes(q);
-      if (searchField === 'Description') return r.description.toLowerCase().includes(q);
-      if (searchField === 'Merk') return r.merk.toLowerCase().includes(q);
-      if (searchField === 'Lokasi') return r.lokasi.toLowerCase().includes(q);
-      if (searchField === 'Periode') return r.periode.toLowerCase().includes(q);
-      return (
-        r.item_code.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q) ||
-        r.merk.toLowerCase().includes(q) ||
-        r.category.toLowerCase().includes(q) ||
-        r.lokasi.toLowerCase().includes(q) ||
-        r.periode.toLowerCase().includes(q)
+      if (searchField === 'Kode' || searchField === 'Item Code') {
+        return matchesMultiKeyword([r.item_code], searchTerm);
+      }
+      if (searchField === 'Description') return matchesMultiKeyword([r.description], searchTerm);
+      if (searchField === 'Merk') return matchesMultiKeyword([r.merk], searchTerm);
+      if (searchField === 'Lokasi') return matchesMultiKeyword([r.lokasi], searchTerm);
+      if (searchField === 'Periode') return matchesMultiKeyword([r.periode], searchTerm);
+      return matchesMultiKeyword(
+        [r.item_code, r.description, r.merk, r.category, r.lokasi, r.periode, r.satuan],
+        searchTerm
       );
     }
     return true;
   });
+
+  const selectedTableRow =
+    filteredTableRows.find((r) => r.id === selectedId) ||
+    tableRows.find((r) => r.id === selectedId) ||
+    null;
 
   const handleModalItemCodeChange = (val: string) => {
     const upper = val.toUpperCase();
@@ -298,6 +332,7 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
     try {
       setIsBusy(true);
       await erpDelete('stock_awal', confirmDeleteRow.id);
+      if (confirmDeleteRow.id === selectedId) setSelectedId('');
       setConfirmDeleteRow(null);
       await loadLiveRows();
       showFeedback('Baris Kartu Stock dihapus dari Supabase');
@@ -309,8 +344,25 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
   };
 
   const handleSimpan = async () => {
+    const selected = selectedTableRow;
+    if (!selected) {
+      showFeedback('Pilih baris Kartu / Stock Awal terlebih dahulu untuk disimpan');
+      return;
+    }
     try {
       setIsBusy(true);
+      await erpUpdate('stock_awal', selected.id, {
+        periode: selected.periode || '08 - 2026',
+        lokasi: selected.lokasi || '01 - OFFICE',
+        item_code: selected.item_code,
+        description: selected.description,
+        category: selected.category || '',
+        merk: selected.merk || '',
+        satuan: selected.satuan || 'PCS',
+        hpp: Number(selected.hpp || 0),
+        stock_bagus: Number(selected.stock_bagus || 0),
+        stock_rusak: Number(selected.stock_rusak || 0),
+      });
       localStorage.setItem(
         'withcoder_preset_kartu_stock',
         JSON.stringify({ bulanStart, bulanEnd, tglStart, tglEnd, lokasiStock, bentukLaporan })
@@ -322,7 +374,7 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
         lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
       });
       await loadLiveRows();
-      showFeedback('Parameter & data Kartu Stock tersinkron ke Supabase');
+      showFeedback(`Data Kartu Stock [${selected.item_code}] tersimpan ke Supabase`);
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -331,14 +383,42 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
   };
 
   const handleFind = async () => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
+    setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows();
-      showFeedback('Data Kartu Stock dimuat ulang dari Supabase');
+      await loadLiveRows({ skipSearch: true });
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarCari = async () => {
+    try {
+      setIsBusy(true);
+      const res = await loadLiveRows({ field: searchField, term: searchTerm });
+      showFeedback(
+        searchTerm.trim()
+          ? `Hasil cari Supabase: ${res.length} baris ditemukan`
+          : `Data dimuat ulang (${res.length} baris)`
+      );
+    } catch (err: any) {
+      showFeedback(`Gagal mencari: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    try {
+      setIsBusy(true);
+      await loadLiveRows({ field: 'Semua', term: '' });
+      showFeedback('Filter pencarian direset');
+    } catch (err: any) {
+      showFeedback(`Gagal reset: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
@@ -465,11 +545,31 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      setPrintScopeOnOpen('all');
       const data = await fetchReportData();
       setPreviewRows(data);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat Kartu Stock: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handlePrintSelected = async () => {
+    if (!selectedTableRow) {
+      showFeedback('Pilih baris Kartu / Stock Awal yang akan dicetak terlebih dahulu');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      setPrintScopeOnOpen('selected');
+      const data = await fetchReportData().catch(() => []);
+      setPreviewRows(data);
+      setIsPrintOpen(true);
+    } catch {
+      setPreviewRows([]);
+      setIsPrintOpen(true);
     } finally {
       setIsBusy(false);
     }
@@ -528,7 +628,7 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
         title="Kartu Stock"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePreview}
+        onPrint={handlePrintSelected}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
@@ -548,7 +648,7 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
               onHapus={handleRequestHapus}
-              onPrint={handlePreview}
+              onPrint={handlePrintSelected}
               onFind={handleFind}
               isBusy={isBusy}
               feedback={feedback}
@@ -761,38 +861,28 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
         {/* Live Supabase Search & Saldo Kartu Stock Grid Panel */}
         <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[11px] text-[#003C74]">Search :</span>
-              <select
-                value={searchField}
-                onChange={(e) => setSearchField(e.target.value)}
-                className="h-[22px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] outline-none"
-              >
-                <option value="Semua">Semua Kolom</option>
-                <option value="Item Code">Item Code</option>
-                <option value="Description">Description</option>
-                <option value="Merk">Merk</option>
-                <option value="Lokasi">Lokasi</option>
-                <option value="Periode">Periode</option>
-              </select>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') loadLiveRows();
-                }}
+            <div className="flex items-center">
+              <ToolbarSearchControl
+                compact
+                searchField={searchField}
+                onSearchFieldChange={setSearchField}
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onCari={handleToolbarCari}
+                onReset={handleToolbarReset}
+                options={[
+                  { value: 'Semua', label: 'Semua Kolom' },
+                  { value: 'Kode', label: 'Kode (Item Code)' },
+                  { value: 'Item Code', label: 'Item Code' },
+                  { value: 'Description', label: 'Description' },
+                  { value: 'Merk', label: 'Merk' },
+                  { value: 'Lokasi', label: 'Lokasi' },
+                  { value: 'Periode', label: 'Periode' },
+                ]}
+                inputRef={searchInputRef}
+                isBusy={isBusy}
                 placeholder="Cari Item Code, Description, Merk, Lokasi..."
-                className="w-[240px] h-[22px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none focus:border-[#316AC5]"
               />
-              <button
-                type="button"
-                onClick={() => loadLiveRows()}
-                className="h-[22px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[11px] font-semibold cursor-pointer"
-              >
-                Cari / Refresh
-              </button>
             </div>
             <span className="text-[11px] text-black">
               Data Supabase (<b>stock_awal</b>): <b>{filteredTableRows.length}</b> baris
@@ -1071,12 +1161,89 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
         </div>
       )}
 
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Kartu Stock"
+        rows={tableRows}
+        columns={[
+          { header: 'Periode', accessor: (r) => r.periode, align: 'center' },
+          { header: 'Lokasi', accessor: (r) => r.lokasi },
+          { header: 'Item Code', accessor: (r) => r.item_code, mono: true, bold: true },
+          { header: 'Description', accessor: (r) => r.description },
+          { header: 'Merk', accessor: (r) => r.merk || '-' },
+          { header: 'Sat', accessor: (r) => r.satuan, align: 'center' },
+          { header: 'HPP (Rp)', accessor: (r) => formatRupiah(r.hpp), align: 'right', mono: true },
+          { header: 'Bagus', accessor: (r) => formatMoney(r.stock_bagus), align: 'right', mono: true, bold: true },
+        ]}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.periode,
+          r.lokasi,
+          r.item_code,
+          r.description,
+          r.category,
+          r.merk,
+          r.satuan,
+        ]}
+        selectedId={selectedId}
+        onSelectRow={(r) => {
+          setSelectedId(r.id);
+          if (filterType === 'item_code') {
+            setItemCode(r.item_code);
+            setItemName(r.description);
+          }
+          showFeedback(`Kartu Stock [${r.item_code}] dipilih`);
+        }}
+        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
+        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        isBusy={isBusy}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={bentukLaporan.toUpperCase()}
         subtitle={`Periode: ${tglStart || bulanStart} s/d ${tglEnd || bulanEnd}`}
         orientation="landscape"
+        defaultPrintScope={printScopeOnOpen}
+        selectedRow={selectedTableRow}
+        selectedTitle="CETAK KARTU STOCK BARANG"
+        selectedSubtitle={
+          selectedTableRow
+            ? `Item: ${selectedTableRow.item_code} — ${selectedTableRow.description}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedTableRow
+            ? [
+                { label: 'Periode', value: selectedTableRow.periode },
+                { label: 'Lokasi Stock', value: selectedTableRow.lokasi },
+                { label: 'Item Code', value: selectedTableRow.item_code },
+                { label: 'Merk', value: selectedTableRow.merk || '-' },
+              ]
+            : undefined
+        }
+        selectedColumns={[
+          { header: 'Periode', accessor: 'periode', align: 'center', width: '75px' },
+          { header: 'Lokasi', accessor: 'lokasi', width: '110px' },
+          { header: 'Item Code', accessor: 'item_code', width: '90px' },
+          { header: 'Description', accessor: 'description' },
+          { header: 'Merk', accessor: 'merk', width: '80px' },
+          { header: 'Sat', accessor: 'satuan', align: 'center', width: '45px' },
+          { header: 'HPP (Rp)', accessor: (r) => formatRupiah(r.hpp), align: 'right', width: '95px' },
+          { header: 'Stock Bagus', accessor: (r) => formatMoney(r.stock_bagus), align: 'right', width: '70px' },
+          { header: 'Stock Rusak', accessor: (r) => formatMoney(r.stock_rusak), align: 'right', width: '70px' },
+        ]}
+        selectedSummaryItems={
+          selectedTableRow
+            ? [
+                { label: 'HPP (Rp)', value: formatRupiah(selectedTableRow.hpp) },
+                { label: 'Stock Bagus', value: formatMoney(selectedTableRow.stock_bagus) },
+                { label: 'Stock Rusak', value: formatMoney(selectedTableRow.stock_rusak) },
+              ]
+            : undefined
+        }
         metaLines={[
           { label: 'Periode Tanggal', value: `${tglStart || bulanStart} s/d ${tglEnd || bulanEnd}` },
           { label: 'Lokasi Stock', value: lokasiStock },

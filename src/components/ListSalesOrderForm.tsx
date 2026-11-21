@@ -18,6 +18,9 @@ import {
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { getCurrentUser } from '../lib/authService';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface SalesOrderItem {
   id: string;
@@ -173,8 +176,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
-  const [findQuery, setFindQuery] = useState<string>('');
-  const findInputRef = useRef<HTMLInputElement>(null);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -294,6 +295,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
+    Kode: 'no_bukti',
     'Nama Pelanggan': 'nama_customer',
     'No.Bukti': 'no_bukti',
     Sales: 'sales',
@@ -367,12 +369,79 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   };
 
   const handleToolbarSimpan = async () => {
-    const rows = await loadData({
-      field: searchField,
-      term: searchTerm,
-      tglFilter: tanggalFilter,
-    });
-    if (rows !== null) showFeedback('Data tersinkronisasi dengan database Supabase');
+    const selected = soList.find((s) => s.id === selectedId);
+    if (!selected) {
+      showFeedback('Pilih baris Sales Order yang akan disimpan');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const existingDetails = soDetailsMap[selected.id] || [];
+      const totalFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
+      const ppnPct = Math.max(0, Number(selected.ppnPct || 0));
+      let finalNilaiPpn = Math.max(0, Number(selected.nilaiPpnNum || 0));
+      let finalNilaiSo = Number(selected.nilaiSoNum || 0);
+
+      if (existingDetails.length > 0) {
+        if (finalNilaiPpn <= 0 && ppnPct > 0) {
+          const calc = calcPpnDeduction(totalFromDetails, ppnPct);
+          finalNilaiPpn = calc.nominalPpn;
+          finalNilaiSo = calc.netNilaiSo;
+        } else {
+          finalNilaiSo = Math.max(0, Number((totalFromDetails - finalNilaiPpn).toFixed(2)));
+        }
+      }
+
+      const headerPayload: Record<string, any> = {
+        id: selected.id,
+        no_bukti: selected.noBukti.trim().toUpperCase(),
+        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        nama_customer: selected.namaCustomer.trim().toUpperCase(),
+        sales: selected.sales.trim().toUpperCase(),
+        po_no: selected.poNo.trim().toUpperCase(),
+        nilai_so: finalNilaiSo,
+        deposit: selected.deposit === '-' ? 0 : parseNum(selected.deposit),
+        tgl_kirim: selected.tglKirim && selected.tglKirim !== '-' ? toIsoDate(selected.tglKirim) : null,
+        persen: parseNum(selected.persen),
+        keterangan: selected.keterangan.trim(),
+        ppn: ppnPct,
+        nilai_ppn: finalNilaiPpn,
+        so_close: selected.soClose || 'Not Yet',
+        lokasi_stock: selected.lokasiStock.trim().toUpperCase() || '01 - OFFICE',
+        dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
+        tgl_created: toIsoDate(selected.tglCreated) || todayIso(),
+        diupdate_oleh: currentUser,
+        tgl_update: todayIso(),
+      };
+
+      const detailPayloads = existingDetails.map((d, idx) => ({
+        no_urut: idx + 1,
+        kode: d.kode.trim().toUpperCase(),
+        nama_barang: d.namaBarang.trim(),
+        unit: d.unit.trim().toUpperCase() || 'PCS',
+        terima: Number(d.terima || 0),
+        qty: Number(d.qty || 0),
+        harga: Number(d.harga || 0),
+        jumlah: Number(d.jumlah || 0),
+        total: Number(d.total || 0),
+      }));
+
+      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+        'sales-order',
+        headerPayload,
+        detailPayloads
+      );
+      const savedHeader = mapDbToSo(res.header);
+      const savedDetails = (res.details || []).map((d, idx) => mapDbToSoDetail(d, idx));
+      setSoList((prev) => prev.map((item) => (item.id === selected.id ? savedHeader : item)));
+      setSoDetailsMap((prev) => ({ ...prev, [savedHeader.id]: savedDetails }));
+      showFeedback(`Sales Order [${savedHeader.noBukti}] berhasil disimpan`);
+    } catch (err: any) {
+      showFeedback(`Gagal simpan: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -757,77 +826,44 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const filteredList = soList.filter((item) => {
     if (filterIso && item.tanggalIso !== filterIso) return false;
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.trim().toLowerCase();
-    if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(term);
-    if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(term);
-    if (searchField === 'Sales') return item.sales.toLowerCase().includes(term);
-    if (searchField === 'PO.NO') return item.poNo.toLowerCase().includes(term);
-    if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(term);
-    if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(term);
-    if (searchField === 'SO.Close') return item.soClose.toLowerCase().includes(term);
-    return (
-      item.noBukti.toLowerCase().includes(term) ||
-      item.namaCustomer.toLowerCase().includes(term) ||
-      item.sales.toLowerCase().includes(term) ||
-      item.poNo.toLowerCase().includes(term) ||
-      item.lokasiStock.toLowerCase().includes(term) ||
-      item.keterangan.toLowerCase().includes(term) ||
-      item.soClose.toLowerCase().includes(term)
+    if (searchField === 'Kode' || searchField === 'No.Bukti') {
+      return matchesMultiKeyword([item.noBukti], searchTerm);
+    }
+    if (searchField === 'Nama Pelanggan') {
+      return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    }
+    if (searchField === 'Sales') {
+      return matchesMultiKeyword([item.sales], searchTerm);
+    }
+    if (searchField === 'PO.NO') {
+      return matchesMultiKeyword([item.poNo], searchTerm);
+    }
+    if (searchField === 'Lokasi Stock') {
+      return matchesMultiKeyword([item.lokasiStock], searchTerm);
+    }
+    if (searchField === 'Keterangan') {
+      return matchesMultiKeyword([item.keterangan], searchTerm);
+    }
+    if (searchField === 'SO.Close') {
+      return matchesMultiKeyword([item.soClose], searchTerm);
+    }
+    return matchesMultiKeyword(
+      [
+        item.noBukti,
+        item.tanggal,
+        item.namaCustomer,
+        item.sales,
+        item.poNo,
+        item.lokasiStock,
+        item.keterangan,
+        item.soClose,
+      ],
+      searchTerm
     );
-  });
-
-  const findModalRows = soList.filter((item) => {
-    if (!findQuery.trim()) return true;
-    const tokens = findQuery.trim().toLowerCase().split(/\s+/);
-    const searchable = [
-      item.noBukti,
-      item.tanggal,
-      item.namaCustomer,
-      item.sales,
-      item.poNo,
-      item.lokasiStock,
-      item.keterangan,
-      item.soClose,
-      item.ppn,
-      item.nilaiPpn,
-      item.nilaiSo,
-    ]
-      .join(' ')
-      .toLowerCase();
-    return tokens.every((t) => searchable.includes(t));
   });
 
   const totalNilaiSo = filteredList.reduce((acc, s) => acc + s.nilaiSoNum, 0);
   const totalNilaiPpn = filteredList.reduce((acc, s) => acc + s.nilaiPpnNum, 0);
-
-  const handleSearchTermChange = (val: string) => {
-    setSearchTerm(val);
-    const clean = val.trim().toLowerCase();
-    const matched = soList.filter((item) => {
-      if (filterIso && item.tanggalIso !== filterIso) return false;
-      if (!clean) return true;
-      if (searchField === 'No.Bukti') return item.noBukti.toLowerCase().includes(clean);
-      if (searchField === 'Nama Pelanggan') return item.namaCustomer.toLowerCase().includes(clean);
-      if (searchField === 'Sales') return item.sales.toLowerCase().includes(clean);
-      if (searchField === 'PO.NO') return item.poNo.toLowerCase().includes(clean);
-      if (searchField === 'Lokasi Stock') return item.lokasiStock.toLowerCase().includes(clean);
-      if (searchField === 'Keterangan') return item.keterangan.toLowerCase().includes(clean);
-      if (searchField === 'SO.Close') return item.soClose.toLowerCase().includes(clean);
-      return (
-        item.noBukti.toLowerCase().includes(clean) ||
-        item.namaCustomer.toLowerCase().includes(clean) ||
-        item.sales.toLowerCase().includes(clean) ||
-        item.poNo.toLowerCase().includes(clean) ||
-        item.lokasiStock.toLowerCase().includes(clean) ||
-        item.keterangan.toLowerCase().includes(clean) ||
-        item.soClose.toLowerCase().includes(clean)
-      );
-    });
-    if (matched.length > 0 && !matched.some((m) => m.id === selectedId)) {
-      setSelectedId(matched[0].id);
-    }
-  };
 
   const handleExecuteToolbarSearch = async () => {
     const rows = await loadData({
@@ -851,7 +887,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const handleResetSearch = async () => {
     setSearchTerm('');
     setSearchField('Semua');
-    const rows = await loadData({ field: 'Semua', term: '', tglFilter: tanggalFilter });
+    setTanggalFilter('Semua');
+    const rows = await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
     if (rows) {
       showFeedback(`Filter direset (${rows.length} Sales Order)`);
     }
@@ -859,16 +896,11 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    setFindQuery(searchTerm);
     await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
-    setTimeout(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    }, 60);
   };
 
-  const handleOpenPrint = (mode: 'list' | 'detail' = 'list') => {
-    setPrintMode(mode);
+  const handleOpenPrint = (mode?: 'list' | 'detail') => {
+    setPrintMode(mode ?? (selectedSo ? 'detail' : 'list'));
     setIsPrintOpen(true);
   };
 
@@ -982,7 +1014,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         title="List Sales Order"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={() => handleOpenPrint('list')}
+        onPrint={() => handleOpenPrint()}
         onTableView={() =>
           loadData({ field: searchField, term: searchTerm, tglFilter: tanggalFilter })
         }
@@ -996,7 +1028,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
             onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
-            onPrint={() => handleOpenPrint('list')}
+            onPrint={() => handleOpenPrint()}
             onFind={handleFind}
             isBusy={isBusy}
             feedback={feedback}
@@ -1209,52 +1241,29 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
       {/* Bottom Search Bar */}
       <div className="shrink-0 bg-[#ECE9D8] border-t border-[#D4D0C8] px-2 py-1.5 flex items-center justify-between text-xs gap-2 overflow-x-auto">
-        <div className="flex items-center space-x-2 shrink-0">
-          <span className="font-semibold">Search :</span>
-          <select
-            value={searchField}
-            onChange={(e) => setSearchField(e.target.value)}
-            className="px-2 py-0.5 bg-white border border-[#7A7A7A] text-xs rounded"
-          >
-            <option value="Semua">Semua</option>
-            <option value="Nama Pelanggan">Nama Pelanggan</option>
-            <option value="No.Bukti">No.Bukti</option>
-            <option value="Sales">Sales</option>
-            <option value="PO.NO">PO.NO</option>
-            <option value="Lokasi Stock">Lokasi Stock</option>
-            <option value="Keterangan">Keterangan</option>
-            <option value="SO.Close">SO.Close</option>
-          </select>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchTerm}
-            onChange={(e) => handleSearchTermChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleExecuteToolbarSearch();
-            }}
-            placeholder="Cari data..."
-            className="px-2 py-0.5 w-52 bg-white border border-[#7A7A7A] text-xs shadow-inner"
-          />
-          <button
-            type="button"
-            disabled={isBusy}
-            onClick={handleExecuteToolbarSearch}
-            className="px-2.5 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs font-semibold cursor-pointer"
-          >
-            Cari
-          </button>
-          {(searchTerm || searchField !== 'Semua') && (
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={handleResetSearch}
-              className="px-2 py-0.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-xs cursor-pointer"
-            >
-              Reset
-            </button>
-          )}
-        </div>
+        <ToolbarSearchControl
+          compact
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleExecuteToolbarSearch}
+          onReset={handleResetSearch}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          inputWidthClass="w-56"
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode (No.Bukti)' },
+            { value: 'No.Bukti', label: 'No.Bukti' },
+            { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
+            { value: 'Sales', label: 'Sales' },
+            { value: 'PO.NO', label: 'PO.NO' },
+            { value: 'Lokasi Stock', label: 'Lokasi Stock' },
+            { value: 'Keterangan', label: 'Keterangan' },
+            { value: 'SO.Close', label: 'SO.Close' },
+          ]}
+        />
         <div className="flex items-center space-x-4 shrink-0">
           <div className="w-56 h-5 bg-[#FFFF00] border border-[#919191] shadow-inner px-2 text-[10px] flex items-center text-black truncate">
             {selectedSo ? `${selectedSo.noBukti} - ${selectedSo.namaCustomer}` : ''}
@@ -1682,159 +1691,56 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       )}
 
       {/* Find Modal: Cari & Daftar Sales Order */}
-      {isFindOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] shadow-2xl w-[940px] max-w-[96vw] max-h-[85vh] flex flex-col text-xs">
-            <div className="bg-[#000080] text-white px-3 py-1.5 flex items-center justify-between font-bold shrink-0">
-              <span>Cari &amp; Daftar Sales Order (Supabase)</span>
-              <button
-                type="button"
-                onClick={() => setIsFindOpen(false)}
-                className="px-1.5 bg-[#C00000] text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-3 space-y-2 flex-1 flex flex-col overflow-hidden">
-              <div className="flex items-center gap-2">
-                <span className="font-bold whitespace-nowrap">Cari :</span>
-                <input
-                  ref={findInputRef}
-                  type="text"
-                  value={findQuery}
-                  onChange={(e) => setFindQuery(e.target.value)}
-                  onKeyDown={async (e) => {
-                    if (e.key === 'Enter') {
-                      if (findModalRows.length > 0 && !findQuery.trim()) {
-                        const first = findModalRows[0];
-                        setSelectedId(first.id);
-                        setSearchTerm(findQuery);
-                        setIsFindOpen(false);
-                        showFeedback(`Sales Order [${first.noBukti}] dipilih`);
-                      } else {
-                        const rows = await loadData({
-                          field: 'Semua',
-                          term: findQuery,
-                          tglFilter: 'Semua',
-                        });
-                        setSearchField('Semua');
-                        setSearchTerm(findQuery);
-                        if (rows && rows.length > 0) {
-                          setSelectedId(rows[0].id);
-                          showFeedback(`Ditemukan ${rows.length} Sales Order dari Supabase`);
-                        } else if (rows) {
-                          showFeedback('Data Sales Order tidak ditemukan di Supabase');
-                        }
-                      }
-                    }
-                  }}
-                  placeholder="Cari No.Bukti, Nama Customer, Sales, PO.NO, Lokasi Stock, Keterangan..."
-                  className="flex-1 h-[24px] px-2 bg-white border border-[#7F9DB9] outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={async () => {
-                    const rows = await loadData({
-                      field: 'Semua',
-                      term: findQuery,
-                      tglFilter: 'Semua',
-                    });
-                    setSearchField('Semua');
-                    setSearchTerm(findQuery);
-                    if (rows && rows.length > 0) {
-                      setSelectedId(rows[0].id);
-                      showFeedback(`Ditemukan ${rows.length} Sales Order dari Supabase`);
-                    } else if (rows) {
-                      showFeedback('Data Sales Order tidak ditemukan di Supabase');
-                    }
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Cari
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={async () => {
-                    setFindQuery('');
-                    setSearchTerm('');
-                    setSearchField('Semua');
-                    await loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
-                    showFeedback('Data Sales Order di-refresh dari Supabase');
-                  }}
-                  className="h-[24px] px-3 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] font-semibold cursor-pointer"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="flex-1 min-h-[240px] overflow-auto bg-white border border-[#7F9DB9]">
-                <table className="w-full text-left border-collapse text-[11px]">
-                  <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#ACA899]">
-                    <tr>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">No.Bukti</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-22">Tanggal</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899]">Nama Customer</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">Sales</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-24">PO.NO</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] w-28">Lokasi Stock</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] text-center w-14">PPN</th>
-                      <th className="px-2 py-1 border-r border-[#ACA899] text-right w-24">Nominal PPN</th>
-                      <th className="px-2 py-1 text-right w-24">Nilai SO</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {findModalRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={9} className="text-center py-6 text-gray-500 italic">
-                          Tidak ada data Sales Order yang cocok
-                        </td>
-                      </tr>
-                    ) : (
-                      findModalRows.map((s) => (
-                        <tr
-                          key={s.id}
-                          onClick={() => {
-                            setSelectedId(s.id);
-                            setSearchTerm(findQuery);
-                            setIsFindOpen(false);
-                            showFeedback(`Sales Order [${s.noBukti} - ${s.namaCustomer}] dipilih`);
-                          }}
-                          className={`cursor-pointer border-b border-[#E0E0E0] hover:bg-[#316AC5] hover:text-white ${
-                            s.id === selectedId ? 'bg-[#FFFF99]' : ''
-                          }`}
-                        >
-                          <td className="px-2 py-1 font-mono font-bold border-r border-[#E0E0E0]">{s.noBukti}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.tanggal}</td>
-                          <td className="px-2 py-1 font-semibold border-r border-[#E0E0E0]">{s.namaCustomer}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.sales || '-'}</td>
-                          <td className="px-2 py-1 font-mono border-r border-[#E0E0E0]">{s.poNo || '-'}</td>
-                          <td className="px-2 py-1 border-r border-[#E0E0E0]">{s.lokasiStock || '-'}</td>
-                          <td className="px-2 py-1 text-center border-r border-[#E0E0E0]">{s.ppn}</td>
-                          <td className="px-2 py-1 text-right font-mono border-r border-[#E0E0E0]">{s.nilaiPpn}</td>
-                          <td className="px-2 py-1 text-right font-mono font-semibold">{s.nilaiSo}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-[11px] text-[#555]">
-                  Menampilkan {findModalRows.length} dari {soList.length} Sales Order. Klik baris untuk memilih record.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsFindOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Sales Order"
+        rows={soList}
+        selectedId={selectedId}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.noBukti,
+          r.tanggal,
+          r.namaCustomer,
+          r.sales,
+          r.poNo,
+          r.lokasiStock,
+          r.keterangan,
+          r.soClose,
+          r.ppn,
+          r.nilaiPpn,
+          r.nilaiSo,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q, tglFilter: 'Semua' });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          setTanggalFilter('Semua');
+          return loadData({ field: 'Semua', term: '', tglFilter: 'Semua' });
+        }}
+        onSelectRow={(row, q) => {
+          setSelectedId(row.id);
+          setSearchTerm(q);
+          showFeedback(`Sales Order [${row.noBukti} - ${row.namaCustomer}] dipilih`);
+        }}
+        columns={[
+          { header: 'Kode / No.Bukti', accessor: (r) => r.noBukti, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-22', align: 'center' },
+          { header: 'Nama Customer', accessor: (r) => r.namaCustomer, bold: true },
+          { header: 'Sales', accessor: (r) => r.sales || '-', widthClass: 'w-24' },
+          { header: 'PO.NO', accessor: (r) => r.poNo || '-', widthClass: 'w-24', mono: true },
+          { header: 'Lokasi Stock', accessor: (r) => r.lokasiStock || '-', widthClass: 'w-28' },
+          { header: 'PPN', accessor: (r) => r.ppn, widthClass: 'w-14', align: 'center' },
+          { header: 'Nominal PPN', accessor: (r) => r.nilaiPpn, widthClass: 'w-24', align: 'right', mono: true },
+          { header: 'Nilai SO', accessor: (r) => r.nilaiSo, widthClass: 'w-24', align: 'right', mono: true, bold: true },
+        ]}
+      />
 
       {/* Dual-mode Print Preview: List Sales Order & S.O. Detail */}
       <A4PrintPreviewModal
@@ -1874,10 +1780,20 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         orientation="landscape"
         columns={
           printMode === 'detail'
-            ? (detailPrintColumns as PrintColumn<any>[])
+            ? selectedSoDetails.length > 0
+              ? (detailPrintColumns as PrintColumn<any>[])
+              : (listPrintColumns as PrintColumn<any>[])
             : (listPrintColumns as PrintColumn<any>[])
         }
-        rows={printMode === 'detail' ? selectedSoDetails : filteredList}
+        rows={
+          printMode === 'detail'
+            ? selectedSoDetails.length > 0
+              ? selectedSoDetails
+              : selectedSo
+              ? [selectedSo]
+              : []
+            : filteredList
+        }
         summaryItems={
           printMode === 'detail'
             ? [
@@ -1905,8 +1821,36 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 { label: 'Total Nilai SO', value: formatRupiah(totalNilaiSo) },
               ]
         }
+        selectedRow={printMode === 'list' ? selectedSo : undefined}
+        selectedTitle={printMode === 'list' ? 'SALES ORDER (RECORD TERPILIH)' : undefined}
+        selectedSubtitle={
+          printMode === 'list' && selectedSo
+            ? `No. Bukti: ${selectedSo.noBukti} | Customer: ${selectedSo.namaCustomer}`
+            : undefined
+        }
+        selectedMetaLines={
+          printMode === 'list' && selectedSo
+            ? [
+                { label: 'No. Bukti', value: selectedSo.noBukti },
+                { label: 'Tanggal', value: selectedSo.tanggal },
+                { label: 'Customer', value: selectedSo.namaCustomer },
+                { label: 'Sales', value: selectedSo.sales || '-' },
+                { label: 'PO.NO', value: selectedSo.poNo || '-' },
+                { label: 'Nilai SO', value: formatRupiah(selectedSo.nilaiSoNum) },
+              ]
+            : undefined
+        }
         toolbarExtra={
           <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
+            <button
+              type="button"
+              onClick={() => setPrintMode('detail')}
+              className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
+                printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              S.O. Terpilih (Detail)
+            </button>
             <button
               type="button"
               onClick={() => setPrintMode('list')}
@@ -1915,15 +1859,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
               }`}
             >
               List Sales Order
-            </button>
-            <button
-              type="button"
-              onClick={() => setPrintMode('detail')}
-              className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
-                printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
-              }`}
-            >
-              S.O. Detail
             </button>
           </div>
         }

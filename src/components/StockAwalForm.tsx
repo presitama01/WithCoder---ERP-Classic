@@ -13,6 +13,9 @@ import {
   parseNum,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
+import { SupabaseFindModal } from './SupabaseFindModal';
+import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { matchesMultiKeyword } from '../lib/searchUtils';
 
 export interface StockAwalData {
   id: string;
@@ -58,8 +61,9 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
   const [stockBagus, setStockBagus] = useState<string>('0');
   const [stockRusak, setStockRusak] = useState<string>('0');
 
-  const [isBrowseOpen, setIsBrowseOpen] = useState<boolean>(false);
-  const [browseSearch, setBrowseSearch] = useState<string>('');
+  const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
+  const [searchField, setSearchField] = useState<string>('Semua');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
@@ -70,7 +74,7 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangCatalog, setBarangCatalog] = useState<MasterBarangLookup[]>([]);
 
-  const browseSearchRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
@@ -91,16 +95,57 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
     periode: r.periode || '08 - 2026',
   });
 
-  const loadData = async () => {
+  const SEARCH_COL_MAP: Record<string, string> = {
+    Kode: 'item_code',
+    'Item Code': 'item_code',
+    Description: 'description',
+    Category: 'category',
+    Merk: 'merk',
+    Lokasi: 'lokasi',
+  };
+
+  const loadData = async (opts?: {
+    field?: string;
+    term?: string;
+    applyFirstMatch?: boolean;
+  }): Promise<StockAwalData[] | null> => {
     try {
       setIsBusy(true);
+      const activeField = opts?.field ?? searchField;
+      const activeTerm = (opts?.term ?? '').trim();
+      const queryOpts: Record<string, any> = { orderBy: 'item_code', asc: true, limit: 1000 };
+      if (activeTerm) {
+        const dbCol = SEARCH_COL_MAP[activeField];
+        if (dbCol) {
+          queryOpts.searchCol = dbCol;
+          queryOpts.searchVal = activeTerm;
+        } else {
+          queryOpts.orSearch = 'item_code,description,category,merk,satuan,lokasi,periode';
+          queryOpts.searchVal = activeTerm;
+        }
+      }
+
       const [rows, lokasis, barangs] = await Promise.all([
-        erpList<any>('stock_awal', { orderBy: 'item_code', asc: true }),
+        erpList<any>('stock_awal', queryOpts),
         erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
         erpList<any>('master_barangs', { orderBy: 'kode', asc: true }).catch(() => []),
       ]);
       const mapped = rows.map(mapRow);
       setStockList(mapped);
+      if (opts?.applyFirstMatch && mapped.length > 0) {
+        const first = mapped[0];
+        setEditingId(first.id);
+        setItemCode(first.itemCode);
+        setDescription(first.description);
+        setCategory(first.category);
+        setMerk(first.merk);
+        setSatuan(first.satuan);
+        setHpp(String(first.hpp));
+        setStockBagus(String(first.stockBagus));
+        setStockRusak(String(first.stockRusak));
+        setLokasiStock(first.lokasi);
+        setPeriode(first.periode);
+      }
       setLokasiOptions(
         lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()).filter(Boolean)
       );
@@ -115,8 +160,10 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
           hpp: Number(b.cost || 0),
         }))
       );
+      return mapped;
     } catch (err: any) {
       showFeedback(`Gagal memuat Stock Awal: ${err.message}`);
+      return null;
     } finally {
       setIsBusy(false);
     }
@@ -157,7 +204,7 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
     setStockRusak(String(item.stockRusak));
     setLokasiStock(item.lokasi);
     setPeriode(item.periode);
-    setIsBrowseOpen(false);
+    setIsFindOpen(false);
     showFeedback(`Item ${item.itemCode} dipilih`);
   };
 
@@ -231,7 +278,7 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
 
   const handleKoreksi = () => {
     if (!itemCode.trim() && !editingId) {
-      setIsBrowseOpen(true);
+      handleFind();
       return;
     }
     handleSaveData();
@@ -272,19 +319,49 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
     handleSaveData();
   };
 
-  const handleFind = () => {
-    setIsBrowseOpen(true);
-    setTimeout(() => browseSearchRef.current?.focus(), 60);
+  const handleFind = async () => {
+    setIsFindOpen(true);
+    await loadData({ field: 'Semua', term: '' });
   };
 
-  const filteredStockList = stockList.filter(
-    (item) =>
-      item.itemCode.toLowerCase().includes(browseSearch.toLowerCase()) ||
-      item.description.toLowerCase().includes(browseSearch.toLowerCase()) ||
-      item.category.toLowerCase().includes(browseSearch.toLowerCase()) ||
-      item.merk.toLowerCase().includes(browseSearch.toLowerCase()) ||
-      item.lokasi.toLowerCase().includes(browseSearch.toLowerCase())
-  );
+  const handleToolbarCari = async () => {
+    const rows = await loadData({
+      field: searchField,
+      term: searchTerm,
+      applyFirstMatch: true,
+    });
+    if (rows && rows.length > 0) {
+      showFeedback(
+        searchTerm.trim()
+          ? `Ditemukan ${rows.length} Stock Awal [${rows[0].itemCode}] di Supabase`
+          : `Menampilkan ${rows.length} Stock Awal dari Supabase`
+      );
+    } else if (rows) {
+      showFeedback('Data Stock Awal tidak ditemukan di Supabase');
+    }
+  };
+
+  const handleToolbarReset = async () => {
+    setSearchField('Semua');
+    setSearchTerm('');
+    const rows = await loadData({ field: 'Semua', term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} item Stock Awal)`);
+  };
+
+  const filteredStockList = stockList.filter((item) => {
+    if (!searchTerm.trim()) return true;
+    if (searchField === 'Kode' || searchField === 'Item Code') {
+      return matchesMultiKeyword([item.itemCode], searchTerm);
+    }
+    if (searchField === 'Description') return matchesMultiKeyword([item.description], searchTerm);
+    if (searchField === 'Category') return matchesMultiKeyword([item.category], searchTerm);
+    if (searchField === 'Merk') return matchesMultiKeyword([item.merk], searchTerm);
+    if (searchField === 'Lokasi') return matchesMultiKeyword([item.lokasi], searchTerm);
+    return matchesMultiKeyword(
+      [item.itemCode, item.description, item.category, item.merk, item.satuan, item.lokasi, item.periode],
+      searchTerm
+    );
+  });
 
   const handleExportExcel = async () => {
     try {
@@ -329,6 +406,37 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
     { header: 'Rusak', accessor: (r) => formatMoney(r.stockRusak), align: 'right', width: '55px' },
   ];
 
+  const existingSelectedStock = stockList.find((s) => s.id === editingId) || null;
+  const selectedStockRow: StockAwalData | null = existingSelectedStock
+    ? {
+        ...existingSelectedStock,
+        periode: periode.trim() || existingSelectedStock.periode,
+        lokasi: lokasiStock || existingSelectedStock.lokasi,
+        itemCode: itemCode.trim().toUpperCase() || existingSelectedStock.itemCode,
+        description: description.trim().toUpperCase(),
+        category: category.trim().toUpperCase(),
+        merk: merk.trim().toUpperCase(),
+        satuan: satuan.trim().toUpperCase() || 'PCS',
+        hpp: parseNum(hpp),
+        stockBagus: parseNum(stockBagus),
+        stockRusak: parseNum(stockRusak),
+      }
+    : itemCode.trim()
+    ? {
+        id: editingId || 'active',
+        periode: periode.trim() || '08 - 2026',
+        lokasi: lokasiStock,
+        itemCode: itemCode.trim().toUpperCase(),
+        description: description.trim().toUpperCase(),
+        category: category.trim().toUpperCase(),
+        merk: merk.trim().toUpperCase(),
+        satuan: satuan.trim().toUpperCase() || 'PCS',
+        hpp: parseNum(hpp),
+        stockBagus: parseNum(stockBagus),
+        stockRusak: parseNum(stockRusak),
+      }
+    : null;
+
   const totalNilaiPersediaan = filteredStockList.reduce(
     (acc, item) => acc + item.hpp * item.stockBagus,
     0
@@ -344,9 +452,34 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
         onClose={onClose}
         onFind={handleFind}
         onPrint={() => setIsPrintOpen(true)}
-        onTableView={() => setIsBrowseOpen(true)}
+        onTableView={handleFind}
         onExportExcel={handleExportExcel}
       />
+
+      <div className="shrink-0 bg-[#ECE9D8] border-b border-[#ACA899] px-3 py-1.5 flex items-center justify-between gap-2 overflow-x-auto">
+        <span className="text-[11px] font-bold text-[#003C74] whitespace-nowrap">
+          Data Stock Awal Supabase: {stockList.length} item
+        </span>
+        <ToolbarSearchControl
+          compact
+          searchField={searchField}
+          onSearchFieldChange={setSearchField}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          onCari={handleToolbarCari}
+          onReset={handleToolbarReset}
+          inputRef={searchInputRef}
+          isBusy={isBusy}
+          options={[
+            { value: 'Semua', label: 'Semua' },
+            { value: 'Kode', label: 'Kode (Item Code)' },
+            { value: 'Description', label: 'Description' },
+            { value: 'Category', label: 'Category' },
+            { value: 'Merk', label: 'Merk' },
+            { value: 'Lokasi', label: 'Lokasi' },
+          ]}
+        />
+      </div>
 
       {/* Main Scrollable Container */}
       <div className="flex-1 overflow-auto p-3">
@@ -519,7 +652,7 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
                 />
                 <button
                   type="button"
-                  onClick={() => setIsBrowseOpen(true)}
+                  onClick={handleFind}
                   className="w-18 py-1 bg-[#ECE9D8] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] text-[11px] font-bold text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
                 >
                   <span className="border border-dotted border-black/50 px-2 py-0.5 w-full block">
@@ -532,125 +665,51 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
         </div>
       </div>
 
-      {/* Modal Browse / List Persediaan Awal */}
-      {isBrowseOpen && (
-        <div
-          id="stock-awal-browse-backdrop"
-          className="pointer-events-auto fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4"
-        >
-          <div className="bg-[#D4D0C8] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] shadow-2xl w-[800px] max-h-[85vh] flex flex-col font-sans text-xs">
-            <div className="bg-black text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs select-none">
-              <span>Daftar Persediaan Awal (Stock Awal) — Supabase</span>
-              <button
-                type="button"
-                onClick={() => setIsBrowseOpen(false)}
-                className="w-5 h-5 bg-[#C0C0C0] text-black border border-white font-bold flex items-center justify-center hover:bg-red-600 hover:text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="bg-[#ECE9D8] p-2 border-b border-[#ACA899] flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <span className="font-semibold text-black">Cari Barang :</span>
-                <input
-                  ref={browseSearchRef}
-                  type="text"
-                  placeholder="Ketik kode / nama / merk / lokasi..."
-                  value={browseSearch}
-                  onChange={(e) => setBrowseSearch(e.target.value)}
-                  className="px-2 py-0.5 bg-white border border-[#7A7A7A] w-64 text-xs outline-none"
-                />
-              </div>
-              <div className="text-[11px] text-gray-800">
-                Total Item: <b>{filteredStockList.length}</b> | Total Nilai:{' '}
-                <b>{formatRupiah(totalNilaiPersediaan)}</b>
-              </div>
-            </div>
-
-            <div className="p-2 overflow-auto max-h-[50vh] bg-white">
-              <table className="w-full border-collapse border border-[#D4D0C8] text-[11px]">
-                <thead>
-                  <tr className="bg-[#ECE9D8] text-black">
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-center w-8">No</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-center w-20">Periode</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-left w-28">Lokasi</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-left w-24">Item Code</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-left">Description</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-left w-20">Merk</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-center w-14">Satuan</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-right w-20">HPP (Rp)</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-right w-14">Bagus</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-right w-14">Rusak</th>
-                    <th className="border border-[#B5B3A8] px-2 py-1 text-center w-16">Pilih</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredStockList.map((item, idx) => (
-                    <tr
-                      key={item.id}
-                      className="hover:bg-[#EAF2FC] cursor-pointer"
-                      onDoubleClick={() => handleSelectItem(item)}
-                    >
-                      <td className="border border-[#E0DED5] px-2 py-1 text-center">{idx + 1}</td>
-                      <td className="border border-[#E0DED5] px-2 py-1 text-center">{item.periode}</td>
-                      <td className="border border-[#E0DED5] px-2 py-1">{item.lokasi}</td>
-                      <td className="border border-[#E0DED5] px-2 py-1 font-mono font-semibold text-blue-900">
-                        {item.itemCode}
-                      </td>
-                      <td className="border border-[#E0DED5] px-2 py-1">{item.description}</td>
-                      <td className="border border-[#E0DED5] px-2 py-1">{item.merk}</td>
-                      <td className="border border-[#E0DED5] px-2 py-1 text-center">{item.satuan}</td>
-                      <td className="border border-[#E0DED5] px-2 py-1 text-right font-mono">
-                        {item.hpp.toLocaleString('id-ID')}
-                      </td>
-                      <td className="border border-[#E0DED5] px-2 py-1 text-right font-mono font-bold text-green-700">
-                        {item.stockBagus}
-                      </td>
-                      <td className="border border-[#E0DED5] px-2 py-1 text-right font-mono text-red-600">
-                        {item.stockRusak}
-                      </td>
-                      <td className="border border-[#E0DED5] px-2 py-1 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleSelectItem(item)}
-                          className="px-2 py-0.5 bg-[#ECE9D8] border border-[#7A7A7A] hover:bg-white text-[10px] font-bold cursor-pointer"
-                        >
-                          Pilih
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredStockList.length === 0 && (
-                    <tr>
-                      <td colSpan={11} className="text-center py-4 text-gray-500">
-                        Tidak ada data item barang ditemukan.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="bg-[#ECE9D8] p-2 border-t border-[#ACA899] flex justify-end space-x-2">
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                className="px-3 py-1 bg-[#1E7145] text-white border border-black text-[11px] font-semibold cursor-pointer"
-              >
-                Export Excel
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsBrowseOpen(false)}
-                className="px-4 py-1 bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] text-[11px] font-semibold cursor-pointer active:shadow-inner"
-              >
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupabaseFindModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        tableLabel="Stock Awal"
+        rows={stockList}
+        selectedId={editingId || ''}
+        getRowId={(r) => r.id}
+        getSearchValues={(r) => [
+          r.itemCode,
+          r.description,
+          r.category,
+          r.merk,
+          r.satuan,
+          r.lokasi,
+          r.periode,
+        ]}
+        initialQuery={searchTerm}
+        isBusy={isBusy}
+        placeholder="Cari Kode (Item Code), Description, Merk, Category, Lokasi..."
+        onSearchSupabase={(q) => {
+          setSearchField('Semua');
+          setSearchTerm(q);
+          return loadData({ field: 'Semua', term: q });
+        }}
+        onRefreshSupabase={() => {
+          setSearchField('Semua');
+          setSearchTerm('');
+          return loadData({ field: 'Semua', term: '' });
+        }}
+        onSelectRow={(item, q) => {
+          setSearchTerm(q);
+          handleSelectItem(item);
+        }}
+        columns={[
+          { header: 'Periode', accessor: (r) => r.periode, widthClass: 'w-20', align: 'center' },
+          { header: 'Lokasi', accessor: (r) => r.lokasi, widthClass: 'w-28' },
+          { header: 'Kode / Item Code', accessor: (r) => r.itemCode, widthClass: 'w-28', mono: true, bold: true },
+          { header: 'Description', accessor: (r) => r.description, bold: true },
+          { header: 'Merk', accessor: (r) => r.merk || '-', widthClass: 'w-20' },
+          { header: 'Satuan', accessor: (r) => r.satuan, widthClass: 'w-14', align: 'center' },
+          { header: 'HPP (Rp)', accessor: (r) => r.hpp.toLocaleString('id-ID'), widthClass: 'w-24', align: 'right', mono: true },
+          { header: 'Bagus', accessor: (r) => r.stockBagus, widthClass: 'w-16', align: 'right', mono: true },
+          { header: 'Rusak', accessor: (r) => r.stockRusak, widthClass: 'w-16', align: 'right', mono: true },
+        ]}
+      />
 
       {/* Delete Confirmation Modal */}
       {confirmDeleteId && (
@@ -694,7 +753,7 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
           { label: 'Periode', value: periode },
           { label: 'Lokasi Aktif', value: lokasiStock },
           { label: 'Jumlah Item', value: `${filteredStockList.length} Item` },
-          { label: 'Filter Pencarian', value: browseSearch || 'Semua Data' },
+          { label: 'Filter Pencarian', value: searchTerm || 'Semua Data' },
         ]}
         columns={printColumns}
         rows={filteredStockList}
@@ -702,6 +761,32 @@ export const StockAwalForm: React.FC<StockAwalFormProps> = ({
           { label: 'Total Item Stock Awal', value: `${filteredStockList.length} Baris` },
           { label: 'Total Nilai Persediaan', value: formatRupiah(totalNilaiPersediaan) },
         ]}
+        selectedRow={selectedStockRow}
+        selectedTitle="DETAIL STOCK AWAL BARANG"
+        selectedSubtitle={
+          selectedStockRow
+            ? `Item Code: ${selectedStockRow.itemCode} | ${selectedStockRow.description}`
+            : undefined
+        }
+        selectedMetaLines={
+          selectedStockRow
+            ? [
+                { label: 'Periode', value: selectedStockRow.periode },
+                { label: 'Lokasi', value: selectedStockRow.lokasi },
+                { label: 'Item Code', value: selectedStockRow.itemCode },
+                { label: 'Description', value: selectedStockRow.description },
+                { label: 'Category / Merk', value: `${selectedStockRow.category || '-'} / ${selectedStockRow.merk || '-'}` },
+              ]
+            : undefined
+        }
+        selectedSummaryItems={
+          selectedStockRow
+            ? [
+                { label: 'Stock Bagus / Rusak', value: `${selectedStockRow.stockBagus} / ${selectedStockRow.stockRusak} ${selectedStockRow.satuan}` },
+                { label: 'Nilai Persediaan Item', value: formatRupiah(selectedStockRow.hpp * selectedStockRow.stockBagus) },
+              ]
+            : undefined
+        }
       />
     </div>
   );
