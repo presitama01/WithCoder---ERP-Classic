@@ -132,8 +132,18 @@
 
   /* Hide everything in desktop UI except A4 Print Preview Modal when printing */
   #desktop-root > :not(#a4-print-preview-overlay),
-  #desktop-root #mdi-workspace > :not(#a4-print-preview-overlay) {
+  body:has(> #a4-print-preview-overlay) > :not(#a4-print-preview-overlay) {
     display: none !important;
+  }
+
+  #desktop-root {
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
   }
 
   #a4-print-preview-overlay {

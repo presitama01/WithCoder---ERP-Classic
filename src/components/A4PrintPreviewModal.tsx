@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { FileDown, FileSpreadsheet, Printer, RotateCw, X } from 'lucide-react';
 import {
   CompanyProfileData,
   FALLBACK_COMPANY_PROFILE,
@@ -8,6 +10,7 @@ import {
 } from '../lib/erpApi';
 import { getCurrentUser } from '../lib/authService';
 import { exportToExcel } from '../lib/exportExcel';
+import { exportToPdf, extractTextFromReactNode } from '../lib/exportPdf';
 
 export interface PrintColumn<T = any> {
   header: string;
@@ -150,6 +153,8 @@ export function A4PrintPreviewModal<T = any>({
   const [company, setCompany] = useState<CompanyProfileData>(FALLBACK_COMPANY_PROFILE);
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(recommendedOrientation);
   const [isLoadingCompany, setIsLoadingCompany] = useState(false);
+  const [isSavingPdf, setIsSavingPdf] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setOrientation(recommendedOrientation);
@@ -160,6 +165,9 @@ export function A4PrintPreviewModal<T = any>({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        window.print();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -248,8 +256,37 @@ export function A4PrintPreviewModal<T = any>({
   const totalPages = pages.length;
   const printDate = toDisplayDMyShort(todayIso());
 
+  const showNotice = (msg: string) => {
+    setActionNotice(msg);
+    setTimeout(() => setActionNotice(null), 2800);
+  };
+
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleSaveAsPdf = () => {
+    try {
+      setIsSavingPdf(true);
+      exportToPdf<T>({
+        fileName: fileName || title,
+        title,
+        subtitle,
+        metaLines,
+        companyProfile: company,
+        columns,
+        rows,
+        summaryItems,
+        showSignatures,
+        orientation,
+        printedBy: activeUser,
+      });
+      showNotice('File PDF berhasil disimpan/diunduh.');
+    } catch (err: any) {
+      showNotice(`Gagal membuat PDF: ${err?.message || 'Error'}`);
+    } finally {
+      setIsSavingPdf(false);
+    }
   };
 
   const handleExport = () => {
@@ -271,13 +308,14 @@ export function A4PrintPreviewModal<T = any>({
             const rendered = c.accessor(row, idx);
             return typeof rendered === 'string' || typeof rendered === 'number'
               ? rendered
-              : String((row as any)[c.header] ?? '');
+              : extractTextFromReactNode(rendered) || String((row as any)[c.header] ?? '');
           }
           return (row as any)[c.accessor];
         },
       })),
       rows,
     });
+    showNotice('File Excel berhasil diunduh.');
   };
 
   const pageSizeClasses =
@@ -290,16 +328,21 @@ export function A4PrintPreviewModal<T = any>({
     .map((l) => l.trim())
     .filter(Boolean);
 
-  return (
+  const portalTarget =
+    (typeof document !== 'undefined' &&
+      (document.getElementById('desktop-root') || document.body)) ||
+    null;
+
+  const modalContent = (
     <div
       id="a4-print-preview-overlay"
-      className="fixed inset-0 z-[100] bg-black/60 flex flex-col font-sans select-text"
+      className="fixed inset-0 z-[99999] bg-black/65 flex flex-col font-sans select-text"
     >
       {/* Dynamic @page orientation matching current A4 Portrait / Landscape mode */}
       <style>{`@media print { @page { size: A4 ${orientation}; margin: 10mm; } }`}</style>
 
-      {/* Preview Toolbar (Pinned top, hidden during window.print) */}
-      <div className="print:hidden shrink-0 min-h-[42px] bg-[#1F2937] text-white px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 border-b border-black shadow">
+      {/* Preview Toolbar (Pinned top above MDI chrome, hidden during window.print) */}
+      <div className="print:hidden shrink-0 min-h-[44px] bg-[#1F2937] text-white px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 border-b border-black shadow-md">
         <div className="flex items-center space-x-2.5 min-w-0">
           <span className="font-bold text-[12px] tracking-wide shrink-0">
             PRINT PREVIEW (A4 {orientation === 'landscape' ? 'Landscape' : 'Portrait'})
@@ -308,43 +351,65 @@ export function A4PrintPreviewModal<T = any>({
             {title} • {rows.length} baris • {totalPages} halaman • User: {activeUser}
             {isLoadingCompany ? ' • Memuat Kop...' : ''}
           </span>
+          {actionNotice && (
+            <span className="text-[10.5px] font-semibold bg-[#065F46] text-[#D1FAE5] px-2 py-0.5 rounded-[2px] border border-[#34D399]/50 shrink-0">
+              {actionNotice}
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center space-x-1.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
           {toolbarExtra}
           <button
             type="button"
             onClick={() =>
               setOrientation((prev) => (prev === 'portrait' ? 'landscape' : 'portrait'))
             }
-            className="h-[26px] px-2.5 bg-[#374151] hover:bg-[#4B5563] border border-gray-500 text-white text-[10.5px] font-medium rounded-[2px] cursor-pointer"
+            title="Ubah Orientasi Kertas (Portrait / Landscape)"
+            className="h-[28px] px-2.5 bg-[#374151] hover:bg-[#4B5563] border border-gray-500 text-white text-[11px] font-medium rounded-[2px] flex items-center space-x-1.5 cursor-pointer"
           >
-            Orientasi: {orientation === 'portrait' ? 'A4 Portrait' : 'A4 Landscape'}
+            <RotateCw className="w-3.5 h-3.5" />
+            <span>{orientation === 'portrait' ? 'Portrait' : 'Landscape'}</span>
           </button>
 
           <button
             type="button"
             onClick={handleExport}
-            className="h-[26px] px-2.5 bg-[#1E7145] hover:bg-[#248A55] border border-white/40 text-white text-[10.5px] font-bold rounded-[2px] cursor-pointer"
+            title="Simpan / Download sebagai Excel (.xls)"
+            className="h-[28px] px-2.5 bg-[#1E7145] hover:bg-[#248A55] border border-white/40 text-white text-[11px] font-bold rounded-[2px] flex items-center space-x-1.5 cursor-pointer"
           >
-            Export Excel
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Export Excel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSaveAsPdf}
+            disabled={isSavingPdf}
+            title="Simpan / Download sebagai file PDF (.pdf)"
+            className="h-[28px] px-3 bg-[#C2410C] hover:bg-[#EA580C] disabled:opacity-60 border border-white/50 text-white text-[11px] font-bold rounded-[2px] flex items-center space-x-1.5 cursor-pointer shadow-sm"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span>{isSavingPdf ? 'Menyimpan PDF...' : 'Save As PDF'}</span>
           </button>
 
           <button
             type="button"
             onClick={handlePrint}
-            className="h-[26px] px-3 bg-[#0055EA] hover:bg-[#196DFF] border border-white/50 text-white text-[10.5px] font-bold rounded-[2px] cursor-pointer"
+            title="Cetak langsung ke Printer (Ctrl+P)"
+            className="h-[28px] px-3 bg-[#0055EA] hover:bg-[#196DFF] border border-white/60 text-white text-[11px] font-bold rounded-[2px] flex items-center space-x-1.5 cursor-pointer shadow-sm"
           >
-            Print A4
+            <Printer className="w-3.5 h-3.5" />
+            <span>Print</span>
           </button>
 
           <button
             type="button"
             onClick={onClose}
             title="Tutup Print Preview & Kembali (Esc)"
-            className="h-[26px] px-2.5 bg-[#C00000] hover:bg-[#E81123] border border-white/60 text-white text-[10.5px] font-bold rounded-[2px] flex items-center space-x-1 cursor-pointer"
+            className="h-[28px] px-2.5 bg-[#B91C1C] hover:bg-[#DC2626] border border-white/60 text-white text-[11px] font-bold rounded-[2px] flex items-center space-x-1 cursor-pointer"
           >
-            <span>[✕]</span>
+            <X className="w-3.5 h-3.5" />
             <span>Close</span>
           </button>
         </div>
@@ -568,4 +633,6 @@ export function A4PrintPreviewModal<T = any>({
       </div>
     </div>
   );
+
+  return portalTarget ? createPortal(modalContent, portalTarget) : modalContent;
 }
