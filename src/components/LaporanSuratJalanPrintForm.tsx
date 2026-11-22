@@ -1,25 +1,20 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { FormActionButtons } from './FormActionButtons';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
-import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
-  erpCreate,
-  erpDelete,
   erpList,
-  erpUpdate,
   fetchActiveCompanyProfile,
-  nextUniqueCode,
+  formatMoney,
   syncAppSettings,
   todayIso,
   toDisplayDMyShort,
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
-import { getCurrentUser } from '../lib/authService';
 
 interface LaporanSuratJalanPrintFormProps {
   isOpen: boolean;
@@ -30,9 +25,19 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   isOpen,
   onClose,
 }) => {
-  const [tglStart, setTglStart] = useState<string>('12-09-2026');
-  const [tglEnd, setTglEnd] = useState<string>('12-09-2026');
-  const [filterType, setFilterType] = useState<string>('all_periode');
+  const defaultRange = useMemo(() => {
+    const now = todayIso();
+    const monthStart = `${now.slice(0, 8)}01`;
+    return {
+      start: toDisplayDMyShort(monthStart),
+      end: toDisplayDMyShort(now),
+    };
+  }, []);
+
+  const [tglStart, setTglStart] = useState<string>(defaultRange.start);
+  const [tglEnd, setTglEnd] = useState<string>(defaultRange.end);
+  const [filterType, setFilterType] = useState<'merk' | 'sales' | 'customer' | 'all_periode'>('all_periode');
+  const [merkFilter, setMerkFilter] = useState<string>('');
   const [salesCode, setSalesCode] = useState<string>('');
   const [salesDesc, setSalesDesc] = useState<string>('');
   const [customerFilter, setCustomerFilter] = useState<string>('');
@@ -44,10 +49,8 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const [salesCatalog, setSalesCatalog] = useState<{ kode: string; nama: string }[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [customerCatalog, setCustomerCatalog] = useState<string[]>([]);
-  const [soOptions, setSoOptions] = useState<string[]>([]);
-  const [poOptions, setPoOptions] = useState<string[]>([]);
+  const [merkOptions, setMerkOptions] = useState<string[]>([]);
 
-  // Live Supabase table + Search state
   const [tableRows, setTableRows] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
@@ -55,85 +58,137 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Add / Koreksi Modal
-  const [isCrudOpen, setIsCrudOpen] = useState<boolean>(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formNoBukti, setFormNoBukti] = useState<string>('');
-  const [formTanggal, setFormTanggal] = useState<string>(() => toDisplayDMyShort(todayIso()));
-  const [formCustomer, setFormCustomer] = useState<string>('');
-  const [formNoSo, setFormNoSo] = useState<string>('');
-  const [formPoNo, setFormPoNo] = useState<string>('');
-  const [formSales, setFormSales] = useState<string>('');
-  const [formNoFaktur, setFormNoFaktur] = useState<string>('');
-  const [formKeterangan, setFormKeterangan] = useState<string>('');
-  const [formLokasiStock, setFormLokasiStock] = useState<string>('01 - OFFICE');
-  const [formStsPrint, setFormStsPrint] = useState<string>('Not Yet');
-  const [formTglPrint, setFormTglPrint] = useState<string>('');
-  const [formStsPost, setFormStsPost] = useState<string>('Posting');
-  const [formTglPost, setFormTglPost] = useState<string>('');
-  const [formDibuatOleh, setFormDibuatOleh] = useState<string>('');
-  const [formTglCreated, setFormTglCreated] = useState<string>('');
-  const [formDiupdateOleh, setFormDiupdateOleh] = useState<string>('');
-  const [formTglUpdate, setFormTglUpdate] = useState<string>('');
-
-  const [modalError, setModalError] = useState<string | null>(null);
-  const [confirmDeleteRow, setConfirmDeleteRow] = useState<any | null>(null);
-
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
-  const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
+    setTimeout(() => setFeedback(null), 2800);
   };
 
-  const loadLiveRows = async (opts?: {
-    field?: string;
-    term?: string;
-    skipSearch?: boolean;
-  }): Promise<any[]> => {
-    const activeField = opts?.field ?? searchField;
-    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
-    const SEARCH_COL_MAP: Record<string, string> = {
-      Kode: 'no_bukti',
-      'No.Bukti': 'no_bukti',
-      Customer: 'nama_customer',
-      'No.SO': 'no_so',
-      'PO.No': 'po_no',
-      Sales: 'sales',
-      'No.Faktur': 'no_faktur',
-    };
-    const queryOpts: Record<string, any> = { orderBy: 'tanggal', asc: false };
-    if (activeTerm) {
-      if (activeField !== 'Semua' && SEARCH_COL_MAP[activeField]) {
-        queryOpts.searchCol = SEARCH_COL_MAP[activeField];
-        queryOpts.searchVal = activeTerm;
-      } else {
-        queryOpts.orSearch = 'no_bukti,nama_customer,no_so,po_no,sales,no_faktur,lokasi_stock,keterangan';
-        queryOpts.searchVal = activeTerm;
+  const loadLiveRows = async (barangMerkMap?: Map<string, string>): Promise<any[]> => {
+    const merkMap = barangMerkMap || new Map<string, string>();
+    if (merkMap.size === 0) {
+      const barangs = await erpList<any>('master_barangs', { limit: 2000 }).catch(() => []);
+      for (const b of barangs) {
+        if (b.kode) merkMap.set(String(b.kode).trim().toUpperCase(), String(b.merk || ''));
       }
     }
 
-    const rows = await erpList<any>('surat_jalans', queryOpts);
-    const mapped = rows.map((r) => ({
-      ...r,
-      id: String(r.id),
-      no_bukti: r.no_bukti || '',
-      tanggal_iso: toIsoDate(r.tanggal) || '',
-      tanggal_display: toDisplayDMyShort(r.tanggal),
-      nama_customer: r.nama_customer || '',
-      no_so: r.no_so || '',
-      po_no: r.po_no || '',
-      sales: r.sales || '',
-      no_faktur: r.no_faktur || '',
-      lokasi_stock: r.lokasi_stock || '01 - OFFICE',
-      sts_print: r.sts_print || 'Not Yet',
-      tgl_print_display: toDisplayDMyShort(r.tgl_print),
-      sts_post: r.sts_post || 'Posting',
-      tgl_post_display: toDisplayDMyShort(r.tgl_post),
-      keterangan: r.keterangan || '',
-    }));
+    const viewRows = await erpList<any>('v_laporan_surat_jalan', {
+      orderBy: 'tanggal',
+      asc: false,
+      limit: 2000,
+    }).catch(() => null);
+
+    let mapped: any[] = [];
+
+    if (Array.isArray(viewRows)) {
+      mapped = viewRows.map((r, idx) => {
+        const tglIso = toIsoDate(r.tanggal) || '';
+        const kode = String(r.kode || '').trim().toUpperCase();
+        return {
+          id: `${r.sj_id || r.no_bukti}-${kode || idx}`,
+          sj_id: r.sj_id,
+          no_bukti: r.no_bukti || '',
+          tanggal_iso: tglIso,
+          tanggal_display: toDisplayDMyShort(tglIso) || '-',
+          nama_customer: r.nama_customer || '',
+          no_so: r.no_so || '',
+          po_no: r.po_no || '',
+          sales: r.sales || '',
+          no_faktur: r.no_faktur || '',
+          lokasi_stock: r.lokasi_stock || '01 - OFFICE',
+          nama_expedisi: r.nama_expedisi || '',
+          no_polisi: r.no_polisi || '',
+          nama_supir: r.nama_supir || '',
+          sts_print: r.sts_print || 'Not Yet',
+          sts_post: r.sts_post || 'Posting',
+          keterangan: r.keterangan || '',
+          kode,
+          nama_barang: r.nama_barang || '',
+          merk_barang: merkMap.get(kode) || '',
+          unit: r.unit || 'PCS',
+          qty: Number(r.qty || 0),
+          terima: Number(r.terima || 0),
+        };
+      });
+    } else {
+      const [headers, details] = await Promise.all([
+        erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false, limit: 1500 }),
+        erpList<any>('surat_jalan_details', { limit: 4000 }).catch(() => []),
+      ]);
+      const detailsBySjId = new Map<string, any[]>();
+      for (const d of details) {
+        const sid = String(d.surat_jalan_id || '');
+        if (!sid) continue;
+        const list = detailsBySjId.get(sid) || [];
+        list.push(d);
+        detailsBySjId.set(sid, list);
+      }
+
+      for (const h of headers) {
+        const tglIso = toIsoDate(h.tanggal) || '';
+        const dets = detailsBySjId.get(String(h.id)) || [];
+        if (dets.length === 0) {
+          mapped.push({
+            id: `${h.id}-hdr`,
+            sj_id: h.id,
+            no_bukti: h.no_bukti || '',
+            tanggal_iso: tglIso,
+            tanggal_display: toDisplayDMyShort(tglIso) || '-',
+            nama_customer: h.nama_customer || '',
+            no_so: h.no_so || '',
+            po_no: h.po_no || '',
+            sales: h.sales || '',
+            no_faktur: h.no_faktur || '',
+            lokasi_stock: h.lokasi_stock || '01 - OFFICE',
+            nama_expedisi: h.nama_expedisi || '',
+            no_polisi: h.no_polisi || '',
+            nama_supir: h.nama_supir || '',
+            sts_print: h.sts_print || 'Not Yet',
+            sts_post: h.sts_post || 'Posting',
+            keterangan: h.keterangan || '',
+            kode: '',
+            nama_barang: '',
+            merk_barang: '',
+            unit: 'PCS',
+            qty: 0,
+            terima: 0,
+          });
+        } else {
+          for (const d of dets) {
+            const kode = String(d.kode || '').trim().toUpperCase();
+            mapped.push({
+              id: String(d.id),
+              sj_id: h.id,
+              no_bukti: h.no_bukti || '',
+              tanggal_iso: tglIso,
+              tanggal_display: toDisplayDMyShort(tglIso) || '-',
+              nama_customer: h.nama_customer || '',
+              no_so: h.no_so || '',
+              po_no: h.po_no || '',
+              sales: h.sales || '',
+              no_faktur: h.no_faktur || '',
+              lokasi_stock: h.lokasi_stock || '01 - OFFICE',
+              nama_expedisi: h.nama_expedisi || '',
+              no_polisi: h.no_polisi || '',
+              nama_supir: h.nama_supir || '',
+              sts_print: h.sts_print || 'Not Yet',
+              sts_post: h.sts_post || 'Posting',
+              keterangan: h.keterangan || '',
+              kode,
+              nama_barang: d.nama_barang || '',
+              merk_barang: merkMap.get(kode) || '',
+              unit: d.unit || 'PCS',
+              qty: Number(d.qty || 0),
+              terima: Number(d.terima || 0),
+            });
+          }
+        }
+      }
+    }
+
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
       setSelectedId(mapped[0].id);
@@ -149,29 +204,52 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     (async () => {
       try {
         setIsBusy(true);
-        const [sales, lokasis, customers, soRes, poRes] = await Promise.all([
+        const [sales, lokasis, customers, merks, barangs] = await Promise.all([
           erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true }).catch(() => []),
           erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
           erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true }).catch(() => []),
-          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }).catch(() => []),
-          erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false }).catch(() => []),
+          erpList<any>('master_merks', { orderBy: 'merk', asc: true }).catch(() => []),
+          erpList<any>('master_barangs', { limit: 2000 }).catch(() => []),
         ]);
         if (!active) return;
-        setSalesCatalog(sales.map((s) => ({ kode: s.kode_sales || '', nama: s.nama_sales || '' })));
-        setLokasiOptions(lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()));
-        setCustomerCatalog(customers.map((c) => c.nama_customer || '').filter(Boolean));
-        setSoOptions(soRes.map((so: any) => so.no_bukti || '').filter(Boolean));
-        setPoOptions(poRes.map((po: any) => po.no_bukti || '').filter(Boolean));
+
+        setSalesCatalog(
+          sales
+            .filter((s) => s.is_active !== false)
+            .map((s) => ({ kode: String(s.kode_sales || ''), nama: String(s.nama_sales || '') }))
+        );
+        setLokasiOptions(
+          lokasis
+            .filter((l) => l.is_active !== false)
+            .map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim())
+        );
+        setCustomerCatalog(
+          customers
+            .filter((c) => c.is_active !== false)
+            .map((c) => String(c.nama_customer || ''))
+            .filter(Boolean)
+        );
+
+        const merkMap = new Map<string, string>();
+        for (const b of barangs) {
+          if (b.kode) merkMap.set(String(b.kode).trim().toUpperCase(), String(b.merk || ''));
+        }
+        const mList = Array.from(
+          new Set([
+            ...merks.filter((m) => m.is_active !== false).map((m) => String(m.merk || m.nama_merk || '').trim()),
+            ...Array.from(merkMap.values()),
+          ])
+        ).filter(Boolean);
+        setMerkOptions(mList);
 
         const rawPreset = localStorage.getItem('withcoder_preset_surat_jalan');
         if (rawPreset) {
           const v = JSON.parse(rawPreset);
-          if (v.tglStart) setTglStart(v.tglStart);
-          if (v.tglEnd) setTglEnd(v.tglEnd);
           if (v.lokasiStock) setLokasiStock(v.lokasiStock);
           if (v.bentukLaporan) setBentukLaporan(v.bentukLaporan);
         }
-        await loadLiveRows();
+
+        await loadLiveRows(merkMap);
       } catch {
         // ignore
       } finally {
@@ -184,21 +262,36 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   }, [isOpen]);
 
   useEffect(() => {
+    const q = salesCode.trim().toLowerCase();
     const match = salesCatalog.find(
-      (s) => s.kode.toLowerCase() === salesCode.trim().toLowerCase() || s.nama.toLowerCase() === salesCode.trim().toLowerCase()
+      (s) => s.kode.toLowerCase() === q || s.nama.toLowerCase() === q
     );
     setSalesDesc(match ? match.nama : '');
   }, [salesCode, salesCatalog]);
 
   if (!isOpen) return null;
 
-  const filteredTableRows = tableRows.filter((r) => {
+  const startIso = toIsoDate(tglStart);
+  const endIso = toIsoDate(tglEnd);
+
+  const filteredDetailRows = tableRows.filter((r) => {
+    if (startIso && r.tanggal_iso && r.tanggal_iso < startIso) return false;
+    if (endIso && r.tanggal_iso && r.tanggal_iso > endIso) return false;
+    if (lokasiStock !== 'ALL' && r.lokasi_stock && r.lokasi_stock !== lokasiStock) return false;
+
+    if (filterType === 'merk' && merkFilter.trim()) {
+      if (!r.merk_barang.toLowerCase().includes(merkFilter.trim().toLowerCase())) return false;
+    }
     if (filterType === 'sales' && salesCode.trim()) {
-      if (!r.sales.toLowerCase().includes(salesCode.trim().toLowerCase())) return false;
+      const q = salesCode.trim().toLowerCase();
+      const sDesc = salesDesc.trim().toLowerCase();
+      const rowSales = String(r.sales || '').toLowerCase();
+      if (!rowSales.includes(q) && !(sDesc && rowSales.includes(sDesc))) return false;
     }
     if (filterType === 'customer' && customerFilter.trim()) {
       if (!r.nama_customer.toLowerCase().includes(customerFilter.trim().toLowerCase())) return false;
     }
+
     if (searchTerm.trim()) {
       if (searchField === 'Kode' || searchField === 'No.Bukti') {
         return matchesMultiKeyword([r.no_bukti], searchTerm);
@@ -209,201 +302,130 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
       if (searchField === 'Sales') return matchesMultiKeyword([r.sales], searchTerm);
       if (searchField === 'No.Faktur') return matchesMultiKeyword([r.no_faktur], searchTerm);
       return matchesMultiKeyword(
-        [r.no_bukti, r.tanggal_display, r.nama_customer, r.no_so, r.po_no, r.sales, r.no_faktur, r.lokasi_stock, r.keterangan, r.sts_post],
+        [
+          r.no_bukti,
+          r.tanggal_display,
+          r.nama_customer,
+          r.no_so,
+          r.po_no,
+          r.sales,
+          r.no_faktur,
+          r.kode,
+          r.nama_barang,
+          r.merk_barang,
+          r.nama_expedisi,
+          r.lokasi_stock,
+          r.sts_post,
+        ],
         searchTerm
       );
     }
     return true;
   });
 
+  const buildModeRows = (rows: any[], mode: string): any[] => {
+    if (mode.startsWith('01')) {
+      return rows;
+    }
+    if (mode.startsWith('02')) {
+      // 02 - Laporan Rekap Surat Jalan (grouped by no_bukti)
+      const grouped = new Map<string, any>();
+      for (const r of rows) {
+        const key = r.no_bukti || r.id;
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            id: key,
+            no_bukti: r.no_bukti,
+            tanggal_display: r.tanggal_display,
+            nama_customer: r.nama_customer,
+            no_so: r.no_so || '-',
+            po_no: r.po_no || '-',
+            sales: r.sales || '-',
+            no_faktur: r.no_faktur || '-',
+            nama_expedisi: r.nama_expedisi || '-',
+            no_polisi: r.no_polisi || '-',
+            nama_supir: r.nama_supir || '-',
+            jml_item: 0,
+            qty: 0,
+            terima: 0,
+            sts_post: r.sts_post,
+          });
+        }
+        const g = grouped.get(key);
+        if (r.kode) g.jml_item += 1;
+        g.qty += Number(r.qty || 0);
+        g.terima += Number(r.terima || 0);
+      }
+      return Array.from(grouped.values());
+    }
+    // 03 - Laporan Surat Jalan by Customer
+    const byCust = new Map<string, any>();
+    for (const r of rows) {
+      const cust = r.nama_customer || '(TANPA CUSTOMER)';
+      if (!byCust.has(cust)) {
+        byCust.set(cust, {
+          id: cust,
+          nama_customer: cust,
+          sjSet: new Set<string>(),
+          fakturSet: new Set<string>(),
+          unbilledSjSet: new Set<string>(),
+          jml_item: 0,
+          qty: 0,
+          terima: 0,
+        });
+      }
+      const g = byCust.get(cust);
+      if (r.no_bukti) {
+        g.sjSet.add(r.no_bukti);
+        if (r.no_faktur && r.no_faktur !== '-') {
+          g.fakturSet.add(r.no_bukti);
+        } else {
+          g.unbilledSjSet.add(r.no_bukti);
+        }
+      }
+      if (r.kode) g.jml_item += 1;
+      g.qty += Number(r.qty || 0);
+      g.terima += Number(r.terima || 0);
+    }
+    return Array.from(byCust.values())
+      .map((g) => ({
+        id: g.id,
+        nama_customer: g.nama_customer,
+        jml_sj: g.sjSet.size,
+        jml_item: g.jml_item,
+        qty: g.qty,
+        terima: g.terima,
+        sudah_faktur: g.fakturSet.size,
+        belum_faktur: g.unbilledSjSet.size,
+      }))
+      .sort((a, b) => b.jml_sj - a.jml_sj);
+  };
+
+  const activeModeRows = buildModeRows(filteredDetailRows, bentukLaporan);
   const selectedTableRow =
-    filteredTableRows.find((r) => r.id === selectedId) ||
+    filteredDetailRows.find((r) => r.id === selectedId) ||
     tableRows.find((r) => r.id === selectedId) ||
     null;
 
   const selectedSjPrintRow = selectedTableRow
-    ? { ...selectedTableRow, tanggal: selectedTableRow.tanggal_display || toDisplayDMyShort(selectedTableRow.tanggal) }
+    ? { ...selectedTableRow, tanggal: selectedTableRow.tanggal_display }
     : null;
 
-  const handleBaru = () => {
-    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
-    const todayDisp = toDisplayDMyShort(todayIso());
-    setEditingId(null);
-    setModalError(null);
-    setFormNoBukti(nextUniqueCode(tableRows.map((r) => r.no_bukti), '2608-DO-INV-', 3));
-    setFormTanggal(todayDisp);
-    setFormCustomer(customerFilter || '');
-    setFormNoSo('');
-    setFormPoNo('');
-    setFormSales(salesCode || '');
-    setFormNoFaktur('');
-    setFormKeterangan('');
-    setFormLokasiStock(lokasiOptions[0] || '01 - OFFICE');
-    setFormStsPrint('Not Yet');
-    setFormTglPrint('');
-    setFormStsPost('Posting');
-    setFormTglPost(todayDisp);
-    setFormDibuatOleh(currentUser);
-    setFormTglCreated(todayDisp);
-    setFormDiupdateOleh('-');
-    setFormTglUpdate('');
-    setIsCrudOpen(true);
-  };
-
-  const handleKoreksi = () => {
-    const current =
-      filteredTableRows.find((r) => r.id === selectedId) ||
-      tableRows.find((r) => r.id === selectedId) ||
-      filteredTableRows[0];
-    if (!current) {
-      showFeedback('Pilih baris Surat Jalan terlebih dahulu (atau klik Baru)');
-      return;
-    }
-    const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
-    const todayDisp = toDisplayDMyShort(todayIso());
-    setSelectedId(current.id);
-    setEditingId(current.id);
-    setModalError(null);
-    setFormNoBukti(current.no_bukti);
-    setFormTanggal(current.tanggal_display || todayDisp);
-    setFormCustomer(current.nama_customer);
-    setFormNoSo(current.no_so);
-    setFormPoNo(current.po_no);
-    setFormSales(current.sales || '');
-    setFormNoFaktur(current.no_faktur);
-    setFormKeterangan(current.keterangan);
-    setFormLokasiStock(current.lokasi_stock || lokasiOptions[0] || '01 - OFFICE');
-    setFormStsPrint(current.sts_print || 'Not Yet');
-    setFormTglPrint(current.tgl_print_display || '');
-    setFormStsPost(current.sts_post || 'Posting');
-    setFormTglPost(current.tgl_post_display || '');
-    setFormDibuatOleh(current.dibuat_oleh || currentUser);
-    setFormTglCreated(!current.tgl_created || current.tgl_created === '-' ? todayDisp : toDisplayDMyShort(current.tgl_created));
-    setFormDiupdateOleh(
-      current.diupdate_oleh && current.diupdate_oleh !== '-' ? current.diupdate_oleh : currentUser
-    );
-    setFormTglUpdate(current.tgl_update && current.tgl_update !== '-' ? toDisplayDMyShort(current.tgl_update) : todayDisp);
-    setIsCrudOpen(true);
-  };
-
-  const handleSaveCrud = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setModalError(null);
-    if (!formNoBukti.trim() || !formCustomer.trim()) {
-      setModalError('No. Bukti SJ dan Nama Customer wajib diisi.');
-      return;
-    }
+  const handleSimpanFilter = async () => {
     try {
       setIsBusy(true);
-      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
-      const tglIso = toIsoDate(formTanggal) || todayIso();
-      const payload: Record<string, any> = {
-        no_bukti: formNoBukti.trim().toUpperCase(),
-        tanggal: tglIso,
-        nama_customer: formCustomer.trim().toUpperCase(),
-        no_so: formNoSo.trim().toUpperCase(),
-        po_no: formPoNo.trim().toUpperCase(),
-        sales: formSales.trim().toUpperCase(),
-        no_faktur: formNoFaktur.trim().toUpperCase(),
-        keterangan: formKeterangan.trim(),
-        lokasi_stock: formLokasiStock.trim().toUpperCase() || '01 - OFFICE',
-        sts_print: formStsPrint,
-        tgl_print: toIsoDate(formTglPrint) || (formStsPrint === 'Printed' ? todayIso() : null),
-        sts_post: formStsPost,
-        tgl_post: toIsoDate(formTglPost) || (formStsPost === 'Posting' ? tglIso : null),
-        dibuat_oleh: formDibuatOleh.trim().toUpperCase() || currentUser,
-        tgl_created: toIsoDate(formTglCreated) || todayIso(),
-      };
-      if (editingId) {
-        payload.diupdate_oleh = formDiupdateOleh.trim().toUpperCase() || currentUser;
-        payload.tgl_update = toIsoDate(formTglUpdate) || todayIso();
-        await erpUpdate('surat_jalans', editingId, payload);
-        showFeedback('Surat Jalan diperbarui di Supabase');
-      } else {
-        payload.diupdate_oleh = formDiupdateOleh.trim() ? formDiupdateOleh.trim().toUpperCase() : '-';
-        payload.tgl_update = toIsoDate(formTglUpdate);
-        const created = await erpCreate<any>('surat_jalans', payload);
-        if (created?.id) setSelectedId(String(created.id));
-        showFeedback('Surat Jalan tersimpan ke Supabase');
-      }
-      setIsCrudOpen(false);
-      setEditingId(null);
-      await loadLiveRows();
-    } catch (err: any) {
-      const msg = err?.message || 'Gagal menyimpan Surat Jalan';
-      setModalError(msg);
-      showFeedback(`Gagal simpan: ${msg}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleRequestHapus = () => {
-    const current =
-      filteredTableRows.find((r) => r.id === selectedId) ||
-      tableRows.find((r) => r.id === selectedId);
-    if (!current) {
-      showFeedback('Pilih baris Surat Jalan yang akan dihapus');
-      return;
-    }
-    setConfirmDeleteRow(current);
-  };
-
-  const handleConfirmHapus = async () => {
-    if (!confirmDeleteRow) return;
-    try {
-      setIsBusy(true);
-      await erpDelete('surat_jalans', confirmDeleteRow.id);
-      if (confirmDeleteRow.id === selectedId) setSelectedId('');
-      setConfirmDeleteRow(null);
-      await loadLiveRows();
-      showFeedback('Surat Jalan dihapus dari Supabase');
-    } catch (err: any) {
-      showFeedback(`Gagal hapus: ${err.message}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleSimpan = async () => {
-    const selected = selectedTableRow;
-    if (!selected) {
-      showFeedback('Pilih baris Surat Jalan terlebih dahulu untuk disimpan');
-      return;
-    }
-    try {
-      setIsBusy(true);
-      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
-      await erpUpdate('surat_jalans', selected.id, {
-        no_bukti: selected.no_bukti,
-        tanggal: selected.tanggal_iso || toIsoDate(selected.tanggal) || todayIso(),
-        nama_customer: selected.nama_customer,
-        no_so: selected.no_so || '',
-        po_no: selected.po_no || '',
-        sales: selected.sales || '',
-        no_faktur: selected.no_faktur || '',
-        keterangan: selected.keterangan || '',
-        lokasi_stock: selected.lokasi_stock || '01 - OFFICE',
-        sts_print: selected.sts_print || 'Not Yet',
-        tgl_print: toIsoDate(selected.tgl_print) || null,
-        sts_post: selected.sts_post || 'Posting',
-        tgl_post: toIsoDate(selected.tgl_post) || null,
-        diupdate_oleh: currentUser,
-        tgl_update: todayIso(),
-      });
       localStorage.setItem(
         'withcoder_preset_surat_jalan',
-        JSON.stringify({ tglStart, tglEnd, lokasiStock, bentukLaporan })
+        JSON.stringify({ lokasiStock, bentukLaporan })
       );
       await syncAppSettings({
         periode_start: toIsoDate(tglStart),
         periode_end: toIsoDate(tglEnd),
         lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
       });
-      await loadLiveRows();
-      showFeedback(`Data Surat Jalan [${selected.no_bukti}] tersimpan ke Supabase`);
+      showFeedback('Preset filter Laporan Surat Jalan tersimpan');
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      showFeedback(`Gagal menyimpan preset: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
@@ -413,7 +435,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows({ skipSearch: true });
+      await loadLiveRows();
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
     } finally {
@@ -424,12 +446,8 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const handleToolbarCari = async () => {
     try {
       setIsBusy(true);
-      const res = await loadLiveRows({ field: searchField, term: searchTerm });
-      showFeedback(
-        searchTerm.trim()
-          ? `Hasil cari Supabase: ${res.length} dokumen ditemukan`
-          : `Data dimuat ulang (${res.length} dokumen)`
-      );
+      await loadLiveRows();
+      showFeedback(`Data dimuat (${filteredDetailRows.length} baris sesuai filter)`);
     } catch (err: any) {
       showFeedback(`Gagal mencari: ${err.message}`);
     } finally {
@@ -440,9 +458,16 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
   const handleToolbarReset = async () => {
     setSearchField('Semua');
     setSearchTerm('');
+    setFilterType('all_periode');
+    setMerkFilter('');
+    setSalesCode('');
+    setCustomerFilter('');
+    setLokasiStock('ALL');
+    setTglStart(defaultRange.start);
+    setTglEnd(defaultRange.end);
     try {
       setIsBusy(true);
-      await loadLiveRows({ field: 'Semua', term: '' });
+      await loadLiveRows();
       showFeedback('Filter pencarian direset');
     } catch (err: any) {
       showFeedback(`Gagal reset: ${err.message}`);
@@ -451,47 +476,55 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     }
   };
 
-  const fetchReportData = async (): Promise<any[]> => {
-    const startIso = toIsoDate(tglStart);
-    const endIso = toIsoDate(tglEnd);
-    const rows = await erpList<any>('surat_jalans', {
-      gte: startIso ? { tanggal: startIso } : undefined,
-      lte: endIso ? { tanggal: endIso } : undefined,
-      orderBy: 'tanggal',
-      asc: false,
-    });
-    return rows
-      .filter((r) => {
-        if (lokasiStock !== 'ALL' && r.lokasi_stock && r.lokasi_stock !== lokasiStock) return false;
-        if (filterType === 'sales' && salesCode.trim()) {
-          return (r.sales || '').toLowerCase().includes(salesCode.trim().toLowerCase());
-        }
-        if (filterType === 'customer' && customerFilter.trim()) {
-          return (r.nama_customer || '').toLowerCase().includes(customerFilter.trim().toLowerCase());
-        }
-        return true;
-      })
-      .map((r) => ({
-        no_bukti: r.no_bukti || '',
-        tanggal: toDisplayDMyShort(r.tanggal),
-        nama_customer: r.nama_customer || '',
-        no_so: r.no_so || '',
-        po_no: r.po_no || '',
-        sales: r.sales || '',
-        no_faktur: r.no_faktur || '',
-        lokasi_stock: r.lokasi_stock || '01 - OFFICE',
-        sts_post: r.sts_post || 'Posting',
-        keterangan: r.keterangan || '',
-        dibuat_oleh: r.dibuat_oleh || 'ADMIN',
-      }));
+  const getColumnsForMode = (mode: string): PrintColumn<any>[] => {
+    if (mode.startsWith('01')) {
+      return [
+        { header: 'No.Bukti SJ', accessor: 'no_bukti', width: '92px' },
+        { header: 'Tanggal', accessor: 'tanggal_display', align: 'center', width: '70px' },
+        { header: 'Customer', accessor: 'nama_customer' },
+        { header: 'No.SO', accessor: 'no_so', width: '82px' },
+        { header: 'Kode Brg', accessor: 'kode', width: '72px' },
+        { header: 'Nama Barang', accessor: 'nama_barang' },
+        { header: 'Unit', accessor: 'unit', align: 'center', width: '40px' },
+        { header: 'Qty', accessor: (r) => formatMoney(r.qty), align: 'right', width: '46px' },
+        { header: 'Terima', accessor: (r) => formatMoney(r.terima), align: 'right', width: '46px' },
+        { header: 'Expedisi', accessor: 'nama_expedisi', width: '80px' },
+        { header: 'No.Faktur', accessor: 'no_faktur', width: '82px' },
+        { header: 'Status', accessor: 'sts_post', align: 'center', width: '54px' },
+      ];
+    }
+    if (mode.startsWith('02')) {
+      return [
+        { header: 'No.Bukti SJ', accessor: 'no_bukti', width: '96px' },
+        { header: 'Tanggal', accessor: 'tanggal_display', align: 'center', width: '74px' },
+        { header: 'Nama Customer', accessor: 'nama_customer' },
+        { header: 'No.SO', accessor: 'no_so', width: '85px' },
+        { header: 'PO.No', accessor: 'po_no', width: '78px' },
+        { header: 'Sales', accessor: 'sales', align: 'center', width: '65px' },
+        { header: 'No.Faktur', accessor: 'no_faktur', width: '85px' },
+        { header: 'Expedisi', accessor: 'nama_expedisi', width: '80px' },
+        { header: 'No.Pol', accessor: 'no_polisi', width: '68px' },
+        { header: 'Item', accessor: 'jml_item', align: 'right', width: '40px' },
+        { header: 'Total Qty', accessor: (r) => formatMoney(r.qty), align: 'right', width: '56px' },
+        { header: 'Status', accessor: 'sts_post', align: 'center', width: '55px' },
+      ];
+    }
+    return [
+      { header: 'Nama Customer', accessor: 'nama_customer' },
+      { header: 'Jml SJ', accessor: 'jml_sj', align: 'right', width: '65px' },
+      { header: 'Jml Item', accessor: 'jml_item', align: 'right', width: '65px' },
+      { header: 'Total Qty Kirim', accessor: (r) => formatMoney(r.qty), align: 'right', width: '90px' },
+      { header: 'Total Qty Terima', accessor: (r) => formatMoney(r.terima), align: 'right', width: '90px' },
+      { header: 'SJ Sudah Faktur', accessor: 'sudah_faktur', align: 'right', width: '85px' },
+      { header: 'SJ Belum Faktur', accessor: 'belum_faktur', align: 'right', width: '85px' },
+    ];
   };
 
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      await loadLiveRows();
       setPrintScopeOnOpen('all');
-      const data = await fetchReportData();
-      setPreviewRows(data);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat laporan: ${err.message}`);
@@ -500,55 +533,46 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
     }
   };
 
-  const handlePrintSelected = async () => {
+  const handlePrintSelected = () => {
     if (!selectedTableRow) {
       showFeedback('Pilih baris Surat Jalan yang akan dicetak terlebih dahulu');
       return;
     }
-    try {
-      setIsBusy(true);
-      setPrintScopeOnOpen('selected');
-      const data = await fetchReportData().catch(() => []);
-      setPreviewRows(data);
-      setIsPrintOpen(true);
-    } catch {
-      setPreviewRows([]);
-      setIsPrintOpen(true);
-    } finally {
-      setIsBusy(false);
-    }
+    setPrintScopeOnOpen('selected');
+    setIsPrintOpen(true);
   };
 
   const handleExportExcel = async () => {
     try {
       setIsBusy(true);
-      const [data, company] = await Promise.all([fetchReportData(), fetchActiveCompanyProfile()]);
+      const company = await fetchActiveCompanyProfile();
+      const cols = getColumnsForMode(bentukLaporan);
       exportToExcel({
         fileName: 'Laporan_Surat_Jalan',
         sheetTitle: bentukLaporan.toUpperCase(),
         subtitle: `Periode: ${tglStart} s/d ${tglEnd} | Lokasi: ${lokasiStock}`,
         companyProfile: company,
-        columns: [
-          { header: 'No.Bukti SJ', accessor: 'no_bukti' },
-          { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
-          { header: 'Nama Customer', accessor: 'nama_customer' },
-          { header: 'No.SO', accessor: 'no_so' },
-          { header: 'PO.No', accessor: 'po_no' },
-          { header: 'Sales', accessor: 'sales', align: 'center' },
-          { header: 'No.Faktur', accessor: 'no_faktur' },
-          { header: 'Lokasi Stock', accessor: 'lokasi_stock' },
-          { header: 'Status', accessor: 'sts_post', align: 'center' },
-          { header: 'Dibuat Oleh', accessor: 'dibuat_oleh' },
-        ],
-        rows: data,
+        columns: cols.map((c) => ({
+          header: c.header,
+          accessor:
+            typeof c.accessor === 'function'
+              ? (r: any) => (c.accessor as (row: any) => string)(r)
+              : (c.accessor as string),
+          align: c.align,
+        })),
+        rows: activeModeRows,
       });
-      showFeedback('Export Excel selesai');
+      showFeedback('Export Excel Surat Jalan selesai');
     } catch (err: any) {
       showFeedback(`Gagal export: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
   };
+
+  const totalQty = activeModeRows.reduce((a, r) => a + Number(r.qty || 0), 0);
+  const totalTerima = activeModeRows.reduce((a, r) => a + Number(r.terima || 0), 0);
+  const printColumns = getColumnsForMode(bentukLaporan);
 
   return (
     <div
@@ -559,45 +583,71 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
         title="Laporan Surat Jalan"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePrintSelected}
+        onPrint={handlePreview}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
 
       <div className="flex-1 overflow-auto p-3 space-y-2.5">
-        <div className="max-w-[590px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
+        <div className="max-w-[660px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-3 shadow-xs">
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
             <h1 className="font-extrabold text-sm tracking-wider text-black font-sans">
-              LAPORAN SURAT JALAN
+              LAPORAN SURAT JALAN (DETAIL / REKAP / CUSTOMER)
             </h1>
           </div>
 
-          <div className="border-b border-[#999999] pb-2">
-            <FormActionButtons
-              compact
-              onSimpan={handleSimpan}
-              onBaru={handleBaru}
-              onKoreksi={handleKoreksi}
-              onHapus={handleRequestHapus}
-              onPrint={handlePrintSelected}
-              onFind={handleFind}
-              isBusy={isBusy}
-              feedback={feedback}
-            />
+          <div className="border-b border-[#999999] pb-2 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handleSimpanFilter}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Simpan Filter
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => loadLiveRows()}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Muat Ulang
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handlePrintSelected}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Cetak Baris Terpilih
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handleFind}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Find
+            </button>
+            {feedback && (
+              <span className="ml-2 px-2 py-0.5 bg-[#FFFFCC] border border-[#ACA899] text-[10px] font-semibold text-black">
+                {feedback}
+              </span>
+            )}
           </div>
 
           <fieldset className="border border-[#999999] p-2 rounded-none relative">
             <legend className="text-[11px] font-semibold px-1 text-black">Periode</legend>
             <div className="flex items-center space-x-2 pt-0.5">
               <span className="font-semibold text-black text-[11px]">
-                Tanggal ( dd-mm-yyyy ) :
+                Tanggal ( dd-MMM-yyyy ) :
               </span>
 
               <DatePickerInput
                 value={tglStart}
                 onChange={(formatted) => setTglStart(formatted)}
-                format="dmy"
-                inputClassName="w-[82px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
+                format="dMyShort"
+                inputClassName="w-[96px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
               />
 
               <span className="font-bold text-[11px] px-1 text-black">s / d</span>
@@ -605,8 +655,8 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
               <DatePickerInput
                 value={tglEnd}
                 onChange={(formatted) => setTglEnd(formatted)}
-                format="dmy"
-                inputClassName="w-[82px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
+                format="dMyShort"
+                inputClassName="w-[96px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
               />
             </div>
           </fieldset>
@@ -617,20 +667,35 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
             </legend>
 
             <div className="space-y-1.5 pt-0.5">
-              <label className="flex items-center space-x-2 text-[11px] text-gray-400 cursor-not-allowed">
+              <div className="flex items-center space-x-2">
+                <label className="flex items-center space-x-2 text-[11px] text-black font-semibold cursor-pointer w-[115px] shrink-0">
+                  <input
+                    type="radio"
+                    name="laporan_sj_filter"
+                    checked={filterType === 'merk'}
+                    onChange={() => setFilterType('merk')}
+                    className="cursor-pointer"
+                  />
+                  <span>Merk Barang</span>
+                </label>
                 <input
-                  type="radio"
-                  name="laporan_sj_filter"
-                  disabled
-                  checked={filterType === 'merk'}
-                  onChange={() => setFilterType('merk')}
-                  className="cursor-not-allowed"
+                  type="text"
+                  list="lap-sj-merk-list"
+                  value={merkFilter}
+                  onChange={(e) => setMerkFilter(e.target.value.toUpperCase())}
+                  disabled={filterType !== 'merk'}
+                  placeholder="Pilih / ketik merk barang..."
+                  className="flex-1 h-[21px] bg-white border border-[#7A7A7A] px-2 text-[11px] uppercase outline-none disabled:bg-[#ECE9D8]"
                 />
-                <span>Merk Barang</span>
-              </label>
+                <datalist id="lap-sj-merk-list">
+                  {merkOptions.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </div>
 
               <div className="flex items-center space-x-2">
-                <label className="flex items-center space-x-2 text-[11px] text-black font-semibold cursor-pointer">
+                <label className="flex items-center space-x-2 text-[11px] text-black font-semibold cursor-pointer w-[115px] shrink-0">
                   <input
                     type="radio"
                     name="laporan_sj_filter"
@@ -641,7 +706,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                   <span>Sales</span>
                 </label>
 
-                <div className="flex items-center space-x-1 flex-1 ml-6">
+                <div className="flex items-center space-x-1 flex-1">
                   <input
                     type="text"
                     list="lap-sj-sales-list"
@@ -649,7 +714,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                     onChange={(e) => setSalesCode(e.target.value.toUpperCase())}
                     disabled={filterType !== 'sales'}
                     className="bg-white border border-[#7A7A7A] px-2 py-0.5 w-32 text-[11px] font-mono uppercase disabled:bg-[#ECE9D8]"
-                    placeholder="Pilih Sales..."
+                    placeholder="Kode/Nama Sales..."
                   />
                   <datalist id="lap-sj-sales-list">
                     {salesCatalog.map((s) => (
@@ -668,7 +733,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
               </div>
 
               <div className="flex items-center space-x-2">
-                <label className="flex items-center space-x-2 text-[11px] text-black cursor-pointer font-semibold">
+                <label className="flex items-center space-x-2 text-[11px] text-black cursor-pointer font-semibold w-[115px] shrink-0">
                   <input
                     type="radio"
                     name="laporan_sj_filter"
@@ -720,19 +785,11 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                     className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer uppercase"
                   >
                     <option value="ALL">ALL</option>
-                    {lokasiOptions.length > 0 ? (
-                      lokasiOptions.map((loc) => (
-                        <option key={loc} value={loc}>
-                          {loc}
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="01 - OFFICE">01 - OFFICE</option>
-                        <option value="02 - GUDANG JAKARTA">02 - GUDANG JAKARTA</option>
-                        <option value="03 - CABANG SURABAYA">03 - CABANG SURABAYA</option>
-                      </>
-                    )}
+                    {lokasiOptions.map((loc) => (
+                      <option key={loc} value={loc}>
+                        {loc}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </fieldset>
@@ -760,7 +817,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                 type="button"
                 disabled={isBusy}
                 onClick={handlePreview}
-                className="w-full flex-1 py-2 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] active:border-[#808080] active:border-r-[#FFFFFF] active:border-b-[#FFFFFF] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
+                className="w-full flex-1 py-2 bg-[#EAE6D9] border-2 border-[#FFFFFF] border-r-[#808080] border-b-[#808080] hover:bg-[#F2EFE6] font-extrabold text-[12px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
               >
                 <span className="border border-dotted border-black/40 px-1 py-0.5 w-full block">
                   PREVIEW
@@ -777,8 +834,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           </div>
         </div>
 
-        {/* Live Supabase Search & Data Grid Panel */}
-        <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
+        <div className="max-w-[1060px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center">
               <ToolbarSearchControl
@@ -801,66 +857,78 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                 ]}
                 inputRef={searchInputRef}
                 isBusy={isBusy}
-                placeholder="Cari No.Bukti SJ, Customer, No.SO, No.Faktur..."
+                placeholder="Cari No.Bukti SJ, Customer, No.SO, Barang..."
               />
             </div>
-            <span className="text-[11px] text-black">
-              Data Supabase (<b>surat_jalans</b>): <b>{filteredTableRows.length}</b> baris
-            </span>
+            <div className="flex items-center space-x-3 text-[11px] text-black">
+              <span>
+                Mode: <b>{bentukLaporan}</b> ({activeModeRows.length} baris)
+              </span>
+              <span>
+                Total Qty: <b>{formatMoney(totalQty)}</b> | Terima: <b>{formatMoney(totalTerima)}</b>
+              </span>
+            </div>
           </div>
 
-          <div className="max-h-[220px] overflow-auto bg-white">
+          <div className="max-h-[260px] overflow-auto bg-white">
             <table className="w-full border-collapse text-[11px]">
               <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#808080]">
-                <tr>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Bukti SJ</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Customer</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">PO.No</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Sales</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Faktur</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Lokasi Stock</th>
-                  <th className="px-2 py-1 text-center">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTableRows.length === 0 ? (
+                {bentukLaporan.startsWith('01') ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-5 text-gray-500 italic">
-                      Belum ada data Surat Jalan. Klik "Baru" untuk menambah ke Supabase.
-                    </td>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Bukti SJ</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Customer</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Kode Brg</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Barang</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Unit</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Qty</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Terima</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Expedisi</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Faktur</th>
+                    <th className="px-2 py-1 text-center">Status</th>
+                  </tr>
+                ) : bentukLaporan.startsWith('02') ? (
+                  <tr>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Bukti SJ</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Customer</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">PO.No</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Sales</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.Faktur</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Expedisi</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Item</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total Qty</th>
+                    <th className="px-2 py-1 text-center">Status</th>
                   </tr>
                 ) : (
-                  filteredTableRows.map((r) => {
+                  <tr>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Customer</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Jml SJ</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Jml Item</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total Qty Kirim</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total Qty Terima</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Sudah Faktur</th>
+                    <th className="px-2 py-1 text-right">Belum Faktur</th>
+                  </tr>
+                )}
+              </thead>
+              <tbody>
+                {activeModeRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={12} className="text-center py-6 text-gray-500 italic">
+                      Tidak ada data Surat Jalan sesuai filter yang dipilih.
+                    </td>
+                  </tr>
+                ) : bentukLaporan.startsWith('01') ? (
+                  activeModeRows.map((r) => {
                     const isSel = r.id === selectedId;
                     return (
                       <tr
                         key={r.id}
                         onClick={() => setSelectedId(r.id)}
-                        onDoubleClick={() => {
-                          setSelectedId(r.id);
-                          setEditingId(r.id);
-                          setModalError(null);
-                          setFormNoBukti(r.no_bukti);
-                          setFormTanggal(r.tanggal_display || toDisplayDMyShort(todayIso()));
-                          setFormCustomer(r.nama_customer);
-                          setFormNoSo(r.no_so);
-                          setFormPoNo(r.po_no);
-                          setFormSales(r.sales || '');
-                          setFormNoFaktur(r.no_faktur);
-                          setFormKeterangan(r.keterangan);
-                          setFormLokasiStock(r.lokasi_stock || lokasiOptions[0] || '01 - OFFICE');
-                          setFormStsPrint(r.sts_print || 'Not Yet');
-                          setFormTglPrint(r.tgl_print_display || '');
-                          setFormStsPost(r.sts_post || 'Posting');
-                          setFormTglPost(r.tgl_post_display || '');
-                          setFormDibuatOleh(r.dibuat_oleh || 'ADMIN');
-                          setFormTglCreated(r.tgl_created ? toDisplayDMyShort(r.tgl_created) : toDisplayDMyShort(todayIso()));
-                          setFormDiupdateOleh(r.diupdate_oleh || '-');
-                          setFormTglUpdate(r.tgl_update ? toDisplayDMyShort(r.tgl_update) : '');
-                          setIsCrudOpen(true);
-                        }}
+                        onDoubleClick={handlePrintSelected}
                         className={`cursor-pointer border-b border-[#E0E0E0] ${
                           isSel ? 'bg-[#316AC5] text-white' : 'hover:bg-[#EAF2FC]'
                         }`}
@@ -869,14 +937,45 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.tanggal_display}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_customer}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_so || '-'}</td>
-                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.po_no || '-'}</td>
-                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sales || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.kode || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_barang || '-'}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.unit}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.qty)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.terima)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_expedisi || '-'}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_faktur || '-'}</td>
-                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.lokasi_stock || '-'}</td>
                         <td className="px-2 py-1 text-center">{r.sts_post}</td>
                       </tr>
                     );
                   })
+                ) : bentukLaporan.startsWith('02') ? (
+                  activeModeRows.map((r) => (
+                    <tr key={r.id} className="border-b border-[#E0E0E0] hover:bg-[#EAF2FC]">
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono font-bold">{r.no_bukti}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.tanggal_display}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_customer}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_so}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.po_no}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sales}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_faktur}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_expedisi}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.jml_item}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">{formatMoney(r.qty)}</td>
+                      <td className="px-2 py-1 text-center">{r.sts_post}</td>
+                    </tr>
+                  ))
+                ) : (
+                  activeModeRows.map((r) => (
+                    <tr key={r.id} className="border-b border-[#E0E0E0] hover:bg-[#EAF2FC]">
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-semibold">{r.nama_customer}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">{r.jml_sj}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.jml_item}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.qty)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.terima)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono text-[#107C10]">{r.sudah_faktur}</td>
+                      <td className="px-2 py-1 text-right font-mono text-[#C00000]">{r.belum_faktur}</td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -884,295 +983,19 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
         </div>
       </div>
 
-      {/* Add / Edit Surat Jalan Modal */}
-      {isCrudOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[540px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold shrink-0">
-              <span>{editingId ? 'Koreksi Surat Jalan' : 'Tambah Surat Jalan Baru'}</span>
-              <button
-                type="button"
-                onClick={() => setIsCrudOpen(false)}
-                className="w-5 h-5 bg-[#C00000] text-white font-bold flex items-center justify-center cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2.5 text-[11px] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">No. Bukti SJ *</label>
-                  <input
-                    type="text"
-                    value={formNoBukti}
-                    onChange={(e) => setFormNoBukti(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Tanggal</label>
-                  <DatePickerInput
-                    value={formTanggal}
-                    onChange={(fmt) => setFormTanggal(fmt)}
-                    format="dmy"
-                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block font-bold mb-0.5">Nama Customer *</label>
-                <select
-                  value={formCustomer}
-                  onChange={(e) => setFormCustomer(e.target.value.toUpperCase())}
-                  className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
-                >
-                  <option value="">-- Pilih Customer --</option>
-                  {customerCatalog.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">No. SO</label>
-                  <select
-                    value={formNoSo}
-                    onChange={(e) => setFormNoSo(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A] font-mono uppercase cursor-pointer"
-                  >
-                    <option value="">-- Pilih SO --</option>
-                    {soOptions.map((so) => (
-                      <option key={so} value={so}>
-                        {so}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">PO. No</label>
-                  <select
-                    value={formPoNo}
-                    onChange={(e) => setFormPoNo(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A] font-mono uppercase cursor-pointer"
-                  >
-                    <option value="">-- Pilih PO --</option>
-                    {poOptions.map((po) => (
-                      <option key={po} value={po}>
-                        {po}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Sales</label>
-                  <select
-                    value={formSales}
-                    onChange={(e) => setFormSales(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
-                  >
-                    <option value="">-- Pilih Sales --</option>
-                    {salesCatalog.map((s) => (
-                      <option key={s.kode} value={s.nama}>
-                        {s.nama}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">No. Faktur</label>
-                  <input
-                    type="text"
-                    value={formNoFaktur}
-                    onChange={(e) => setFormNoFaktur(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Lokasi Stock</label>
-                  <select
-                    value={formLokasiStock}
-                    onChange={(e) => setFormLokasiStock(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
-                  >
-                    {lokasiOptions.map((l) => (
-                      <option key={l} value={l}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">Sts.Print / Tgl.Print</label>
-                  <div className="flex gap-1">
-                    <select
-                      value={formStsPrint}
-                      onChange={(e) => setFormStsPrint(e.target.value)}
-                      className="w-24 h-[24px] px-1 bg-white border border-[#7A7A7A]"
-                    >
-                      <option value="Not Yet">Not Yet</option>
-                      <option value="Printed">Printed</option>
-                    </select>
-                    <div className="flex-1">
-                      <DatePickerInput
-                        value={formTglPrint}
-                        onChange={(fmt) => setFormTglPrint(fmt)}
-                        format="dMyShort"
-                        inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Sts.Post / Tgl.Post</label>
-                  <div className="flex gap-1">
-                    <select
-                      value={formStsPost}
-                      onChange={(e) => setFormStsPost(e.target.value)}
-                      className="w-24 h-[24px] px-1 bg-white border border-[#7A7A7A]"
-                    >
-                      <option value="Not Yet">Not Yet</option>
-                      <option value="Posting">Posting</option>
-                    </select>
-                    <div className="flex-1">
-                      <DatePickerInput
-                        value={formTglPost}
-                        onChange={(fmt) => setFormTglPost(fmt)}
-                        format="dMyShort"
-                        inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block font-bold mb-0.5">Keterangan</label>
-                <input
-                  type="text"
-                  value={formKeterangan}
-                  onChange={(e) => setFormKeterangan(e.target.value)}
-                  className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
-                />
-              </div>
-
-              {/* Audit Fields */}
-              <div className="border-t border-[#D0D0D0] pt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
-                <div>
-                  <label className="block font-semibold mb-0.5">Dibuat Oleh:</label>
-                  <input
-                    type="text"
-                    value={formDibuatOleh}
-                    onChange={(e) => setFormDibuatOleh(e.target.value.toUpperCase())}
-                    className="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] uppercase text-[10px]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold mb-0.5">Tgl. Created:</label>
-                  <DatePickerInput
-                    value={formTglCreated}
-                    onChange={(formatted) => setFormTglCreated(formatted)}
-                    format="dMyShort"
-                    inputClassName="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] text-[10px]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold mb-0.5">Diupdate Oleh:</label>
-                  <input
-                    type="text"
-                    value={formDiupdateOleh}
-                    onChange={(e) => setFormDiupdateOleh(e.target.value.toUpperCase())}
-                    className="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] uppercase text-[10px]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold mb-0.5">Tgl. Update:</label>
-                  <DatePickerInput
-                    value={formTglUpdate}
-                    onChange={(formatted) => setFormTglUpdate(formatted)}
-                    format="dMyShort"
-                    inputClassName="w-full h-[22px] px-1 bg-white border border-[#7A7A7A] text-[10px]"
-                  />
-                </div>
-              </div>
-
-              {modalError && (
-                <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] font-semibold">
-                  {modalError}
-                </div>
-              )}
-
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
-                <button
-                  type="button"
-                  onClick={() => setIsCrudOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isBusy}
-                  className="px-4 py-1 bg-[#0A246A] text-white border border-black font-bold cursor-pointer"
-                >
-                  Simpan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {confirmDeleteRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
-              Konfirmasi Hapus Surat Jalan
-            </div>
-            <div className="p-4 text-xs text-black space-y-3">
-              <p>
-                Yakin ingin menghapus Surat Jalan [{confirmDeleteRow.no_bukti}] dari database Supabase?
-              </p>
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteRow(null)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={handleConfirmHapus}
-                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
-                >
-                  Ya, Hapus
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <SupabaseFindModal
         isOpen={isFindOpen}
         onClose={() => setIsFindOpen(false)}
-        tableLabel="Surat Jalan"
+        tableLabel="Laporan Surat Jalan"
         rows={tableRows}
         columns={[
           { header: 'No.Bukti SJ', accessor: (r) => r.no_bukti, mono: true, bold: true },
           { header: 'Tanggal', accessor: (r) => r.tanggal_display, align: 'center' },
           { header: 'Customer', accessor: (r) => r.nama_customer },
           { header: 'No.SO', accessor: (r) => r.no_so || '-', mono: true },
-          { header: 'PO.No', accessor: (r) => r.po_no || '-', mono: true },
-          { header: 'Sales', accessor: (r) => r.sales || '-', align: 'center' },
-          { header: 'No.Faktur', accessor: (r) => r.no_faktur || '-', mono: true },
+          { header: 'Kode Brg', accessor: (r) => r.kode || '-', mono: true },
+          { header: 'Nama Barang', accessor: (r) => r.nama_barang || '-' },
+          { header: 'Qty', accessor: (r) => formatMoney(r.qty), align: 'right', mono: true },
           { header: 'Status', accessor: (r) => r.sts_post, align: 'center' },
         ]}
         getRowId={(r) => r.id}
@@ -1184,8 +1007,10 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           r.po_no,
           r.sales,
           r.no_faktur,
+          r.kode,
+          r.nama_barang,
+          r.merk_barang,
           r.lokasi_stock,
-          r.keterangan,
           r.sts_post,
         ]}
         selectedId={selectedId}
@@ -1193,8 +1018,8 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
           setSelectedId(r.id);
           showFeedback(`Surat Jalan [${r.no_bukti}] dipilih`);
         }}
-        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
-        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        onSearchSupabase={() => loadLiveRows()}
+        onRefreshSupabase={() => loadLiveRows()}
         isBusy={isBusy}
       />
 
@@ -1206,7 +1031,7 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
         orientation="landscape"
         defaultPrintScope={printScopeOnOpen}
         selectedRow={selectedSjPrintRow}
-        selectedTitle="CETAK SURAT JALAN TERPILIH"
+        selectedTitle="CETAK ITEM SURAT JALAN TERPILIH"
         selectedSubtitle={
           selectedSjPrintRow
             ? `No.Bukti SJ: ${selectedSjPrintRow.no_bukti} | Customer: ${selectedSjPrintRow.nama_customer}`
@@ -1218,40 +1043,45 @@ export const LaporanSuratJalanPrintForm: React.FC<LaporanSuratJalanPrintFormProp
                 { label: 'No.Bukti SJ', value: selectedSjPrintRow.no_bukti },
                 { label: 'Tanggal', value: selectedSjPrintRow.tanggal },
                 { label: 'Customer', value: selectedSjPrintRow.nama_customer },
-                { label: 'No.SO / PO', value: `${selectedSjPrintRow.no_so || '-'} / ${selectedSjPrintRow.po_no || '-'}` },
+                {
+                  label: 'No.SO / PO',
+                  value: `${selectedSjPrintRow.no_so || '-'} / ${selectedSjPrintRow.po_no || '-'}`,
+                },
+                { label: 'Expedisi', value: selectedSjPrintRow.nama_expedisi || '-' },
                 { label: 'Lokasi Stock', value: selectedSjPrintRow.lokasi_stock || '-' },
               ]
             : undefined
         }
+        selectedColumns={[
+          { header: 'No.Bukti SJ', accessor: 'no_bukti', width: '95px' },
+          { header: 'Kode Brg', accessor: 'kode', width: '85px' },
+          { header: 'Nama Barang', accessor: 'nama_barang' },
+          { header: 'Unit', accessor: 'unit', align: 'center', width: '50px' },
+          { header: 'Qty Kirim', accessor: (r) => formatMoney(r.qty), align: 'right', width: '70px' },
+          { header: 'Qty Terima', accessor: (r) => formatMoney(r.terima), align: 'right', width: '70px' },
+        ]}
         metaLines={[
           { label: 'Periode Tanggal', value: `${tglStart} s/d ${tglEnd}` },
           { label: 'Lokasi Stock', value: lokasiStock },
           {
             label: 'Filter',
             value:
-              filterType === 'sales'
-                ? `Sales ${salesCode || 'Semua'}`
+              filterType === 'merk'
+                ? `Merk ${merkFilter || 'Semua'}`
+                : filterType === 'sales'
+                ? `Sales ${salesCode || 'Semua'} ${salesDesc ? `(${salesDesc})` : ''}`
                 : filterType === 'customer'
                 ? customerFilter || 'Semua Customer'
                 : 'ALL Berdasarkan Periode',
           },
           { label: 'Bentuk Laporan', value: bentukLaporan },
         ]}
-        columns={[
-          { header: 'No.Bukti SJ', accessor: 'no_bukti', width: '100px' },
-          { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '75px' },
-          { header: 'Nama Customer', accessor: 'nama_customer' },
-          { header: 'No.SO', accessor: 'no_so', width: '95px' },
-          { header: 'PO.No', accessor: 'po_no', width: '85px' },
-          { header: 'Sales', accessor: 'sales', align: 'center', width: '70px' },
-          { header: 'No.Faktur', accessor: 'no_faktur', width: '95px' },
-          { header: 'Lokasi Stock', accessor: 'lokasi_stock', width: '95px' },
-          { header: 'Status', accessor: 'sts_post', align: 'center', width: '65px' },
-          { header: 'Dibuat Oleh', accessor: 'dibuat_oleh', width: '75px' },
-        ]}
-        rows={previewRows}
+        columns={printColumns}
+        rows={activeModeRows}
         summaryItems={[
-          { label: 'Total Surat Jalan', value: `${previewRows.length} Dokumen` },
+          { label: 'Total Baris', value: `${activeModeRows.length} Baris` },
+          { label: 'Total Qty Kirim', value: formatMoney(totalQty) },
+          { label: 'Total Qty Terima', value: formatMoney(totalTerima) },
         ]}
       />
     </div>

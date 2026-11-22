@@ -35,6 +35,7 @@ const ALLOWED_TABLES = new Set([
   'giro_penjualan',
   'giro_penjualans',
   'sales_inquiries',
+  'sales_inquiry_details',
   'sales_quotations',
   'sales_quotation_details',
   'sales_orders',
@@ -46,6 +47,7 @@ const ALLOWED_TABLES = new Set([
   'faktur_penjualans',
   'faktur_penjualan_details',
   'retur_penjualans',
+  'retur_penjualan_details',
   'stock_awal',
   'penerimaan_barang_lains',
   'pengeluaran_barang_lains',
@@ -58,6 +60,7 @@ const ALLOWED_VIEWS = new Set([
   'v_mutasi_sales_order',
   'v_laporan_penjualan_barang',
   'v_laporan_surat_jalan',
+  'v_laporan_retur_penjualan',
   'v_laporan_kertas_kerja',
 ]);
 
@@ -549,6 +552,198 @@ export function registerErpApiRoutes(app: Express): void {
     }
   };
 
+  const isPostedStatus = (sts: any): boolean => {
+    const u = String(sts || '').trim().toUpperCase();
+    return u === 'POSTING' || u === 'POSTED';
+  };
+
+  const syncSalesOrderFulfillment = async (
+    supabase: SupabaseClient,
+    noSoList: string[]
+  ): Promise<void> => {
+    const targets = Array.from(
+      new Set(
+        noSoList
+          .map((s) => String(s || '').trim().toUpperCase())
+          .filter((s) => s && s !== '-')
+      )
+    );
+    if (targets.length === 0) return;
+
+    for (const noSo of targets) {
+      try {
+        const { data: soRows } = await supabase
+          .from('sales_orders')
+          .select('id, no_bukti')
+          .eq('no_bukti', noSo)
+          .limit(1);
+        const so = soRows?.[0];
+        if (!so) continue;
+
+        const { data: soDetails } = await supabase
+          .from('sales_order_details')
+          .select('id, kode, qty')
+          .eq('so_id', so.id);
+        if (!soDetails || soDetails.length === 0) continue;
+
+        const { data: sjHeaders } = await supabase
+          .from('surat_jalans')
+          .select('id, sts_post')
+          .eq('no_so', noSo);
+
+        const postedSjIds = (sjHeaders || [])
+          .filter((sj: any) => isPostedStatus(sj.sts_post))
+          .map((sj: any) => sj.id)
+          .filter(Boolean);
+
+        const deliveredByKode: Record<string, number> = {};
+        if (postedSjIds.length > 0) {
+          const { data: sjDetails } = await supabase
+            .from('surat_jalan_details')
+            .select('kode, qty, terima')
+            .in('surat_jalan_id', postedSjIds);
+          for (const d of sjDetails || []) {
+            const kode = String(d.kode || '').trim().toUpperCase();
+            if (!kode) continue;
+            const qtyVal = Number(d.terima || 0) > 0 ? Number(d.terima) : Number(d.qty || 0);
+            deliveredByKode[kode] = (deliveredByKode[kode] || 0) + qtyVal;
+          }
+        }
+
+        let totalOrdered = 0;
+        let totalDelivered = 0;
+        let allDelivered = true;
+
+        for (const det of soDetails) {
+          const kode = String(det.kode || '').trim().toUpperCase();
+          const orderedQty = Number(det.qty || 0);
+          const delQty = Number(deliveredByKode[kode] || 0);
+          totalOrdered += orderedQty;
+          totalDelivered += Math.min(orderedQty, delQty);
+          if (orderedQty > 0 && delQty < orderedQty) {
+            allDelivered = false;
+          }
+          await supabase
+            .from('sales_order_details')
+            .update({ terima: delQty })
+            .eq('id', det.id);
+        }
+
+        const persen =
+          totalOrdered > 0
+            ? Math.min(100, Math.round((totalDelivered / totalOrdered) * 100))
+            : 0;
+        const soClose = allDelivered && totalOrdered > 0 ? 'Closed' : 'Not Yet';
+
+        await supabase
+          .from('sales_orders')
+          .update({ so_close: soClose, persen })
+          .eq('id', so.id);
+      } catch {
+        // Non-fatal sync
+      }
+    }
+  };
+
+  const syncSalesOrderDeposit = async (
+    supabase: SupabaseClient,
+    noSoList: string[]
+  ): Promise<void> => {
+    const targets = Array.from(
+      new Set(
+        noSoList
+          .map((s) => String(s || '').trim().toUpperCase())
+          .filter((s) => s && s !== '-')
+      )
+    );
+    if (targets.length === 0) return;
+
+    for (const noSo of targets) {
+      try {
+        const { data: dpRows } = await supabase
+          .from('faktur_penjualans')
+          .select('nilai_penjualan')
+          .eq('no_so', noSo)
+          .eq('jenis_faktur', 'DP');
+        const totalDeposit = (dpRows || []).reduce(
+          (s: number, r: any) => s + Number(r.nilai_penjualan || 0),
+          0
+        );
+        await supabase
+          .from('sales_orders')
+          .update({ deposit: Math.max(0, Number(totalDeposit.toFixed(2))) })
+          .eq('no_bukti', noSo);
+      } catch {
+        // Non-fatal sync
+      }
+    }
+  };
+
+  const syncGiroPenjualanToFaktur = async (
+    supabase: SupabaseClient,
+    refs: Array<{ refType?: string; noRef?: string; noFaktur?: string }>,
+    fallbackDate?: string
+  ): Promise<void> => {
+    const fakturNos = Array.from(
+      new Set(
+        refs
+          .map((r) => {
+            const rt = String(r.refType || '').trim().toUpperCase();
+            if (rt && rt !== 'FAKTUR') return '';
+            return String(r.noFaktur || r.noRef || '').trim().toUpperCase();
+          })
+          .filter((v) => v && v !== '-')
+      )
+    );
+    if (fakturNos.length === 0) return;
+
+    for (const noFaktur of fakturNos) {
+      try {
+        let giroRows: any[] = [];
+        const q1 = await supabase
+          .from('giro_penjualan_details')
+          .select('amount_paid, sts_cair, due, tgl_cair, ref_type, no_ref, no_faktur')
+          .or(`no_ref.eq.${noFaktur},no_faktur.eq.${noFaktur}`);
+        if (q1.error) {
+          if (isMissingSchemaError(q1.error.message)) continue;
+          continue;
+        }
+        giroRows = q1.data || [];
+
+        const cairRows = giroRows.filter(
+          (g: any) => String(g.sts_cair || '').trim().toUpperCase() === 'CAIR'
+        );
+        const totalPaid = cairRows.reduce((s: number, g: any) => s + Number(g.amount_paid || 0), 0);
+        const latestCairDate = cairRows
+          .map((g: any) => g.tgl_cair || g.due)
+          .filter(Boolean)
+          .sort()
+          .pop();
+        const lunasDate = latestCairDate || fallbackDate || new Date().toISOString().slice(0, 10);
+
+        const { data: fakturRows } = await supabase
+          .from('faktur_penjualans')
+          .select('id, nilai_penjualan')
+          .eq('no_bukti', noFaktur)
+          .limit(1);
+        const faktur = fakturRows?.[0];
+        if (!faktur) continue;
+
+        const targetNilai = Number(faktur.nilai_penjualan || 0);
+        const isLunas = totalPaid > 0 && (targetNilai <= 0 || totalPaid >= targetNilai);
+        await supabase
+          .from('faktur_penjualans')
+          .update({
+            sts_lunas: isLunas ? 'Lunas' : 'Not Yet',
+            tgl_lunas: isLunas ? lunasDate : null,
+          })
+          .eq('id', faktur.id);
+      } catch {
+        // Non-fatal sync
+      }
+    }
+  };
+
   const syncCustomerPiutang = async (
     supabase: SupabaseClient,
     customerNames: string[]
@@ -560,31 +755,78 @@ export function registerErpApiRoutes(app: Express): void {
 
     for (const custName of names) {
       try {
-        const [{ data: fakturRows }, { data: giroDets }] = await Promise.all([
+        const [{ data: fakturRows }, { data: returRows }] = await Promise.all([
           supabase
             .from('faktur_penjualans')
-            .select('nilai_penjualan, sts_lunas, sts_post')
+            .select('no_bukti, jenis_faktur, nilai_penjualan, sts_lunas, sts_post')
             .eq('nama_customer', custName),
           supabase
-            .from('giro_penjualan_details')
-            .select('amount_paid')
-            .eq('customer', custName),
+            .from('retur_penjualans')
+            .select('nilai_retur, sts_post')
+            .eq('nama_customer', custName),
         ]);
 
-        const totalPiutang = (fakturRows || [])
-          .filter((f: any) => String(f.sts_lunas || '').toUpperCase() !== 'LUNAS')
-          .reduce((s: number, f: any) => s + Number(f.nilai_penjualan || 0), 0);
+        let giroDets: any[] = [];
+        const giroRes = await supabase
+          .from('giro_penjualan_details')
+          .select('amount_paid, sts_cair, ref_type, no_ref, no_faktur')
+          .eq('customer', custName);
+        if (giroRes.error && isMissingSchemaError(giroRes.error.message)) {
+          const fallbackGiro = await supabase
+            .from('giro_penjualan_details')
+            .select('amount_paid')
+            .eq('customer', custName);
+          giroDets = fallbackGiro.data || [];
+        } else {
+          giroDets = giroRes.data || [];
+        }
 
-        const totalGiro = (giroDets || []).reduce(
-          (s: number, g: any) => s + Number(g.amount_paid || 0),
+        // Exclude DP fakturs from Piutang Dagang
+        const receivableFakturs = (fakturRows || []).filter(
+          (f: any) => String(f.jenis_faktur || 'REGULAR').trim().toUpperCase() !== 'DP'
+        );
+        const openFakturs = receivableFakturs.filter(
+          (f: any) => String(f.sts_lunas || '').trim().toUpperCase() !== 'LUNAS'
+        );
+        const totalOpenFaktur = openFakturs.reduce(
+          (s: number, f: any) => s + Number(f.nilai_penjualan || 0),
           0
         );
+
+        const openFakturBuktiSet = new Set(
+          openFakturs.map((f: any) => String(f.no_bukti || '').trim().toUpperCase()).filter(Boolean)
+        );
+
+        const totalReturPosted = (returRows || [])
+          .filter((r: any) => isPostedStatus(r.sts_post))
+          .reduce((s: number, r: any) => s + Number(r.nilai_retur || 0), 0);
+
+        let cairOnOpenFaktur = 0;
+        let pendingGiroTotal = 0;
+        for (const g of giroDets) {
+          const st = String(g.sts_cair || 'Belum Cair').trim().toUpperCase();
+          const amt = Number(g.amount_paid || 0);
+          if (st === 'CAIR') {
+            const targetNo = String(g.no_faktur || g.no_ref || '').trim().toUpperCase();
+            if (targetNo && openFakturBuktiSet.has(targetNo)) {
+              cairOnOpenFaktur += amt;
+            }
+          } else if (st !== 'TOLAK' && st !== 'BATAL') {
+            pendingGiroTotal += amt;
+          }
+        }
+
+        const netPiutang = Math.max(
+          0,
+          Number((totalOpenFaktur - cairOnOpenFaktur - totalReturPosted).toFixed(2))
+        );
+        const netPiutangGiro = Math.max(0, Number(pendingGiroTotal.toFixed(2)));
 
         await supabase
           .from('master_customers')
           .update({
-            piutang: Math.max(0, Number(totalPiutang.toFixed(2))),
-            piutang_giro: Math.max(0, Number(totalGiro.toFixed(2))),
+            piutang: netPiutang,
+            piutang_giro: netPiutangGiro,
           })
           .eq('nama_customer', custName);
       } catch {
@@ -818,6 +1060,31 @@ export function registerErpApiRoutes(app: Express): void {
         return res.status(400).json({ error: 'No. Bukti wajib diisi.' });
       }
 
+      const affectedRefs: Array<{ refType?: string; noRef?: string; noFaktur?: string }> = [];
+      const affectedCustomers = new Set<string>();
+      const collectOldDetails = async (hdrId: string) => {
+        try {
+          const { data: oldDets } = await supabase
+            .from('giro_penjualan_details')
+            .select('*')
+            .eq('header_id', hdrId);
+          for (const od of oldDets || []) {
+            if (od.customer) affectedCustomers.add(String(od.customer).trim().toUpperCase());
+            if (od.no_ref || od.no_faktur) {
+              affectedRefs.push({
+                refType: od.ref_type,
+                noRef: od.no_ref,
+                noFaktur: od.no_faktur,
+              });
+            }
+          }
+        } catch {}
+      };
+
+      if (header.id) {
+        await collectOldDetails(header.id);
+      }
+
       let headerRow: any = null;
       if (header.id) {
         const { id, created_at, updated_at, ...patch } = header;
@@ -845,6 +1112,7 @@ export function registerErpApiRoutes(app: Express): void {
         if (error) return res.status(400).json({ error: error.message });
         headerRow = data;
 
+        await collectOldDetails(headerRow.id);
         await supabase
           .from('giro_penjualan_details')
           .delete()
@@ -852,29 +1120,49 @@ export function registerErpApiRoutes(app: Express): void {
       }
 
       let savedDetails: any[] = [];
+      let detailWarning: string | undefined;
       if (Array.isArray(details) && details.length > 0) {
         const payload = details.map((d, idx) => {
           const { id: _id, created_at: _c, ...rest } = d;
+          if (d.customer) affectedCustomers.add(String(d.customer).trim().toUpperCase());
+          if (d.no_ref || d.no_faktur) {
+            affectedRefs.push({
+              refType: d.ref_type,
+              noRef: d.no_ref,
+              noFaktur: d.no_faktur,
+            });
+          }
           return {
             ...rest,
             header_id: headerRow.id,
             no_urut: d.no_urut ?? idx + 1,
           };
         });
-        const { data: detData, error: detErr } = await supabase
+        let detRes = await supabase
           .from('giro_penjualan_details')
           .insert(payload)
           .select();
-        if (detErr) return res.status(400).json({ error: detErr.message });
-        savedDetails = detData || [];
+        if (detRes.error && isMissingSchemaError(detRes.error.message)) {
+          detailWarning = 'Kolom ref_type/no_ref/no_faktur/sts_cair/tgl_cair pada giro_penjualan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          const fallbackPayload = payload.map((p) =>
+            omitKeys(p, ['ref_type', 'no_ref', 'no_faktur', 'sts_cair', 'tgl_cair'])
+          );
+          detRes = await supabase
+            .from('giro_penjualan_details')
+            .insert(fallbackPayload)
+            .select();
+        }
+        if (detRes.error) return res.status(400).json({ error: detRes.error.message });
+        savedDetails = detRes.data || [];
       }
 
-      const affectedCustomers = (savedDetails || []).map((d: any) => d.customer).filter(Boolean);
-      if (affectedCustomers.length > 0) {
-        await syncCustomerPiutang(supabase, affectedCustomers);
+      await syncGiroPenjualanToFaktur(supabase, affectedRefs, headerRow.tanggal);
+
+      if (affectedCustomers.size > 0) {
+        await syncCustomerPiutang(supabase, Array.from(affectedCustomers));
       }
 
-      return res.json({ header: headerRow, details: savedDetails });
+      return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan giro penjualan.' });
     }
@@ -1277,6 +1565,95 @@ export function registerErpApiRoutes(app: Express): void {
     }
   });
 
+  app.post('/api/erp/composite/sales-inquiry', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Sales Inquiry wajib diisi.' });
+      }
+
+      const totalQtyFromDetails = Array.isArray(details) && details.length > 0
+        ? details.reduce((s, d) => s + Number(d.qty || 0), 0)
+        : undefined;
+      const headerPayload = totalQtyFromDetails !== undefined
+        ? { ...header, qty: totalQtyFromDetails }
+        : header;
+
+      let detailWarning: string | undefined;
+      let headerRow: any = null;
+      if (headerPayload.id) {
+        const { id, created_at, updated_at, ...patch } = headerPayload;
+        const { data, error } = await supabase
+          .from('sales_inquiries')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('sales_inquiry_details')
+          .delete()
+          .eq('si_id', id);
+        if (delErr) {
+          if (isMissingSchemaError(delErr.message)) {
+            detailWarning = 'Tabel sales_inquiry_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          } else if (!Array.isArray(details) || details.length > 0) {
+            return res.status(400).json({ error: delErr.message });
+          }
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = headerPayload;
+        const { data, error } = await supabase
+          .from('sales_inquiries')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          return {
+            ...rest,
+            si_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('sales_inquiry_details')
+          .insert(payload)
+          .select();
+        if (detErr) {
+          if (isMissingSchemaError(detErr.message)) {
+            detailWarning = 'Tabel sales_inquiry_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          } else {
+            return res.status(400).json({ error: detErr.message });
+          }
+        } else {
+          savedDetails = detData || [];
+        }
+      }
+
+      return res.json({ header: headerRow, details: savedDetails, detailWarning });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Sales Inquiry.' });
+    }
+  });
+
   app.post('/api/erp/composite/sales-quotation', async (req: Request, res: Response) => {
     const { client: supabase, missingEnv } = getSupabaseClient();
     if (!supabase || missingEnv) {
@@ -1292,34 +1669,53 @@ export function registerErpApiRoutes(app: Express): void {
         return res.status(400).json({ error: 'No. SQ wajib diisi.' });
       }
 
+      let detailWarning: string | undefined;
       let headerRow: any = null;
-      if (header.id) {
-        const { id, created_at, updated_at, ...patch } = header;
-        const { data, error } = await supabase
-          .from('sales_quotations')
-          .update(patch)
-          .eq('id', id)
-          .select()
-          .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
-
-        const { error: delErr } = await supabase
-          .from('sales_quotation_details')
-          .delete()
-          .eq('sq_id', id);
-        if (delErr && (!Array.isArray(details) || details.length > 0)) {
-          return res.status(400).json({ error: delErr.message });
+      const runSaveHeader = async (payloadObj: Record<string, any>) => {
+        if (header.id) {
+          const { id, created_at, updated_at, ...patch } = payloadObj;
+          return supabase
+            .from('sales_quotations')
+            .update(patch)
+            .eq('id', id)
+            .select()
+            .single();
         }
-      } else {
-        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
-        const { data, error } = await supabase
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = payloadObj;
+        return supabase
           .from('sales_quotations')
           .insert(insertHeader)
           .select()
           .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
+      };
+
+      let hdrRes = await runSaveHeader(header);
+      if (hdrRes.error && isMissingSchemaError(hdrRes.error.message)) {
+        detailWarning = 'Kolom DPP/PPN/Valid Until pada sales_quotations belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+        hdrRes = await runSaveHeader(
+          omitKeys(header, [
+            'ppn',
+            'subtotal',
+            'disc_pct',
+            'nilai_disc',
+            'dpp',
+            'nilai_ppn',
+            'valid_until',
+            'sts_so',
+          ])
+        );
+      }
+      if (hdrRes.error) return res.status(400).json({ error: hdrRes.error.message });
+      headerRow = hdrRes.data;
+
+      if (header.id) {
+        const { error: delErr } = await supabase
+          .from('sales_quotation_details')
+          .delete()
+          .eq('sq_id', header.id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
       }
 
       let savedDetails: any[] = [];
@@ -1341,7 +1737,23 @@ export function registerErpApiRoutes(app: Express): void {
         savedDetails = detData || [];
       }
 
-      return res.json({ header: headerRow, details: savedDetails });
+      // Auto-update source Sales Inquiry status -> Quoted
+      const noInq = String(headerRow?.no_inquiry || '').trim().toUpperCase();
+      if (noInq && noInq !== '-') {
+        try {
+          await supabase
+            .from('sales_inquiries')
+            .update({
+              no_sq: headerRow.no_sq,
+              tgl_sq: headerRow.tanggal,
+              follow: 'Quoted',
+              tgl_follow: headerRow.tanggal,
+            })
+            .eq('no_bukti', noInq);
+        } catch {}
+      }
+
+      return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan Sales Quotation.' });
     }
@@ -1362,34 +1774,59 @@ export function registerErpApiRoutes(app: Express): void {
         return res.status(400).json({ error: 'No. Bukti Sales Order wajib diisi.' });
       }
 
-      let headerRow: any = null;
+      let oldDetails: any[] = [];
       if (header.id) {
-        const { id, created_at, updated_at, ...patch } = header;
-        const { data, error } = await supabase
-          .from('sales_orders')
-          .update(patch)
-          .eq('id', id)
-          .select()
-          .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
-
-        const { error: delErr } = await supabase
+        const { data: prevDets } = await supabase
           .from('sales_order_details')
-          .delete()
-          .eq('so_id', id);
-        if (delErr && (!Array.isArray(details) || details.length > 0)) {
-          return res.status(400).json({ error: delErr.message });
+          .select('kode')
+          .eq('so_id', header.id);
+        oldDetails = prevDets || [];
+      }
+
+      let detailWarning: string | undefined;
+      const runSaveHeader = async (payloadObj: Record<string, any>) => {
+        if (header.id) {
+          const { id, created_at, updated_at, ...patch } = payloadObj;
+          return supabase
+            .from('sales_orders')
+            .update(patch)
+            .eq('id', id)
+            .select()
+            .single();
         }
-      } else {
-        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
-        const { data, error } = await supabase
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = payloadObj;
+        return supabase
           .from('sales_orders')
           .insert(insertHeader)
           .select()
           .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
+      };
+
+      let hdrRes = await runSaveHeader(header);
+      if (hdrRes.error && isMissingSchemaError(hdrRes.error.message)) {
+        detailWarning = 'Kolom no_sq/subtotal/disc_pct/nilai_disc/dpp/is_ppn_included pada sales_orders belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+        hdrRes = await runSaveHeader(
+          omitKeys(header, [
+            'no_sq',
+            'subtotal',
+            'disc_pct',
+            'nilai_disc',
+            'dpp',
+            'is_ppn_included',
+          ])
+        );
+      }
+      if (hdrRes.error) return res.status(400).json({ error: hdrRes.error.message });
+      const headerRow: any = hdrRes.data;
+
+      if (header.id) {
+        const { error: delErr } = await supabase
+          .from('sales_order_details')
+          .delete()
+          .eq('so_id', header.id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
       }
 
       let savedDetails: any[] = [];
@@ -1411,12 +1848,25 @@ export function registerErpApiRoutes(app: Express): void {
         savedDetails = detData || [];
       }
 
-      const soKodes = (savedDetails || []).map((d: any) => d.kode).filter(Boolean);
+      const noSq = String(headerRow?.no_sq || header?.no_sq || '').trim().toUpperCase();
+      if (noSq && noSq !== '-') {
+        try {
+          await supabase
+            .from('sales_quotations')
+            .update({ sts_so: 'Ordered' })
+            .eq('no_sq', noSq);
+        } catch {}
+      }
+
+      const soKodes = [
+        ...oldDetails.map((d: any) => d.kode),
+        ...(savedDetails || []).map((d: any) => d.kode),
+      ].filter(Boolean);
       if (soKodes.length > 0) {
         await syncMasterBarangQtySo(supabase, soKodes);
       }
 
-      return res.json({ header: headerRow, details: savedDetails });
+      return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan Sales Order.' });
     }
@@ -1437,42 +1887,77 @@ export function registerErpApiRoutes(app: Express): void {
         return res.status(400).json({ error: 'No. Bukti Faktur Penjualan wajib diisi.' });
       }
 
-      let headerRow: any = null;
+      let oldHeader: any = null;
+      let oldDetails: any[] = [];
       if (header.id) {
-        const { id, created_at, updated_at, ...patch } = header;
-        const { data, error } = await supabase
+        const { data: prevHdr } = await supabase
           .from('faktur_penjualans')
-          .update(patch)
-          .eq('id', id)
-          .select()
+          .select('*')
+          .eq('id', header.id)
           .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
+        oldHeader = prevHdr || null;
+        try {
+          const { data: prevDet } = await supabase
+            .from('faktur_penjualan_details')
+            .select('*')
+            .eq('faktur_id', header.id);
+          oldDetails = prevDet || [];
+        } catch {}
+      }
 
-        const { error: delErr } = await supabase
-          .from('faktur_penjualan_details')
-          .delete()
-          .eq('faktur_id', id);
-        if (delErr) {
-          const msg = String(delErr.message || '').toLowerCase();
-          const isMissingTable = msg.includes('faktur_penjualan_details') || msg.includes('schema cache') || msg.includes('does not exist');
-          if (!isMissingTable && (!Array.isArray(details) || details.length > 0)) {
-            return res.status(400).json({ error: delErr.message });
-          }
+      let detailWarning: string | undefined;
+      const runSaveHeader = async (payloadObj: Record<string, any>) => {
+        if (header.id) {
+          const { id, created_at, updated_at, ...patch } = payloadObj;
+          return supabase
+            .from('faktur_penjualans')
+            .update(patch)
+            .eq('id', id)
+            .select()
+            .single();
         }
-      } else {
-        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
-        const { data, error } = await supabase
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = payloadObj;
+        return supabase
           .from('faktur_penjualans')
           .insert(insertHeader)
           .select()
           .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
+      };
+
+      let hdrRes = await runSaveHeader(header);
+      if (hdrRes.error && isMissingSchemaError(hdrRes.error.message)) {
+        detailWarning = 'Kolom DPP/PPN/DP pada faktur_penjualans belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+        hdrRes = await runSaveHeader(
+          omitKeys(header, [
+            'subtotal',
+            'disc_pct',
+            'nilai_disc',
+            'dpp',
+            'nilai_ppn',
+            'no_dp',
+            'total_dp',
+            'dp_used_on_faktur',
+          ])
+        );
+      }
+      if (hdrRes.error) return res.status(400).json({ error: hdrRes.error.message });
+      const headerRow: any = hdrRes.data;
+
+      if (header.id) {
+        const { error: delErr } = await supabase
+          .from('faktur_penjualan_details')
+          .delete()
+          .eq('faktur_id', header.id);
+        if (delErr) {
+          if (isMissingSchemaError(delErr.message)) {
+            detailWarning = detailWarning || 'Tabel faktur_penjualan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          } else if (!Array.isArray(details) || details.length > 0) {
+            return res.status(400).json({ error: delErr.message });
+          }
+        }
       }
 
       let savedDetails: any[] = [];
-      let detailWarning: string | undefined;
       if (Array.isArray(details) && details.length > 0) {
         const payload = details.map((d, idx) => {
           const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
@@ -1489,10 +1974,8 @@ export function registerErpApiRoutes(app: Express): void {
           .insert(payload)
           .select();
         if (detErr) {
-          const msg = String(detErr.message || '').toLowerCase();
-          const isMissingTable = msg.includes('faktur_penjualan_details') || msg.includes('schema cache') || msg.includes('does not exist');
-          if (isMissingTable) {
-            detailWarning = 'Tabel faktur_penjualan_details belum dibuat di Supabase. Jalankan SQL Query terlebih dahulu.';
+          if (isMissingSchemaError(detErr.message)) {
+            detailWarning = detailWarning || 'Tabel faktur_penjualan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
           } else {
             return res.status(400).json({ error: detErr.message });
           }
@@ -1501,9 +1984,105 @@ export function registerErpApiRoutes(app: Express): void {
         }
       }
 
-      if (headerRow?.nama_customer) {
-        await syncCustomerPiutang(supabase, [headerRow.nama_customer]);
+      // Helper to check if a no_sj refers to an existing posted Surat Jalan (to avoid double stock deduction)
+      const hasPostedSj = async (sjNoRaw: any): Promise<boolean> => {
+        const cleanSj = String(sjNoRaw || '').trim().toUpperCase();
+        if (!cleanSj || cleanSj === '-') return false;
+        const { data: sjRows } = await supabase
+          .from('surat_jalans')
+          .select('sts_post')
+          .eq('no_bukti', cleanSj)
+          .limit(1);
+        return Boolean(sjRows?.[0] && isPostedStatus(sjRows[0].sts_post));
+      };
+
+      const oldNoSj = String(oldHeader?.no_sj || '').trim().toUpperCase();
+      const newNoSj = String(headerRow?.no_sj || '').trim().toUpperCase();
+      const isRegular = String(headerRow?.jenis_faktur || 'REGULAR').trim().toUpperCase() === 'REGULAR';
+
+      // Sync surat_jalans.no_faktur linkage
+      if (oldNoSj && oldNoSj !== '-' && oldNoSj !== newNoSj) {
+        try {
+          await supabase
+            .from('surat_jalans')
+            .update({ no_faktur: '' })
+            .eq('no_bukti', oldNoSj)
+            .eq('no_faktur', oldHeader.no_bukti);
+        } catch {}
       }
+      if (isRegular && newNoSj && newNoSj !== '-') {
+        try {
+          await supabase
+            .from('surat_jalans')
+            .update({ no_faktur: headerRow.no_bukti })
+            .eq('no_bukti', newNoSj);
+        } catch {}
+      }
+
+      // Sync DP invoice linkage (dp_used_on_faktur)
+      const oldNoDp = String(oldHeader?.no_dp || '').trim().toUpperCase();
+      const newNoDp = String(header?.no_dp || headerRow?.no_dp || '').trim().toUpperCase();
+      if (oldNoDp && oldNoDp !== '-' && oldNoDp !== newNoDp) {
+        try {
+          await supabase
+            .from('faktur_penjualans')
+            .update({ dp_used_on_faktur: '' })
+            .eq('no_bukti', oldNoDp)
+            .eq('jenis_faktur', 'DP');
+        } catch {}
+      }
+      if (isRegular && newNoDp && newNoDp !== '-') {
+        try {
+          await supabase
+            .from('faktur_penjualans')
+            .update({ dp_used_on_faktur: headerRow.no_bukti })
+            .eq('no_bukti', newNoDp)
+            .eq('jenis_faktur', 'DP');
+        } catch {}
+      }
+
+      // Sync direct invoice stock deduction ONLY when invoice is REGULAR + Posted AND NOT backed by a posted Surat Jalan
+      const stockDelta: Record<string, number> = {};
+      if (
+        oldHeader &&
+        String(oldHeader.jenis_faktur || 'REGULAR').trim().toUpperCase() === 'REGULAR' &&
+        isPostedStatus(oldHeader.sts_post)
+      ) {
+        const oldBackedBySj = await hasPostedSj(oldHeader.no_sj);
+        if (!oldBackedBySj) {
+          for (const od of oldDetails) {
+            const k = String(od.kode || '').trim().toUpperCase();
+            if (!k) continue;
+            stockDelta[k] = (stockDelta[k] || 0) + Number(od.qty || 0);
+          }
+        }
+      }
+      if (isRegular && isPostedStatus(headerRow.sts_post)) {
+        const newBackedBySj = await hasPostedSj(headerRow.no_sj);
+        if (!newBackedBySj) {
+          for (const nd of savedDetails) {
+            const k = String(nd.kode || '').trim().toUpperCase();
+            if (!k) continue;
+            stockDelta[k] = (stockDelta[k] || 0) - Number(nd.qty || 0);
+          }
+        }
+      }
+      if (Object.keys(stockDelta).length > 0) {
+        await adjustMasterBarangStockAndCost(supabase, stockDelta);
+      }
+
+      // Sync SO Deposit when DP invoice touched
+      if (
+        String(oldHeader?.jenis_faktur || '').toUpperCase() === 'DP' ||
+        String(headerRow?.jenis_faktur || '').toUpperCase() === 'DP'
+      ) {
+        await syncSalesOrderDeposit(supabase, [oldHeader?.no_so || '', headerRow?.no_so || '']);
+      }
+
+      await syncCustomerPiutang(supabase, [
+        oldHeader?.nama_customer || '',
+        headerRow?.nama_customer || '',
+      ]);
 
       return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
@@ -1526,45 +2105,68 @@ export function registerErpApiRoutes(app: Express): void {
         return res.status(400).json({ error: 'No. Bukti Surat Jalan wajib diisi.' });
       }
 
-      let headerRow: any = null;
+      let oldHeader: any = null;
+      let oldDetails: any[] = [];
       if (header.id) {
-        const { id, created_at, updated_at, ...patch } = header;
-        const { data, error } = await supabase
+        const { data: prevHdr } = await supabase
           .from('surat_jalans')
-          .update(patch)
-          .eq('id', id)
-          .select()
+          .select('*')
+          .eq('id', header.id)
           .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
+        oldHeader = prevHdr || null;
+        try {
+          const { data: prevDet } = await supabase
+            .from('surat_jalan_details')
+            .select('*')
+            .eq('surat_jalan_id', header.id);
+          oldDetails = prevDet || [];
+        } catch {}
+      }
 
-        const { error: delErr } = await supabase
-          .from('surat_jalan_details')
-          .delete()
-          .eq('surat_jalan_id', id);
-        if (delErr) {
-          const msg = String(delErr.message || '').toLowerCase();
-          const isMissingTable =
-            msg.includes('surat_jalan_details') ||
-            msg.includes('schema cache') ||
-            msg.includes('does not exist');
-          if (!isMissingTable && (!Array.isArray(details) || details.length > 0)) {
-            return res.status(400).json({ error: delErr.message });
-          }
+      let detailWarning: string | undefined;
+      const runSaveHeader = async (payloadObj: Record<string, any>) => {
+        if (header.id) {
+          const { id, created_at, updated_at, ...patch } = payloadObj;
+          return supabase
+            .from('surat_jalans')
+            .update(patch)
+            .eq('id', id)
+            .select()
+            .single();
         }
-      } else {
-        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
-        const { data, error } = await supabase
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = payloadObj;
+        return supabase
           .from('surat_jalans')
           .insert(insertHeader)
           .select()
           .single();
-        if (error) return res.status(400).json({ error: error.message });
-        headerRow = data;
+      };
+
+      let hdrRes = await runSaveHeader(header);
+      if (hdrRes.error && isMissingSchemaError(hdrRes.error.message)) {
+        detailWarning = 'Kolom ekspedisi/supir/alamat pada surat_jalans belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+        hdrRes = await runSaveHeader(
+          omitKeys(header, ['nama_expedisi', 'no_polisi', 'nama_supir', 'alamat_kirim'])
+        );
+      }
+      if (hdrRes.error) return res.status(400).json({ error: hdrRes.error.message });
+      const headerRow: any = hdrRes.data;
+
+      if (header.id) {
+        const { error: delErr } = await supabase
+          .from('surat_jalan_details')
+          .delete()
+          .eq('surat_jalan_id', header.id);
+        if (delErr) {
+          if (isMissingSchemaError(delErr.message)) {
+            detailWarning = detailWarning || 'Tabel surat_jalan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          } else if (!Array.isArray(details) || details.length > 0) {
+            return res.status(400).json({ error: delErr.message });
+          }
+        }
       }
 
       let savedDetails: any[] = [];
-      let detailWarning: string | undefined;
       if (Array.isArray(details) && details.length > 0) {
         const payload = details.map((d, idx) => {
           const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
@@ -1581,14 +2183,8 @@ export function registerErpApiRoutes(app: Express): void {
           .insert(payload)
           .select();
         if (detErr) {
-          const msg = String(detErr.message || '').toLowerCase();
-          const isMissingTable =
-            msg.includes('surat_jalan_details') ||
-            msg.includes('schema cache') ||
-            msg.includes('does not exist');
-          if (isMissingTable) {
-            detailWarning =
-              'Tabel surat_jalan_details belum dibuat di Supabase. Jalankan SQL Query terlebih dahulu.';
+          if (isMissingSchemaError(detErr.message)) {
+            detailWarning = detailWarning || 'Tabel surat_jalan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
           } else {
             return res.status(400).json({ error: detErr.message });
           }
@@ -1597,9 +2193,174 @@ export function registerErpApiRoutes(app: Express): void {
         }
       }
 
+      // Sync Master Barang Stock (reverse old posted SJ, subtract new posted SJ)
+      const stockDelta: Record<string, number> = {};
+      if (oldHeader && isPostedStatus(oldHeader.sts_post)) {
+        for (const od of oldDetails) {
+          const k = String(od.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          const q = Number(od.terima || 0) > 0 ? Number(od.terima) : Number(od.qty || 0);
+          stockDelta[k] = (stockDelta[k] || 0) + q;
+        }
+      }
+      if (isPostedStatus(headerRow.sts_post)) {
+        for (const nd of savedDetails) {
+          const k = String(nd.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          const q = Number(nd.terima || 0) > 0 ? Number(nd.terima) : Number(nd.qty || 0);
+          stockDelta[k] = (stockDelta[k] || 0) - q;
+        }
+      }
+      if (Object.keys(stockDelta).length > 0) {
+        await adjustMasterBarangStockAndCost(supabase, stockDelta);
+      }
+
+      // Sync SO detail terima, persen, so_close, and master_barangs.qty_so
+      await syncSalesOrderFulfillment(supabase, [
+        oldHeader?.no_so || '',
+        headerRow?.no_so || '',
+      ]);
+      await syncMasterBarangQtySo(supabase, [
+        ...oldDetails.map((d: any) => d.kode),
+        ...savedDetails.map((d: any) => d.kode),
+      ]);
+
       return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan Surat Jalan.' });
+    }
+  });
+
+  app.post('/api/erp/composite/retur-penjualan', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Retur Penjualan wajib diisi.' });
+      }
+
+      let oldHeader: any = null;
+      let oldDetails: any[] = [];
+      if (header.id) {
+        const { data: prevHdr } = await supabase
+          .from('retur_penjualans')
+          .select('*')
+          .eq('id', header.id)
+          .single();
+        oldHeader = prevHdr || null;
+        try {
+          const { data: prevDet } = await supabase
+            .from('retur_penjualan_details')
+            .select('*')
+            .eq('retur_id', header.id);
+          oldDetails = prevDet || [];
+        } catch {}
+      }
+
+      let detailWarning: string | undefined;
+      const runSaveHeader = async (payloadObj: Record<string, any>) => {
+        if (header.id) {
+          const { id, created_at, updated_at, ...patch } = payloadObj;
+          return supabase
+            .from('retur_penjualans')
+            .update(patch)
+            .eq('id', id)
+            .select()
+            .single();
+        }
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = payloadObj;
+        return supabase
+          .from('retur_penjualans')
+          .insert(insertHeader)
+          .select()
+          .single();
+      };
+
+      let hdrRes = await runSaveHeader(header);
+      if (hdrRes.error && isMissingSchemaError(hdrRes.error.message)) {
+        detailWarning = 'Kolom DPP/PPN pada retur_penjualans belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+        hdrRes = await runSaveHeader(
+          omitKeys(header, ['subtotal', 'nilai_disc', 'dpp', 'nilai_ppn'])
+        );
+      }
+      if (hdrRes.error) return res.status(400).json({ error: hdrRes.error.message });
+      const headerRow: any = hdrRes.data;
+
+      if (header.id) {
+        const { error: delErr } = await supabase
+          .from('retur_penjualan_details')
+          .delete()
+          .eq('retur_id', header.id);
+        if (delErr) {
+          if (isMissingSchemaError(delErr.message)) {
+            detailWarning = detailWarning || 'Tabel retur_penjualan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          } else if (!Array.isArray(details) || details.length > 0) {
+            return res.status(400).json({ error: delErr.message });
+          }
+        }
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          return {
+            ...rest,
+            retur_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('retur_penjualan_details')
+          .insert(payload)
+          .select();
+        if (detErr) {
+          if (isMissingSchemaError(detErr.message)) {
+            detailWarning = detailWarning || 'Tabel retur_penjualan_details belum dibuat di Supabase. Jalankan supabase_migration_sales_workflow.sql.';
+          } else {
+            return res.status(400).json({ error: detErr.message });
+          }
+        } else {
+          savedDetails = detData || [];
+        }
+      }
+
+      // Stock ADD BACK on sales return (subtract old posted return, add new posted return)
+      const stockDelta: Record<string, number> = {};
+      if (oldHeader && isPostedStatus(oldHeader.sts_post)) {
+        for (const od of oldDetails) {
+          const k = String(od.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          stockDelta[k] = (stockDelta[k] || 0) - Number(od.qty || 0);
+        }
+      }
+      if (isPostedStatus(headerRow.sts_post)) {
+        for (const nd of savedDetails) {
+          const k = String(nd.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          stockDelta[k] = (stockDelta[k] || 0) + Number(nd.qty || 0);
+        }
+      }
+      if (Object.keys(stockDelta).length > 0) {
+        await adjustMasterBarangStockAndCost(supabase, stockDelta);
+      }
+
+      await syncCustomerPiutang(supabase, [
+        oldHeader?.nama_customer || '',
+        headerRow?.nama_customer || '',
+      ]);
+
+      return res.json({ header: headerRow, details: savedDetails, detailWarning });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Retur Penjualan.' });
     }
   });
 
@@ -1911,6 +2672,24 @@ export function registerErpApiRoutes(app: Express): void {
         return res.json({ ok: true });
       }
 
+      if (table === 'sales_inquiries' && matchCol === 'id') {
+        try {
+          await supabase.from('sales_inquiry_details').delete().eq('si_id', id);
+        } catch {}
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        return res.json({ ok: true });
+      }
+
+      if (table === 'sales_quotations' && matchCol === 'id') {
+        try {
+          await supabase.from('sales_quotation_details').delete().eq('sq_id', id);
+        } catch {}
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        return res.json({ ok: true });
+      }
+
       if (table === 'sales_orders' && matchCol === 'id') {
         const { data: oldDets } = await supabase
           .from('sales_order_details')
@@ -1925,17 +2704,141 @@ export function registerErpApiRoutes(app: Express): void {
         return res.json({ ok: true });
       }
 
+      if (table === 'surat_jalans' && matchCol === 'id') {
+        const { data: oldHdr } = await supabase
+          .from('surat_jalans')
+          .select('no_bukti, no_so, sts_post')
+          .eq('id', id)
+          .single();
+        let oldDets: any[] = [];
+        try {
+          const { data: detRows } = await supabase
+            .from('surat_jalan_details')
+            .select('kode, qty, terima')
+            .eq('surat_jalan_id', id);
+          oldDets = detRows || [];
+          await supabase.from('surat_jalan_details').delete().eq('surat_jalan_id', id);
+        } catch {}
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+
+        if (oldHdr && isPostedStatus(oldHdr.sts_post)) {
+          const stockDelta: Record<string, number> = {};
+          for (const d of oldDets) {
+            const k = String(d.kode || '').trim().toUpperCase();
+            if (!k) continue;
+            const q = Number(d.terima || 0) > 0 ? Number(d.terima) : Number(d.qty || 0);
+            stockDelta[k] = (stockDelta[k] || 0) + q;
+          }
+          await adjustMasterBarangStockAndCost(supabase, stockDelta);
+        }
+        if (oldHdr?.no_so) {
+          await syncSalesOrderFulfillment(supabase, [oldHdr.no_so]);
+        }
+        if (oldDets.length > 0) {
+          await syncMasterBarangQtySo(supabase, oldDets.map((d: any) => d.kode));
+        }
+        return res.json({ ok: true });
+      }
+
       if (table === 'faktur_penjualans' && matchCol === 'id') {
         const { data: oldHdr } = await supabase
           .from('faktur_penjualans')
-          .select('nama_customer')
+          .select('*')
           .eq('id', id)
           .single();
+        let oldDets: any[] = [];
         try {
+          const { data: detRows } = await supabase
+            .from('faktur_penjualan_details')
+            .select('kode, qty')
+            .eq('faktur_id', id);
+          oldDets = detRows || [];
           await supabase.from('faktur_penjualan_details').delete().eq('faktur_id', id);
         } catch {}
         const { error } = await supabase.from(table).delete().eq(matchCol, id);
         if (error) return res.status(400).json({ error: error.message });
+
+        if (oldHdr) {
+          if (oldHdr.no_sj && String(oldHdr.jenis_faktur || 'REGULAR').toUpperCase() === 'REGULAR') {
+            try {
+              await supabase
+                .from('surat_jalans')
+                .update({ no_faktur: '' })
+                .eq('no_bukti', oldHdr.no_sj)
+                .eq('no_faktur', oldHdr.no_bukti);
+            } catch {}
+          }
+          if (oldHdr.no_dp) {
+            try {
+              await supabase
+                .from('faktur_penjualans')
+                .update({ dp_used_on_faktur: '' })
+                .eq('no_bukti', oldHdr.no_dp)
+                .eq('jenis_faktur', 'DP');
+            } catch {}
+          }
+          if (
+            String(oldHdr.jenis_faktur || 'REGULAR').toUpperCase() === 'REGULAR' &&
+            isPostedStatus(oldHdr.sts_post) &&
+            oldDets.length > 0
+          ) {
+            let backedByPostedSj = false;
+            if (oldHdr.no_sj && oldHdr.no_sj !== '-') {
+              const { data: sjRows } = await supabase
+                .from('surat_jalans')
+                .select('sts_post')
+                .eq('no_bukti', oldHdr.no_sj)
+                .limit(1);
+              backedByPostedSj = Boolean(sjRows?.[0] && isPostedStatus(sjRows[0].sts_post));
+            }
+            if (!backedByPostedSj) {
+              const stockDelta: Record<string, number> = {};
+              for (const d of oldDets) {
+                const k = String(d.kode || '').trim().toUpperCase();
+                if (!k) continue;
+                stockDelta[k] = (stockDelta[k] || 0) + Number(d.qty || 0);
+              }
+              await adjustMasterBarangStockAndCost(supabase, stockDelta);
+            }
+          }
+          if (String(oldHdr.jenis_faktur || '').toUpperCase() === 'DP' && oldHdr.no_so) {
+            await syncSalesOrderDeposit(supabase, [oldHdr.no_so]);
+          }
+          if (oldHdr.nama_customer) {
+            await syncCustomerPiutang(supabase, [oldHdr.nama_customer]);
+          }
+        }
+        return res.json({ ok: true });
+      }
+
+      if (table === 'retur_penjualans' && matchCol === 'id') {
+        const { data: oldHdr } = await supabase
+          .from('retur_penjualans')
+          .select('nama_customer, sts_post')
+          .eq('id', id)
+          .single();
+        let oldDets: any[] = [];
+        try {
+          const { data: detRows } = await supabase
+            .from('retur_penjualan_details')
+            .select('kode, qty')
+            .eq('retur_id', id);
+          oldDets = detRows || [];
+          await supabase.from('retur_penjualan_details').delete().eq('retur_id', id);
+        } catch {}
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+
+        if (oldHdr && isPostedStatus(oldHdr.sts_post) && oldDets.length > 0) {
+          const stockDelta: Record<string, number> = {};
+          for (const d of oldDets) {
+            const k = String(d.kode || '').trim().toUpperCase();
+            if (!k) continue;
+            stockDelta[k] = (stockDelta[k] || 0) - Number(d.qty || 0);
+          }
+          await adjustMasterBarangStockAndCost(supabase, stockDelta);
+        }
         if (oldHdr?.nama_customer) {
           await syncCustomerPiutang(supabase, [oldHdr.nama_customer]);
         }
@@ -1945,12 +2848,18 @@ export function registerErpApiRoutes(app: Express): void {
       if (table === 'giro_penjualan_headers' && matchCol === 'id') {
         const { data: oldDets } = await supabase
           .from('giro_penjualan_details')
-          .select('customer')
+          .select('*')
           .eq('header_id', id);
         await supabase.from('giro_penjualan_details').delete().eq('header_id', id);
         const { error } = await supabase.from(table).delete().eq(matchCol, id);
         if (error) return res.status(400).json({ error: error.message });
         const custs = (oldDets || []).map((d: any) => d.customer).filter(Boolean);
+        const refs = (oldDets || [])
+          .filter((d: any) => d.no_ref || d.no_faktur)
+          .map((d: any) => ({ refType: d.ref_type, noRef: d.no_ref, noFaktur: d.no_faktur }));
+        if (refs.length > 0) {
+          await syncGiroPenjualanToFaktur(supabase, refs);
+        }
         if (custs.length > 0) {
           await syncCustomerPiutang(supabase, custs);
         }

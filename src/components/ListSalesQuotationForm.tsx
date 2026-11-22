@@ -3,11 +3,14 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
+  addDaysToIsoDate,
   erpCompositeSave,
   erpDelete,
   erpList,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -27,13 +30,22 @@ export interface SalesQuotationItem {
   noSq: string;
   tanggal: string;
   tanggalIso: string;
+  validUntil: string;
+  validUntilIso: string;
   namaCustomer: string;
   sales: string;
   noInquiry: string;
   lokasiStock: string;
   keterangan: string;
+  ppn: number;
+  subtotal: number;
+  discPct: number;
+  nilaiDisc: number;
+  dpp: number;
+  nilaiPpn: number;
   amount: string;
   amountNum: number;
+  stsSo: string;
   dibuatOleh: string;
   tglCreated: string;
   diUpdateOleh: string;
@@ -60,6 +72,7 @@ interface MasterCustomerOption {
 }
 
 interface SalesInquiryOption {
+  id: string;
   noBukti: string;
   namaCustomer: string;
   namaSales: string;
@@ -80,19 +93,35 @@ interface ListSalesQuotationFormProps {
 
 function mapDbToQuotation(r: any): SalesQuotationItem {
   const amtNum = Number(r.amount || 0);
+  const ppnNum = Number(r.ppn ?? 0);
+  const subNum = Number(r.subtotal ?? amtNum);
+  const discPctNum = Number(r.disc_pct ?? 0);
+  const nilaiDiscNum = Number(r.nilai_disc ?? 0);
+  const dppNum = Number(r.dpp ?? Math.max(0, subNum - nilaiDiscNum));
+  const nilaiPpnNum = Number(r.nilai_ppn ?? Math.round((dppNum * ppnNum) / 100));
+
   return {
     id: r.id,
     noSq: r.no_sq || '',
     tanggal: toDisplayDMyShort(r.tanggal),
     tanggalIso: toIsoDate(r.tanggal) || '',
+    validUntil: toDisplayDMyShort(r.valid_until) || '-',
+    validUntilIso: toIsoDate(r.valid_until) || '',
     namaCustomer: r.nama_customer || '',
     sales: r.sales || '',
     noInquiry: r.no_inquiry || '',
     lokasiStock: r.lokasi_stock || '01 - OFFICE',
     keterangan: r.keterangan || '',
+    ppn: ppnNum,
+    subtotal: subNum,
+    discPct: discPctNum,
+    nilaiDisc: nilaiDiscNum,
+    dpp: dppNum,
+    nilaiPpn: nilaiPpnNum,
     amount: formatMoney(amtNum, true),
     amountNum: amtNum,
-    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
+    stsSo: r.sts_so || 'Open',
+    dibuatOleh: r.dibuat_oleh || getCurrentUser().username || 'ADMIN',
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diUpdateOleh: r.diupdate_oleh || '-',
     tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
@@ -155,22 +184,29 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [printMode, setPrintMode] = useState<'list' | 'detail'>('list');
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<SalesQuotationItem | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [customerOptions, setCustomerOptions] = useState<MasterCustomerOption[]>([]);
   const [salesOptions, setSalesOptions] = useState<string[]>([]);
   const [inquiryOptions, setInquiryOptions] = useState<SalesInquiryOption[]>([]);
+  const [inquiryDetailsMap, setInquiryDetailsMap] = useState<Record<string, any[]>>({});
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
+  const [defaultPpnRate, setDefaultPpnRate] = useState<number>(11);
 
   const [newNoSq, setNewNoSq] = useState<string>('');
   const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newValidUntil, setNewValidUntil] = useState<string>('');
   const [newCustomer, setNewCustomer] = useState<string>('');
   const [newSales, setNewSales] = useState<string>('');
   const [newNoInquiry, setNewNoInquiry] = useState<string>('');
   const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
   const [newKeterangan, setNewKeterangan] = useState<string>('1. Price are Nett,');
+  const [newDiscPct, setNewDiscPct] = useState<string>('0');
+  const [newPpn, setNewPpn] = useState<string>('11');
   const [newAmount, setNewAmount] = useState<string>('0');
+  const [newStsSo, setNewStsSo] = useState<string>('Open');
   const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
   const [newTglCreated, setNewTglCreated] = useState<string>('');
   const [newDiupdateOleh, setNewDiupdateOleh] = useState<string>('');
@@ -179,21 +215,29 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
+    setTimeout(() => setFeedback(null), 2800);
   };
 
   const loadMasterReferences = async () => {
-    const [custRes, salesRes, inqRes, lokasiRes, barangRes] = await Promise.allSettled([
-      erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
-      erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
-      erpList<any>('sales_inquiries', { orderBy: 'tanggal_do', asc: false, limit: 1000 }),
-      erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 1000 }),
-      erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
-    ]);
+    const [custRes, salesRes, inqRes, inqDetRes, lokasiRes, barangRes, ppnRate] =
+      await Promise.allSettled([
+        erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
+        erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
+        erpList<any>('sales_inquiries', { orderBy: 'tanggal_si', asc: false, limit: 1000 }),
+        erpList<any>('sales_inquiry_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
+        erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 1000 }),
+        erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
+        fetchDefaultPpnRate(),
+      ]);
+
+    if (ppnRate.status === 'fulfilled') {
+      setDefaultPpnRate(ppnRate.value);
+    }
 
     if (custRes.status === 'fulfilled') {
       const custMap = new Map<string, MasterCustomerOption>();
       for (const c of custRes.value) {
+        if (c.is_active === false) continue;
         const namaCustomer = String(c.nama_customer || '').trim().toUpperCase();
         if (!namaCustomer) continue;
         custMap.set(namaCustomer, {
@@ -208,6 +252,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       const uniqueSales = Array.from(
         new Set(
           salesRes.value
+            .filter((s: any) => s.is_active !== false)
             .map((s: any) => String(s.nama_sales || '').trim().toUpperCase())
             .filter(Boolean)
         )
@@ -221,6 +266,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
         const noBukti = String(q.no_bukti || '').trim().toUpperCase();
         if (!noBukti) continue;
         inqMap.set(noBukti, {
+          id: q.id,
           noBukti,
           namaCustomer: String(q.nama_customer || '').trim().toUpperCase(),
           namaSales: String(q.nama_sales || '').trim().toUpperCase(),
@@ -229,10 +275,28 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       setInquiryOptions(Array.from(inqMap.values()));
     }
 
+    if (inqDetRes.status === 'fulfilled') {
+      const grouped: Record<string, any[]> = {};
+      for (const d of inqDetRes.value) {
+        const keyByBukti = String(d.no_bukti || '').trim().toUpperCase();
+        const keyById = String(d.si_id || '');
+        if (keyByBukti) {
+          if (!grouped[keyByBukti]) grouped[keyByBukti] = [];
+          grouped[keyByBukti].push(d);
+        }
+        if (keyById) {
+          if (!grouped[keyById]) grouped[keyById] = [];
+          grouped[keyById].push(d);
+        }
+      }
+      setInquiryDetailsMap(grouped);
+    }
+
     if (lokasiRes.status === 'fulfilled') {
       const lokasis = Array.from(
         new Set(
           lokasiRes.value
+            .filter((l: any) => l.is_active !== false)
             .map((l: any) => {
               const kode = String(l.kode || '').trim().toUpperCase();
               const nama = String(l.nama_lokasi || '').trim().toUpperCase();
@@ -247,6 +311,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
     if (barangRes.status === 'fulfilled') {
       const mappedBarangs: MasterBarangOption[] = barangRes.value
+        .filter((b: any) => b.is_active !== false)
         .map((b: any) => ({
           kode: String(b.kode || '').trim().toUpperCase(),
           namaBarang: String(b.nama_barang || '').trim(),
@@ -300,7 +365,9 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
       const [rows, details] = await Promise.all([
         erpList<any>('sales_quotations', queryOpts),
-        erpList<any>('sales_quotation_details', { orderBy: 'no_urut', asc: true, limit: 5000 }).catch(() => []),
+        erpList<any>('sales_quotation_details', { orderBy: 'no_urut', asc: true, limit: 5000 }).catch(
+          () => []
+        ),
         loadMasterReferences(),
       ]);
       const mapped = rows.map(mapDbToQuotation);
@@ -331,6 +398,19 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     }
   };
 
+  const computeTotals = (
+    subtotalVal: number,
+    discPctVal: number,
+    ppnPctVal: number
+  ) => {
+    const subtotal = Math.max(0, subtotalVal);
+    const nilaiDisc = Math.round((subtotal * Math.max(0, discPctVal)) / 100);
+    const dpp = Math.max(0, subtotal - nilaiDisc);
+    const nilaiPpn = Math.round((dpp * Math.max(0, ppnPctVal)) / 100);
+    const grandTotal = dpp + nilaiPpn;
+    return { subtotal, nilaiDisc, dpp, nilaiPpn, grandTotal };
+  };
+
   const handleToolbarSimpan = async () => {
     const selected = quotationList.find((q) => q.id === selectedId);
     if (!selected) {
@@ -342,18 +422,27 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const existingDetails = sqDetailsMap[selected.id] || [];
       const totalFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
-      const finalAmount = existingDetails.length > 0 ? totalFromDetails : selected.amountNum;
+      const subtotal = existingDetails.length > 0 ? totalFromDetails : selected.subtotal || selected.amountNum;
+      const calc = computeTotals(subtotal, selected.discPct, selected.ppn);
 
       const headerPayload: Record<string, any> = {
         id: selected.id,
         no_sq: selected.noSq.trim().toUpperCase(),
         tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        valid_until: selected.validUntilIso || toIsoDate(selected.validUntil),
         nama_customer: selected.namaCustomer.trim().toUpperCase(),
         sales: selected.sales.trim().toUpperCase(),
         no_inquiry: selected.noInquiry.trim().toUpperCase(),
         lokasi_stock: selected.lokasiStock.trim().toUpperCase() || '01 - OFFICE',
         keterangan: selected.keterangan.trim(),
-        amount: finalAmount,
+        ppn: selected.ppn,
+        subtotal: calc.subtotal,
+        disc_pct: selected.discPct,
+        nilai_disc: calc.nilaiDisc,
+        dpp: calc.dpp,
+        nilai_ppn: calc.nilaiPpn,
+        amount: existingDetails.length > 0 ? calc.grandTotal : selected.amountNum,
+        sts_so: selected.stsSo || 'Open',
         dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
         tgl_created: toIsoDate(selected.tglCreated) || todayIso(),
         diupdate_oleh: currentUser,
@@ -372,7 +461,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
         total: Number(d.total || 0),
       }));
 
-      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+      const res = await erpCompositeSave<{ header: any; details: any[]; detailWarning?: string }>(
         'sales-quotation',
         headerPayload,
         detailPayloads
@@ -382,7 +471,11 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       setQuotationList((prev) => prev.map((item) => (item.id === selected.id ? savedHeader : item)));
       setSqDetailsMap((prev) => ({ ...prev, [savedHeader.id]: savedDetails }));
       setYellowNote(`${savedHeader.noSq} - ${savedHeader.namaCustomer}`);
-      showFeedback(`Sales Quotation [${savedHeader.noSq}] berhasil disimpan`);
+      showFeedback(
+        res.detailWarning
+          ? `SQ [${savedHeader.noSq}] tersimpan (${res.detailWarning})`
+          : `Sales Quotation [${savedHeader.noSq}] berhasil disimpan`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -414,6 +507,12 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     [detailRows]
   );
 
+  const modalCalc = useMemo(() => {
+    const hasDetails = detailRows.some((d) => d.kode.trim() || d.namaBarang.trim());
+    const sub = hasDetails ? modalDetailTotal : parseNum(newAmount);
+    return computeTotals(sub, parseNum(newDiscPct), parseNum(newPpn));
+  }, [detailRows, modalDetailTotal, newAmount, newDiscPct, newPpn]);
+
   if (!isOpen) return null;
 
   const updateDetailRowsWithSync = (
@@ -423,8 +522,9 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       const next = updater(prev);
       const hasFilledRow = next.some((r) => r.kode.trim() || r.namaBarang.trim());
       if (hasFilledRow) {
-        const sum = next.reduce((acc, r) => acc + r.total, 0);
-        setNewAmount(String(sum));
+        const sub = next.reduce((acc, r) => acc + r.total, 0);
+        const calc = computeTotals(sub, parseNum(newDiscPct), parseNum(newPpn));
+        setNewAmount(String(calc.grandTotal));
       }
       return next;
     });
@@ -436,9 +536,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
   const handleRemoveDetailRow = (rowId: string) => {
     updateDetailRowsWithSync((prev) =>
-      prev
-        .filter((r) => r.id !== rowId)
-        .map((r, idx) => ({ ...r, noUrut: idx + 1 }))
+      prev.filter((r) => r.id !== rowId).map((r, idx) => ({ ...r, noUrut: idx + 1 }))
     );
   };
 
@@ -504,37 +602,71 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   const handleSelectCustomer = (customerName: string) => {
     setNewCustomer(customerName);
     const foundCust = customerOptions.find((c) => c.namaCustomer === customerName);
-    if (foundCust?.sales && !newSales.trim()) {
+    if (foundCust?.sales) {
       setNewSales(foundCust.sales);
     }
   };
 
   const handleSelectInquiry = (noBukti: string) => {
-    setNewNoInquiry(noBukti);
-    const foundInq = inquiryOptions.find((q) => q.noBukti === noBukti);
+    const cleanInq = noBukti.trim().toUpperCase();
+    setNewNoInquiry(cleanInq);
+    const foundInq = inquiryOptions.find((q) => q.noBukti === cleanInq);
     if (foundInq) {
-      if (foundInq.namaCustomer && !newCustomer.trim()) {
-        setNewCustomer(foundInq.namaCustomer);
-      }
-      if (foundInq.namaSales && !newSales.trim()) {
-        setNewSales(foundInq.namaSales);
+      if (foundInq.namaCustomer) setNewCustomer(foundInq.namaCustomer);
+      if (foundInq.namaSales) setNewSales(foundInq.namaSales);
+
+      const inqDets = inquiryDetailsMap[cleanInq] || inquiryDetailsMap[foundInq.id] || [];
+      if (inqDets.length > 0) {
+        const loadedRows: SalesQuotationDetailItem[] = inqDets.map((d: any, idx: number) => {
+          const k = String(d.kode || '').trim().toUpperCase();
+          const master = barangOptions.find((b) => b.kode === k);
+          const qty = Number(d.qty || 1);
+          const masterHarga = master ? (master.price > 0 ? master.price : master.cost) : 0;
+          const harga = Number(d.target_harga || 0) > 0 ? Number(d.target_harga) : masterHarga;
+          const jumlah = qty * harga;
+          return {
+            id: `from-si-${Date.now()}-${idx}`,
+            noUrut: idx + 1,
+            kode: k,
+            namaBarang: String(d.nama_barang || master?.namaBarang || '').trim(),
+            unit: String(d.unit || master?.unit || 'PCS').trim().toUpperCase(),
+            terima: 0,
+            qty,
+            harga,
+            jumlah,
+            total: jumlah,
+          };
+        });
+        setDetailRows(loadedRows);
+        const sub = loadedRows.reduce((s, r) => s + r.total, 0);
+        const calc = computeTotals(sub, parseNum(newDiscPct), parseNum(newPpn));
+        setNewAmount(String(calc.grandTotal));
+        showFeedback(`${loadedRows.length} item dimuat dari Sales Inquiry [${cleanInq}]`);
       }
     }
   };
 
   const handleAddNew = async () => {
     const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
-    const todayDisp = toDisplayDMyShort(todayIso());
+    const todayIsoStr = todayIso();
+    const todayDisp = toDisplayDMyShort(todayIsoStr);
+    const validUntilDisp = toDisplayDMyShort(addDaysToIsoDate(todayIsoStr, 14));
+    const activePpn = await fetchDefaultPpnRate().catch(() => defaultPpnRate);
+
     setEditingId(null);
     setModalError(null);
     setNewNoSq(nextUniqueCode(quotationList.map((q) => q.noSq), '2608-SQ-', 3));
     setNewTanggal(todayDisp);
+    setNewValidUntil(validUntilDisp);
     setNewCustomer('');
     setNewSales('');
     setNewNoInquiry('');
     setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setNewKeterangan('1. Price are Nett,');
+    setNewDiscPct('0');
+    setNewPpn(String(activePpn));
     setNewAmount('0');
+    setNewStsSo('Open');
     setNewDibuatOleh(currentUser);
     setNewTglCreated(todayDisp);
     setNewDiupdateOleh('-');
@@ -556,12 +688,16 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     setModalError(null);
     setNewNoSq(item.noSq);
     setNewTanggal(item.tanggal || todayDisp);
+    setNewValidUntil(item.validUntil === '-' ? '' : item.validUntil);
     setNewCustomer(item.namaCustomer);
     setNewSales(item.sales);
     setNewNoInquiry(item.noInquiry);
     setNewLokasiStock(item.lokasiStock || lokasiOptions[0] || '01 - OFFICE');
     setNewKeterangan(item.keterangan);
+    setNewDiscPct(String(item.discPct || 0));
+    setNewPpn(String(item.ppn ?? defaultPpnRate));
     setNewAmount(String(item.amountNum));
+    setNewStsSo(item.stsSo || 'Open');
     setNewDibuatOleh(item.dibuatOleh || currentUser);
     setNewTglCreated(!item.tglCreated || item.tglCreated === '-' ? todayDisp : item.tglCreated);
     setNewDiupdateOleh(
@@ -592,7 +728,14 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       (d) => d.kode.trim() !== '' || d.namaBarang.trim() !== ''
     );
     const totalFromDetails = activeDetails.reduce((acc, d) => acc + d.total, 0);
-    const finalAmount = activeDetails.length > 0 ? totalFromDetails : parseNum(newAmount);
+    const discPctVal = parseNum(newDiscPct);
+    const ppnVal = parseNum(newPpn);
+    const calc = computeTotals(
+      activeDetails.length > 0 ? totalFromDetails : parseNum(newAmount),
+      discPctVal,
+      ppnVal
+    );
+    const finalAmount = activeDetails.length > 0 ? calc.grandTotal : parseNum(newAmount);
 
     try {
       setIsBusy(true);
@@ -600,12 +743,20 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       const baseHeader: Record<string, any> = {
         no_sq: newNoSq.trim().toUpperCase(),
         tanggal: toIsoDate(newTanggal) || todayIso(),
+        valid_until: toIsoDate(newValidUntil),
         nama_customer: newCustomer.trim().toUpperCase(),
         sales: newSales.trim().toUpperCase(),
         no_inquiry: newNoInquiry.trim().toUpperCase(),
         lokasi_stock: newLokasiStock.trim().toUpperCase() || '01 - OFFICE',
         keterangan: newKeterangan.trim(),
+        ppn: ppnVal,
+        subtotal: calc.subtotal,
+        disc_pct: discPctVal,
+        nilai_disc: calc.nilaiDisc,
+        dpp: calc.dpp,
+        nilai_ppn: calc.nilaiPpn,
         amount: finalAmount,
+        sts_so: newStsSo || 'Open',
         dibuat_oleh: newDibuatOleh.trim().toUpperCase() || currentUser,
         tgl_created: toIsoDate(newTglCreated) || todayIso(),
       };
@@ -633,7 +784,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
         total: Number(d.total || 0),
       }));
 
-      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+      const res = await erpCompositeSave<{ header: any; details: any[]; detailWarning?: string }>(
         'sales-quotation',
         baseHeader,
         detailPayloads
@@ -644,12 +795,20 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
       if (editingId) {
         setQuotationList((prev) => prev.map((item) => (item.id === editingId ? savedHeader : item)));
-        showFeedback('Sales Quotation & S.O. Detail diperbarui');
+        showFeedback(
+          res.detailWarning
+            ? `SQ diperbarui (${res.detailWarning})`
+            : 'Sales Quotation & S.O. Detail diperbarui'
+        );
       } else {
         setQuotationList((prev) => [savedHeader, ...prev]);
         setSelectedId(savedHeader.id);
         setYellowNote(`${savedHeader.noSq} - ${savedHeader.namaCustomer}`);
-        showFeedback('Sales Quotation & S.O. Detail tersimpan');
+        showFeedback(
+          res.detailWarning
+            ? `SQ tersimpan (${res.detailWarning})`
+            : 'Sales Quotation tersimpan & Inquiry diupdate'
+        );
       }
 
       setSqDetailsMap((prev) => ({
@@ -668,22 +827,24 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteItem) return;
     try {
       setIsBusy(true);
-      await erpDelete('sales_quotation_details', id, 'sq_id').catch(() => {});
-      await erpDelete('sales_quotations', id);
-      const updated = quotationList.filter((item) => item.id !== id);
+      await erpDelete('sales_quotation_details', confirmDeleteItem.id, 'sq_id').catch(() => {});
+      await erpDelete('sales_quotations', confirmDeleteItem.id);
+      const updated = quotationList.filter((item) => item.id !== confirmDeleteItem.id);
       setQuotationList(updated);
       setSqDetailsMap((prev) => {
         const copy = { ...prev };
-        delete copy[id];
+        delete copy[confirmDeleteItem.id];
         return copy;
       });
-      if (selectedId === id) {
+      if (selectedId === confirmDeleteItem.id) {
         setSelectedId(updated[0]?.id || '');
         setYellowNote(updated[0] ? `${updated[0].noSq} - ${updated[0].namaCustomer}` : '');
       }
+      setConfirmDeleteItem(null);
       showFeedback('Sales Quotation dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
@@ -715,7 +876,16 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       return matchesMultiKeyword([item.keterangan], searchTerm);
     }
     return matchesMultiKeyword(
-      [item.noSq, item.tanggal, item.namaCustomer, item.sales, item.noInquiry, item.lokasiStock, item.keterangan],
+      [
+        item.noSq,
+        item.tanggal,
+        item.namaCustomer,
+        item.sales,
+        item.noInquiry,
+        item.lokasiStock,
+        item.keterangan,
+        item.stsSo,
+      ],
       searchTerm
     );
   });
@@ -761,12 +931,17 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
       columns: [
         { header: 'No. SQ', accessor: 'noSq' },
         { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'Berlaku s/d', accessor: 'validUntil', align: 'center' },
         { header: 'Nama Customer', accessor: 'namaCustomer' },
         { header: 'Sales', accessor: 'sales' },
         { header: 'No. Inquiry', accessor: 'noInquiry' },
         { header: 'Lokasi Stock', accessor: 'lokasiStock' },
-        { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'DPP', accessor: 'dpp', align: 'right' },
+        { header: 'PPN %', accessor: 'ppn', align: 'right' },
+        { header: 'Nilai PPN', accessor: 'nilaiPpn', align: 'right' },
         { header: 'Amount', accessor: 'amountNum', align: 'right' },
+        { header: 'Status SO', accessor: 'stsSo', align: 'center' },
+        { header: 'Keterangan', accessor: 'keterangan' },
       ],
       rows: filteredList,
     });
@@ -775,7 +950,9 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
   const customerDropdownChoices = Array.from(
     new Set(
-      [...customerOptions.map((c) => c.namaCustomer), newCustomer.trim().toUpperCase()].filter(Boolean)
+      [...customerOptions.map((c) => c.namaCustomer), newCustomer.trim().toUpperCase()].filter(
+        Boolean
+      )
     )
   );
 
@@ -792,13 +969,14 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   );
 
   const listPrintColumns: PrintColumn<SalesQuotationItem>[] = [
-    { header: 'No. SQ', accessor: 'noSq', width: '92px' },
-    { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '74px' },
-    { header: 'Nama Customer', accessor: 'namaCustomer', width: '165px' },
-    { header: 'Sales', accessor: 'sales', width: '88px' },
-    { header: 'No. Inquiry', accessor: 'noInquiry', width: '92px' },
-    { header: 'Lokasi Stock', accessor: 'lokasiStock', width: '105px' },
-    { header: 'Keterangan', accessor: 'keterangan' },
+    { header: 'No. SQ', accessor: 'noSq', width: '90px' },
+    { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '72px' },
+    { header: 'Nama Customer', accessor: 'namaCustomer', width: '160px' },
+    { header: 'Sales', accessor: 'sales', width: '82px' },
+    { header: 'No. Inquiry', accessor: 'noInquiry', width: '88px' },
+    { header: 'Status', accessor: 'stsSo', align: 'center', width: '65px' },
+    { header: 'DPP', accessor: (r) => formatMoney(r.dpp), align: 'right', width: '85px' },
+    { header: 'PPN', accessor: (r) => formatMoney(r.nilaiPpn), align: 'right', width: '75px' },
     { header: 'Amount', accessor: 'amount', align: 'right', width: '95px' },
   ];
 
@@ -806,12 +984,6 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
     { header: 'Kode', accessor: 'kode', width: '88px' },
     { header: 'Nama Barang', accessor: 'namaBarang' },
     { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
-    {
-      header: 'Terima',
-      accessor: (r) => formatMoney(r.terima),
-      align: 'right',
-      width: '68px',
-    },
     {
       header: 'QTY',
       accessor: (r) => formatMoney(r.qty),
@@ -859,7 +1031,13 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
               onSimpan={handleToolbarSimpan}
               onBaru={handleAddNew}
               onKoreksi={handleEdit}
-              onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
+              onHapus={() => {
+                if (!selectedSq) {
+                  showFeedback('Pilih data yang akan dihapus');
+                  return;
+                }
+                setConfirmDeleteItem(selectedSq);
+              }}
               onPrint={() => handleOpenPrint()}
               onFind={handleFind}
               isBusy={isBusy}
@@ -889,28 +1067,32 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
 
         {/* Upper Table: List Sales Quotation */}
         <div className="flex-[1.35] min-h-[160px] overflow-auto bg-[#F0F0F0] border border-[#808080] mx-1.5 mt-1.5 relative shadow-inner">
-          <table className="w-full border-collapse text-left min-w-[1260px] text-[11px]">
+          <table className="w-full border-collapse text-left min-w-[1440px] text-[11px]">
             <thead className="sticky top-0 bg-[#ECE9D8] text-black font-normal border-b border-[#ACA899] z-10">
               <tr>
                 <th className="w-[22px] px-1 py-1 border-r border-[#ACA899] text-center bg-[#ECE9D8]" />
                 <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[95px]">No. SQ</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">Tanggal</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[195px]">Nama Customer</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[88px]">Sales</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[80px]">Tanggal</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">Berlaku s/d</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[185px]">Nama Customer</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[85px]">Sales</th>
                 <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[95px]">No. Inquiry</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[115px]">Lokasi Stock</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[145px]">Keterangan</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal text-right whitespace-nowrap w-[90px]">Amount</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[80px]">Dibuat Oleh</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">Tgl.Created</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[92px]">DiUpdate Oleh</th>
-                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[82px]">Tgl.Update</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[110px]">Lokasi Stock</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[135px]">Keterangan</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal text-right whitespace-nowrap w-[85px]">DPP</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal text-right whitespace-nowrap w-[75px]">PPN</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal text-right whitespace-nowrap w-[92px]">Amount</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal text-center whitespace-nowrap w-[70px]">Sts SO</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[78px]">Dibuat Oleh</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[80px]">Tgl.Created</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[86px]">DiUpdate Oleh</th>
+                <th className="px-2 py-1 border-r border-[#ACA899] font-normal whitespace-nowrap w-[80px]">Tgl.Update</th>
               </tr>
             </thead>
             <tbody>
               {filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="text-center py-8 text-gray-500 italic bg-white">
+                  <td colSpan={17} className="text-center py-8 text-gray-500 italic bg-white">
                     Tidak ada data Sales Quotation
                   </td>
                 </tr>
@@ -936,12 +1118,16 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                       </td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap font-mono">{item.noSq}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.tanggal}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.validUntil}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap font-medium">{item.namaCustomer}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.sales}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap font-mono">{item.noInquiry}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.lokasiStock}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.keterangan}</td>
-                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono">{item.amount}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono">{formatMoney(item.dpp)}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono">{formatMoney(item.nilaiPpn)}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono font-semibold">{item.amount}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-center whitespace-nowrap font-semibold">{item.stsSo}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.dibuatOleh}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.tglCreated}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.diUpdateOleh}</td>
@@ -958,22 +1144,21 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
         <div className="flex-1 min-h-[145px] flex flex-col mx-1.5 mt-1.5 mb-1 border border-[#808080] bg-white shadow-inner overflow-hidden">
           <div className="shrink-0 bg-[#E6E3D5] border-b border-[#ACA899] px-2.5 py-1 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="font-bold text-[#003C74] whitespace-nowrap">S.O. Detail</span>
+              <span className="font-bold text-[#003C74] whitespace-nowrap">Detail Penawaran</span>
               {selectedSq ? (
                 <span className="text-[11px] text-gray-800 truncate">
                   No. SQ: <b className="font-mono">{selectedSq.noSq}</b> | Customer:{' '}
-                  <b>{selectedSq.namaCustomer}</b> | Lokasi Stock:{' '}
-                  <b className="text-[#0055EA]">{selectedSq.lokasiStock}</b>
+                  <b>{selectedSq.namaCustomer}</b> | DPP: <b>{formatRupiah(selectedSq.dpp)}</b> | PPN ({selectedSq.ppn}%): <b>{formatRupiah(selectedSq.nilaiPpn)}</b>
                 </span>
               ) : (
                 <span className="text-[11px] text-gray-500 italic">
-                  Pilih Sales Quotation di atas untuk melihat S.O. Detail
+                  Pilih Sales Quotation di atas untuk melihat detail penawaran
                 </span>
               )}
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <span className="text-[11px] font-bold text-gray-900 font-mono">
-                Total: {formatRupiah(selectedDetailTotal)}
+                Subtotal: {formatRupiah(selectedDetailTotal)} | Nett: {formatRupiah(selectedSq?.amountNum || selectedDetailTotal)}
               </span>
               {selectedSq && (
                 <button
@@ -981,7 +1166,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                   onClick={() => handleOpenPrint('detail')}
                   className="px-2.5 py-0.5 bg-[#0055EA] hover:bg-blue-700 text-white border border-blue-900 rounded-xs text-[11px] font-semibold cursor-pointer"
                 >
-                  Print S.O. Detail
+                  Print Penawaran
                 </button>
               )}
             </div>
@@ -1006,16 +1191,14 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                 {selectedSqDetails.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="text-center py-5 text-gray-500 italic">
-                      Belum ada item S.O. Detail pada dokumen ini. Klik Koreksi atau Baru untuk menambahkan detail barang.
+                      Belum ada item detail pada dokumen ini. Klik Koreksi atau Baru untuk menambahkan detail barang.
                     </td>
                   </tr>
                 ) : (
                   selectedSqDetails.map((d, idx) => (
                     <tr
                       key={d.id}
-                      className={`border-b border-[#E5E5E5] ${
-                        idx % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'
-                      }`}
+                      className={`border-b border-[#E5E5E5] ${idx % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'}`}
                     >
                       <td className="px-2 py-1 border-r border-[#E5E5E5] text-center">{idx + 1}</td>
                       <td className="px-2 py-1 border-r border-[#E5E5E5] font-mono font-semibold">{d.kode}</td>
@@ -1076,7 +1259,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
         {/* Add / Koreksi Modal */}
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
-            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[920px] max-w-[97vw] max-h-[93vh] flex flex-col overflow-hidden">
+            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[940px] max-w-[97vw] max-h-[93vh] flex flex-col overflow-hidden">
               <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Sales Quotation' : 'Tambah Sales Quotation Baru'}</span>
                 <button
@@ -1091,27 +1274,49 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                 </button>
               </div>
               <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs overflow-y-auto">
-                {/* Header Fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <label className="font-semibold text-black shrink-0">No. SQ:</label>
                     <input
                       type="text"
                       value={newNoSq}
-                      onChange={(e) => setNewNoSq(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                      onChange={(e) => setNewNoSq(e.target.value.toUpperCase())}
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
                       required
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <label className="font-semibold text-black shrink-0">Tanggal:</label>
-                    <div className="w-64">
+                    <label className="font-semibold text-black shrink-0">Tanggal / Berlaku s/d:</label>
+                    <div className="w-64 grid grid-cols-2 gap-1.5">
                       <DatePickerInput
                         value={newTanggal}
                         onChange={(formatted) => setNewTanggal(formatted)}
                         format="dMyShort"
                       />
+                      <DatePickerInput
+                        value={newValidUntil}
+                        onChange={(formatted) => setNewValidUntil(formatted)}
+                        format="dMyShort"
+                      />
                     </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="font-semibold text-black shrink-0">No. Inquiry:</label>
+                    <select
+                      value={newNoInquiry}
+                      onChange={(e) => handleSelectInquiry(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                    >
+                      <option value="">-- Tarik dari No. Inquiry --</option>
+                      {inquiryDropdownChoices.map((noInq) => {
+                        const info = inquiryOptions.find((q) => q.noBukti === noInq);
+                        return (
+                          <option key={noInq} value={noInq}>
+                            {info && info.namaCustomer ? `${noInq} - ${info.namaCustomer}` : noInq}
+                          </option>
+                        );
+                      })}
+                    </select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <label className="font-semibold text-black shrink-0">Nama Customer:</label>
@@ -1145,24 +1350,6 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                     </select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <label className="font-semibold text-black shrink-0">No. Inquiry:</label>
-                    <select
-                      value={newNoInquiry}
-                      onChange={(e) => handleSelectInquiry(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
-                    >
-                      <option value="">-- Pilih No. Inquiry --</option>
-                      {inquiryDropdownChoices.map((noInq) => {
-                        const info = inquiryOptions.find((q) => q.noBukti === noInq);
-                        return (
-                          <option key={noInq} value={noInq}>
-                            {info && info.namaCustomer ? `${noInq} - ${info.namaCustomer}` : noInq}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
                     <label className="font-semibold text-black shrink-0">Lokasi Stock:</label>
                     <select
                       value={newLokasiStock}
@@ -1177,6 +1364,43 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                     </select>
                   </div>
                   <div className="flex items-center justify-between gap-2">
+                    <label className="font-semibold text-black shrink-0">Disc (%) / PPN (%):</label>
+                    <div className="w-64 grid grid-cols-2 gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={newDiscPct}
+                        onChange={(e) => setNewDiscPct(e.target.value)}
+                        className="px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                        title="Diskon %"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="any"
+                        value={newPpn}
+                        onChange={(e) => setNewPpn(e.target.value)}
+                        className="px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                        title="PPN %"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="font-semibold text-black shrink-0">Status SO:</label>
+                    <select
+                      value={newStsSo}
+                      onChange={(e) => setNewStsSo(e.target.value)}
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] cursor-pointer font-semibold"
+                    >
+                      <option value="Open">Open</option>
+                      <option value="Ordered">Ordered</option>
+                      <option value="Expired">Expired</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
                     <label className="font-semibold text-black shrink-0">Keterangan:</label>
                     <input
                       type="text"
@@ -1186,23 +1410,28 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <label className="font-semibold text-black shrink-0">Amount (Rp):</label>
+                    <label className="font-semibold text-black shrink-0">Nett Amount (Rp):</label>
                     <input
                       type="number"
-                      value={newAmount}
+                      value={
+                        detailRows.some((d) => d.kode.trim() || d.namaBarang.trim())
+                          ? modalCalc.grandTotal
+                          : newAmount
+                      }
                       onChange={(e) => setNewAmount(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                      readOnly={detailRows.some((d) => d.kode.trim() || d.namaBarang.trim())}
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right font-bold"
                     />
                   </div>
                 </div>
 
-                {/* S.O. Detail Section */}
+                {/* Detail Penawaran */}
                 <div className="border border-[#999999] bg-white rounded-xs overflow-hidden">
                   <div className="bg-[#E6E3D5] border-b border-[#C0C0C0] px-2.5 py-1.5 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-xs text-[#003C74]">S.O. Detail</span>
+                      <span className="font-bold text-xs text-[#003C74]">Detail Barang Penawaran</span>
                       <span className="text-[11px] text-gray-600">
-                        (Pilih Kode Barang dari Master Barang atau isi manual)
+                        (Harga otomatis terisi dari Master Barang / Inquiry)
                       </span>
                     </div>
                     <button
@@ -1213,7 +1442,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                       + Tambah Baris
                     </button>
                   </div>
-                  <div className="max-h-[210px] overflow-auto">
+                  <div className="max-h-[200px] overflow-auto">
                     <table className="w-full border-collapse text-left min-w-[820px]">
                       <thead className="sticky top-0 bg-[#F0F0F0] text-gray-800 font-semibold border-b border-[#C0C0C0] z-10 text-[11px]">
                         <tr>
@@ -1221,7 +1450,6 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                           <th className="px-1.5 py-1 border-r border-[#C0C0C0] w-36">Kode</th>
                           <th className="px-1.5 py-1 border-r border-[#C0C0C0]">Nama Barang</th>
                           <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-center w-16">Unit</th>
-                          <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-16">Terima</th>
                           <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-16">QTY</th>
                           <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-24">Harga</th>
                           <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-24">Jumlah</th>
@@ -1232,7 +1460,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                       <tbody>
                         {detailRows.length === 0 ? (
                           <tr>
-                            <td colSpan={10} className="text-center py-4 text-gray-500 italic text-[11px]">
+                            <td colSpan={9} className="text-center py-4 text-gray-500 italic text-[11px]">
                               Belum ada detail barang. Klik "+ Tambah Baris".
                             </td>
                           </tr>
@@ -1285,16 +1513,6 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                                 <td className="p-0.5 border-r border-[#E5E5E5]">
                                   <input
                                     type="number"
-                                    value={d.terima}
-                                    onChange={(e) =>
-                                      handleDetailFieldChange(d.id, 'terima', e.target.value)
-                                    }
-                                    className="w-full px-1 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-right font-mono text-[11px]"
-                                  />
-                                </td>
-                                <td className="p-0.5 border-r border-[#E5E5E5]">
-                                  <input
-                                    type="number"
                                     value={d.qty}
                                     onChange={(e) =>
                                       handleDetailFieldChange(d.id, 'qty', e.target.value)
@@ -1335,18 +1553,22 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                       </tbody>
                     </table>
                   </div>
-                  <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1 flex items-center justify-between text-[11px] font-bold">
+                  <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold">
                     <span>
-                      Jumlah Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}
+                      Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}
                     </span>
-                    <span className="font-mono text-[#003C74]">
-                      Total S.O. Detail: {formatRupiah(modalDetailTotal)}
-                    </span>
+                    <div className="flex items-center gap-4 font-mono">
+                      <span>Subtotal: {formatRupiah(modalCalc.subtotal)}</span>
+                      <span>Disc: {formatRupiah(modalCalc.nilaiDisc)}</span>
+                      <span>DPP: {formatRupiah(modalCalc.dpp)}</span>
+                      <span>PPN ({parseNum(newPpn)}%): {formatRupiah(modalCalc.nilaiPpn)}</span>
+                      <span className="text-[#003C74]">Grand Total: {formatRupiah(modalCalc.grandTotal)}</span>
+                    </div>
                   </div>
                 </div>
 
                 {/* Audit Section */}
-                <div className="border-t border-[#D0D0D0] pt-2.5 grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                <div className="border-t border-[#D0D0D0] pt-2 grid grid-cols-2 md:grid-cols-4 gap-2.5">
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">Dibuat Oleh:</label>
                     <input
@@ -1412,7 +1634,21 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
           </div>
         )}
 
-        {/* Find Modal: Cari & Daftar Sales Quotation */}
+        <ConfirmDialog
+          isOpen={Boolean(confirmDeleteItem)}
+          title="Konfirmasi Hapus Sales Quotation"
+          message={`Yakin ingin menghapus Sales Quotation [${confirmDeleteItem?.noSq || ''}]?`}
+          detail={
+            confirmDeleteItem
+              ? `Customer: ${confirmDeleteItem.namaCustomer}\nAmount: ${formatRupiah(confirmDeleteItem.amountNum)}`
+              : undefined
+          }
+          confirmLabel="Ya, Hapus"
+          isBusy={isBusy}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setConfirmDeleteItem(null)}
+        />
+
         <SupabaseFindModal
           isOpen={isFindOpen}
           onClose={() => setIsFindOpen(false)}
@@ -1454,18 +1690,17 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
             { header: 'Nama Customer', accessor: (r) => r.namaCustomer, bold: true },
             { header: 'Sales', accessor: (r) => r.sales || '-', widthClass: 'w-24' },
             { header: 'No. Inquiry', accessor: (r) => r.noInquiry || '-', widthClass: 'w-28', mono: true },
-            { header: 'Lokasi Stock', accessor: (r) => r.lokasiStock || '-', widthClass: 'w-28' },
+            { header: 'Status', accessor: (r) => r.stsSo || 'Open', widthClass: 'w-20', align: 'center' },
             { header: 'Amount', accessor: (r) => r.amount, widthClass: 'w-24', align: 'right', mono: true },
           ]}
         />
 
-        {/* Dual-mode Print Preview: List Sales Quotation & S.O. Detail */}
         <A4PrintPreviewModal
           isOpen={isPrintOpen}
           onClose={() => setIsPrintOpen(false)}
           title={
             printMode === 'detail'
-              ? 'SALES QUOTATION (S.O. DETAIL)'
+              ? 'PENAWARAN HARGA (SALES QUOTATION)'
               : 'LAPORAN LIST SALES QUOTATION'
           }
           subtitle={
@@ -1477,20 +1712,16 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
             printMode === 'detail' && selectedSq
               ? [
                   { label: 'No. SQ', value: selectedSq.noSq },
-                  { label: 'Tanggal', value: selectedSq.tanggal },
+                  { label: 'Tanggal / Berlaku s/d', value: `${selectedSq.tanggal} s/d ${selectedSq.validUntil}` },
                   { label: 'Nama Customer', value: selectedSq.namaCustomer },
                   { label: 'Sales', value: selectedSq.sales || '-' },
                   { label: 'No. Inquiry', value: selectedSq.noInquiry || '-' },
                   { label: 'Lokasi Stock', value: selectedSq.lokasiStock || '-' },
                   { label: 'Keterangan', value: selectedSq.keterangan || '-' },
-                  { label: 'Amount', value: formatRupiah(selectedSq.amountNum) },
-                  { label: 'Dibuat Oleh', value: selectedSq.dibuatOleh },
-                  { label: 'Tgl. Created', value: selectedSq.tglCreated || '-' },
-                  { label: 'DiUpdate Oleh', value: selectedSq.diUpdateOleh || '-' },
-                  { label: 'Tgl. Update', value: selectedSq.tglUpdate || '-' },
                 ]
               : []
           }
+          showSignatures={printMode === 'detail'}
           orientation="landscape"
           columns={
             printMode === 'detail'
@@ -1509,17 +1740,13 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
               : filteredList
           }
           summaryItems={
-            printMode === 'detail'
+            printMode === 'detail' && selectedSq
               ? [
-                  { label: 'Total Item', value: `${selectedSqDetails.length} Item` },
-                  {
-                    label: 'Total QTY',
-                    value: formatMoney(selectedSqDetails.reduce((acc, d) => acc + d.qty, 0)),
-                  },
-                  {
-                    label: 'Total S.O. Detail',
-                    value: formatRupiah(selectedDetailTotal > 0 ? selectedDetailTotal : selectedSq?.amountNum || 0),
-                  },
+                  { label: 'Subtotal', value: formatRupiah(selectedSq.subtotal || selectedDetailTotal) },
+                  { label: `Diskon (${selectedSq.discPct}%)`, value: formatRupiah(selectedSq.nilaiDisc) },
+                  { label: 'DPP', value: formatRupiah(selectedSq.dpp) },
+                  { label: `PPN (${selectedSq.ppn}%)`, value: formatRupiah(selectedSq.nilaiPpn) },
+                  { label: 'Total Penawaran', value: formatRupiah(selectedSq.amountNum) },
                 ]
               : [
                   { label: 'Total Quotation', value: `${filteredList.length} Dokumen` },
@@ -1540,7 +1767,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                   { label: 'Tanggal', value: selectedSq.tanggal },
                   { label: 'Customer', value: selectedSq.namaCustomer },
                   { label: 'Sales', value: selectedSq.sales || '-' },
-                  { label: 'Amount', value: formatRupiah(selectedSq.amountNum) },
+                  { label: 'DPP / PPN / Total', value: `${formatRupiah(selectedSq.dpp)} + ${formatRupiah(selectedSq.nilaiPpn)} = ${formatRupiah(selectedSq.amountNum)}` },
                 ]
               : undefined
           }

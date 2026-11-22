@@ -1467,8 +1467,8 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                         new Set(
                           [...supplierOptions, newSupplier.trim().toUpperCase()].filter(Boolean)
                         )
-                      ).map((namaSupplier) => (
-                        <option key={namaSupplier} value={namaSupplier}>
+                      ).map((namaSupplier, idx) => (
+                        <option key={`${namaSupplier}-${idx}`} value={namaSupplier}>
                           {namaSupplier}
                         </option>
                       ))}
@@ -1672,7 +1672,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                               new Set([...barangOptions.map((b) => b.kode), d.kode].filter(Boolean))
                             );
                             return (
-                              <tr key={d.id} className="border-b border-[#E5E5E5] text-[11px]">
+                              <tr key={d.id ? `${d.id}-${idx}` : `row-${idx}`} className="border-b border-[#E5E5E5] text-[11px]">
                                 <td className="px-1.5 py-1 border-r border-[#E5E5E5] text-center">{idx + 1}</td>
                                 <td className="p-0.5 border-r border-[#E5E5E5]">
                                   <select

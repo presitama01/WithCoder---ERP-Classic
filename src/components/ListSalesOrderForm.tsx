@@ -3,6 +3,7 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
   erpCompositeSave,
   erpDelete,
@@ -28,9 +29,14 @@ export interface SalesOrderItem {
   noBukti: string;
   tanggal: string;
   tanggalIso: string;
+  noSq: string;
   namaCustomer: string;
   sales: string;
   poNo: string;
+  subtotal: number;
+  discPct: number;
+  nilaiDisc: number;
+  dpp: number;
   nilaiSo: string;
   nilaiSoNum: number;
   deposit: string;
@@ -41,6 +47,7 @@ export interface SalesOrderItem {
   ppnPct: number;
   nilaiPpn: string;
   nilaiPpnNum: number;
+  isPpnIncluded: boolean;
   soClose: string;
   lokasiStock: string;
   dibuatOleh: string;
@@ -71,9 +78,16 @@ interface MasterCustomerOption {
   piutang: number;
 }
 
-interface PurchaseOrderOption {
-  noBukti: string;
-  namaSupplier: string;
+interface SalesQuotationRefOption {
+  id: string;
+  noSq: string;
+  namaCustomer: string;
+  sales: string;
+  lokasiStock: string;
+  keterangan: string;
+  discPct: number;
+  ppn: number;
+  stsSo: string;
 }
 
 interface MasterBarangOption {
@@ -90,29 +104,64 @@ interface ListSalesOrderFormProps {
   onOpenDetail?: () => void;
 }
 
-function calcPpnDeduction(
-  grossTotal: number,
-  ppnPct: number
-): { nominalPpn: number; netNilaiSo: number } {
-  const safeGross = Math.max(0, Number(grossTotal || 0));
-  const safePct = Math.max(0, Number(ppnPct || 0));
-  const nominalPpn = Number(((safeGross * safePct) / 100).toFixed(2));
-  const netNilaiSo = Math.max(0, Number((safeGross - nominalPpn).toFixed(2)));
-  return { nominalPpn, netNilaiSo };
+function calcSalesOrderTotals(
+  grossSubtotal: number,
+  discPct: number,
+  ppnPct: number,
+  isPpnIncluded: boolean
+): {
+  subtotal: number;
+  nilaiDisc: number;
+  dpp: number;
+  nominalPpn: number;
+  grandTotal: number;
+} {
+  const subtotal = Math.max(0, Number(grossSubtotal || 0));
+  const safeDisc = Math.max(0, Math.min(100, Number(discPct || 0)));
+  const safePpn = Math.max(0, Number(ppnPct || 0));
+  const nilaiDisc = Math.round((subtotal * safeDisc) / 100);
+  const afterDisc = Math.max(0, subtotal - nilaiDisc);
+
+  if (isPpnIncluded && safePpn > 0) {
+    const dpp = Math.round(afterDisc / (1 + safePpn / 100));
+    const nominalPpn = Math.max(0, afterDisc - dpp);
+    return {
+      subtotal,
+      nilaiDisc,
+      dpp,
+      nominalPpn,
+      grandTotal: afterDisc,
+    };
+  }
+
+  const dpp = afterDisc;
+  const nominalPpn = Math.round((dpp * safePpn) / 100);
+  const grandTotal = dpp + nominalPpn;
+  return { subtotal, nilaiDisc, dpp, nominalPpn, grandTotal };
 }
 
 function mapDbToSo(r: any): SalesOrderItem {
   const nilaiNum = Number(r.nilai_so || 0);
   const ppnPct = Number(r.ppn ?? 11);
   const nilaiPpnNum = Number(r.nilai_ppn || 0);
+  const discPctNum = Number(r.disc_pct || 0);
+  const nilaiDiscNum = Number(r.nilai_disc || 0);
+  const dppNum = Number(r.dpp ?? Math.max(0, nilaiNum - nilaiPpnNum));
+  const subtotalNum = Number(r.subtotal ?? dppNum + nilaiDiscNum);
+
   return {
     id: r.id,
     noBukti: r.no_bukti || '',
     tanggal: toDisplayDMyShort(r.tanggal),
     tanggalIso: toIsoDate(r.tanggal) || '',
+    noSq: r.no_sq || '',
     namaCustomer: r.nama_customer || '',
     sales: r.sales || '',
     poNo: r.po_no || '',
+    subtotal: subtotalNum,
+    discPct: discPctNum,
+    nilaiDisc: nilaiDiscNum,
+    dpp: dppNum,
     nilaiSo: formatMoney(nilaiNum),
     nilaiSoNum: nilaiNum,
     deposit: Number(r.deposit || 0) > 0 ? formatMoney(r.deposit) : '-',
@@ -123,9 +172,10 @@ function mapDbToSo(r: any): SalesOrderItem {
     ppnPct,
     nilaiPpn: formatMoney(nilaiPpnNum),
     nilaiPpnNum,
+    isPpnIncluded: Boolean(r.is_ppn_included),
     soClose: r.so_close || 'Not Yet',
     lokasiStock: r.lokasi_stock || '01 - OFFICE',
-    dibuatOleh: r.dibuat_oleh || (getCurrentUser().username || 'ADMIN'),
+    dibuatOleh: r.dibuat_oleh || getCurrentUser().username || 'ADMIN',
     tglCreated: toDisplayDMyShort(r.tgl_created),
     diupdateOleh: r.diupdate_oleh || '-',
     tglUpdate: toDisplayDMyShort(r.tgl_update) || '-',
@@ -174,6 +224,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 }) => {
   const [soList, setSoList] = useState<SalesOrderItem[]>([]);
   const [soDetailsMap, setSoDetailsMap] = useState<Record<string, SalesOrderDetailItem[]>>({});
+  const [linkedSjMap, setLinkedSjMap] = useState<Record<string, string[]>>({});
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
@@ -188,6 +239,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [printMode, setPrintMode] = useState<'list' | 'detail'>('list');
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<SalesOrderItem | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [customerOptions, setCustomerOptions] = useState<MasterCustomerOption[]>([]);
@@ -196,15 +248,19 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const [defaultCompanyPpn, setDefaultCompanyPpn] = useState<number>(11);
   const [overrideCreditLimit, setOverrideCreditLimit] = useState<boolean>(false);
   const [showCreditOverrideBox, setShowCreditOverrideBox] = useState<boolean>(false);
-  const [poOptions, setPoOptions] = useState<PurchaseOrderOption[]>([]);
+  const [sqOptions, setSqOptions] = useState<SalesQuotationRefOption[]>([]);
+  const [sqDetailsByIdMap, setSqDetailsByIdMap] = useState<Record<string, any[]>>({});
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
 
   const [newNoBukti, setNewNoBukti] = useState<string>('');
   const [newTanggal, setNewTanggal] = useState<string>('');
+  const [newNoSq, setNewNoSq] = useState<string>('');
   const [newCustomer, setNewCustomer] = useState<string>('');
   const [newSales, setNewSales] = useState<string>('');
   const [newPoNo, setNewPoNo] = useState<string>('');
+  const [newDiscPct, setNewDiscPct] = useState<string>('0');
+  const [newIsPpnIncluded, setNewIsPpnIncluded] = useState<boolean>(false);
   const [newNilaiSo, setNewNilaiSo] = useState<string>('0');
   const [newDeposit, setNewDeposit] = useState<string>('0');
   const [newTglKirim, setNewTglKirim] = useState<string>('');
@@ -223,17 +279,20 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
+    setTimeout(() => setFeedback(null), 2800);
   };
 
   const loadMasterReferences = async () => {
-    const [custRes, salesRes, poRes, lokasiRes, barangRes] = await Promise.allSettled([
-      erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
-      erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
-      erpList<any>('purchase_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }),
-      erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 1000 }),
-      erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
-    ]);
+    const [custRes, salesRes, sqRes, sqDetRes, sjRes, lokasiRes, barangRes] =
+      await Promise.allSettled([
+        erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
+        erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
+        erpList<any>('sales_quotations', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+        erpList<any>('sales_quotation_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
+        erpList<any>('surat_jalans', { limit: 2000 }),
+        erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 1000 }),
+        erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
+      ]);
 
     if (custRes.status === 'fulfilled') {
       const custMap = new Map<string, MasterCustomerOption>();
@@ -269,17 +328,51 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       setSalesOptions(uniqueSales);
     }
 
-    if (poRes.status === 'fulfilled') {
-      const poMap = new Map<string, PurchaseOrderOption>();
-      for (const p of poRes.value) {
-        const noBukti = String(p.no_bukti || '').trim().toUpperCase();
-        if (!noBukti) continue;
-        poMap.set(noBukti, {
-          noBukti,
-          namaSupplier: String(p.nama_supplier || '').trim().toUpperCase(),
-        });
+    if (sqRes.status === 'fulfilled') {
+      const sqs: SalesQuotationRefOption[] = sqRes.value
+        .map((q: any) => ({
+          id: String(q.id || ''),
+          noSq: String(q.no_sq || '').trim().toUpperCase(),
+          namaCustomer: String(q.nama_customer || '').trim().toUpperCase(),
+          sales: String(q.sales || '').trim().toUpperCase(),
+          lokasiStock: String(q.lokasi_stock || '01 - OFFICE').trim().toUpperCase(),
+          keterangan: String(q.keterangan || '').trim(),
+          discPct: Number(q.disc_pct || 0),
+          ppn: Number(q.ppn ?? 11),
+          stsSo: String(q.sts_so || 'Open').trim(),
+        }))
+        .filter((q: SalesQuotationRefOption) => Boolean(q.noSq));
+      setSqOptions(sqs);
+    }
+
+    if (sqDetRes.status === 'fulfilled') {
+      const grouped: Record<string, any[]> = {};
+      for (const d of sqDetRes.value) {
+        const keyId = String(d.sq_id || '');
+        const keyNo = String(d.no_sq || '').trim().toUpperCase();
+        if (keyId) {
+          if (!grouped[keyId]) grouped[keyId] = [];
+          grouped[keyId].push(d);
+        }
+        if (keyNo) {
+          if (!grouped[keyNo]) grouped[keyNo] = [];
+          grouped[keyNo].push(d);
+        }
       }
-      setPoOptions(Array.from(poMap.values()));
+      setSqDetailsByIdMap(grouped);
+    }
+
+    if (sjRes.status === 'fulfilled') {
+      const sjBySo: Record<string, string[]> = {};
+      for (const sj of sjRes.value) {
+        const noSoKey = String(sj.no_so || '').trim().toUpperCase();
+        const sjNo = String(sj.no_bukti || '').trim().toUpperCase();
+        if (noSoKey && sjNo) {
+          if (!sjBySo[noSoKey]) sjBySo[noSoKey] = [];
+          sjBySo[noSoKey].push(sjNo);
+        }
+      }
+      setLinkedSjMap(sjBySo);
     }
 
     if (lokasiRes.status === 'fulfilled') {
@@ -299,7 +392,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         )
       );
       setLokasiOptions(lokasis);
-      return { defaultLokasi: lokasis[0] || '01 - OFFICE' };
     }
 
     if (barangRes.status === 'fulfilled') {
@@ -315,13 +407,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         .filter((b: MasterBarangOption) => b.kode);
       setBarangOptions(mappedBarangs);
     }
-    return { defaultLokasi: lokasiOptions[0] || '01 - OFFICE' };
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
     Kode: 'no_bukti',
     'Nama Pelanggan': 'nama_customer',
     'No.Bukti': 'no_bukti',
+    'No. SQ': 'no_sq',
     Sales: 'sales',
     'PO.NO': 'po_no',
     'Lokasi Stock': 'lokasi_stock',
@@ -404,16 +496,21 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       const existingDetails = soDetailsMap[selected.id] || [];
       const totalFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
       const ppnPct = Math.max(0, Number(selected.ppnPct || 0));
+      let calc = calcSalesOrderTotals(
+        existingDetails.length > 0 ? totalFromDetails : selected.subtotal,
+        selected.discPct,
+        ppnPct,
+        selected.isPpnIncluded
+      );
       let finalNilaiPpn = Math.max(0, Number(selected.nilaiPpnNum || 0));
       let finalNilaiSo = Number(selected.nilaiSoNum || 0);
 
       if (existingDetails.length > 0) {
         if (finalNilaiPpn <= 0 && ppnPct > 0) {
-          const calc = calcPpnDeduction(totalFromDetails, ppnPct);
           finalNilaiPpn = calc.nominalPpn;
-          finalNilaiSo = calc.netNilaiSo;
+          finalNilaiSo = calc.grandTotal;
         } else {
-          finalNilaiSo = Math.max(0, Number((totalFromDetails - finalNilaiPpn).toFixed(2)));
+          finalNilaiSo = calc.dpp + finalNilaiPpn;
         }
       }
 
@@ -421,9 +518,14 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         id: selected.id,
         no_bukti: selected.noBukti.trim().toUpperCase(),
         tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+        no_sq: selected.noSq.trim().toUpperCase(),
         nama_customer: selected.namaCustomer.trim().toUpperCase(),
         sales: selected.sales.trim().toUpperCase(),
         po_no: selected.poNo.trim().toUpperCase(),
+        subtotal: calc.subtotal,
+        disc_pct: selected.discPct,
+        nilai_disc: calc.nilaiDisc,
+        dpp: calc.dpp,
         nilai_so: finalNilaiSo,
         deposit: selected.deposit === '-' ? 0 : parseNum(selected.deposit),
         tgl_kirim: selected.tglKirim && selected.tglKirim !== '-' ? toIsoDate(selected.tglKirim) : null,
@@ -431,6 +533,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         keterangan: selected.keterangan.trim(),
         ppn: ppnPct,
         nilai_ppn: finalNilaiPpn,
+        is_ppn_included: selected.isPpnIncluded,
         so_close: selected.soClose || 'Not Yet',
         lokasi_stock: selected.lokasiStock.trim().toUpperCase() || '01 - OFFICE',
         dibuat_oleh: selected.dibuatOleh.trim().toUpperCase() || currentUser,
@@ -451,7 +554,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         total: Number(d.total || 0),
       }));
 
-      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+      const res = await erpCompositeSave<{ header: any; details: any[]; detailWarning?: string }>(
         'sales-order',
         headerPayload,
         detailPayloads
@@ -460,7 +563,11 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       const savedDetails = (res.details || []).map((d, idx) => mapDbToSoDetail(d, idx));
       setSoList((prev) => prev.map((item) => (item.id === selected.id ? savedHeader : item)));
       setSoDetailsMap((prev) => ({ ...prev, [savedHeader.id]: savedDetails }));
-      showFeedback(`Sales Order [${savedHeader.noBukti}] berhasil disimpan`);
+      showFeedback(
+        res.detailWarning
+          ? `SO [${savedHeader.noBukti}] disimpan (${res.detailWarning})`
+          : `Sales Order [${savedHeader.noBukti}] berhasil disimpan`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -497,9 +604,29 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     [detailRows]
   );
 
-  const modalNominalPpn = useMemo(() => parseNum(newNilaiPpn), [newNilaiPpn]);
+  const modalTotals = useMemo(() => {
+    const gross = hasFilledDetailRows ? modalDetailTotal : parseNum(newNilaiSo);
+    return calcSalesOrderTotals(gross, parseNum(newDiscPct), parseNum(newPpn), newIsPpnIncluded);
+  }, [hasFilledDetailRows, modalDetailTotal, newNilaiSo, newDiscPct, newPpn, newIsPpnIncluded]);
 
   if (!isOpen) return null;
+
+  const recalcFromModalInputs = (
+    grossSub: number,
+    discPctVal: number,
+    ppnPctVal: number,
+    inclVal: boolean,
+    manualOverride: boolean,
+    manualPpnVal: number
+  ) => {
+    const c = calcSalesOrderTotals(grossSub, discPctVal, ppnPctVal, inclVal);
+    if (manualOverride && !inclVal) {
+      setNewNilaiSo(String(c.dpp + Math.max(0, manualPpnVal)));
+    } else {
+      setNewNilaiPpn(String(c.nominalPpn));
+      setNewNilaiSo(String(c.grandTotal));
+    }
+  };
 
   const updateDetailRowsWithSync = (
     updater: (prev: SalesOrderDetailItem[]) => SalesOrderDetailItem[]
@@ -509,14 +636,14 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       const hasFilledRow = next.some((r) => r.kode.trim() || r.namaBarang.trim());
       if (hasFilledRow) {
         const sum = next.reduce((acc, r) => acc + r.total, 0);
-        if (ppnManualOverride) {
-          const manualPpn = parseNum(newNilaiPpn);
-          setNewNilaiSo(String(Math.max(0, Number((sum - manualPpn).toFixed(2)))));
-        } else {
-          const { nominalPpn, netNilaiSo } = calcPpnDeduction(sum, parseNum(newPpn));
-          setNewNilaiPpn(String(nominalPpn));
-          setNewNilaiSo(String(netNilaiSo));
-        }
+        recalcFromModalInputs(
+          sum,
+          parseNum(newDiscPct),
+          parseNum(newPpn),
+          newIsPpnIncluded,
+          ppnManualOverride,
+          parseNum(newNilaiPpn)
+        );
       }
       return next;
     });
@@ -527,13 +654,33 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setPpnManualOverride(false);
     const pct = parseNum(rawVal);
     if (hasFilledDetailRows) {
-      const { nominalPpn, netNilaiSo } = calcPpnDeduction(modalDetailTotal, pct);
-      setNewNilaiPpn(String(nominalPpn));
-      setNewNilaiSo(String(netNilaiSo));
+      recalcFromModalInputs(modalDetailTotal, parseNum(newDiscPct), pct, newIsPpnIncluded, false, 0);
     } else {
-      const currentNilaiSo = parseNum(newNilaiSo);
-      const nominalPpn = Number(((Math.max(0, currentNilaiSo) * Math.max(0, pct)) / 100).toFixed(2));
+      const currentDpp = parseNum(newNilaiSo);
+      const nominalPpn = Math.round((Math.max(0, currentDpp) * Math.max(0, pct)) / 100);
       setNewNilaiPpn(String(nominalPpn));
+    }
+  };
+
+  const handleDiscPctChange = (rawVal: string) => {
+    setNewDiscPct(rawVal);
+    if (hasFilledDetailRows) {
+      recalcFromModalInputs(
+        modalDetailTotal,
+        parseNum(rawVal),
+        parseNum(newPpn),
+        newIsPpnIncluded,
+        ppnManualOverride,
+        parseNum(newNilaiPpn)
+      );
+    }
+  };
+
+  const handleTogglePpnIncluded = (checked: boolean) => {
+    setNewIsPpnIncluded(checked);
+    setPpnManualOverride(false);
+    if (hasFilledDetailRows) {
+      recalcFromModalInputs(modalDetailTotal, parseNum(newDiscPct), parseNum(newPpn), checked, false, 0);
     }
   };
 
@@ -542,7 +689,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setPpnManualOverride(true);
     if (hasFilledDetailRows) {
       const manualPpn = Math.max(0, parseNum(rawVal));
-      setNewNilaiSo(String(Math.max(0, Number((modalDetailTotal - manualPpn).toFixed(2)))));
+      const c = calcSalesOrderTotals(modalDetailTotal, parseNum(newDiscPct), parseNum(newPpn), false);
+      setNewNilaiSo(String(c.dpp + manualPpn));
     }
   };
 
@@ -552,9 +700,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const handleRemoveDetailRow = (rowId: string) => {
     updateDetailRowsWithSync((prev) =>
-      prev
-        .filter((r) => r.id !== rowId)
-        .map((r, idx) => ({ ...r, noUrut: idx + 1 }))
+      prev.filter((r) => r.id !== rowId).map((r, idx) => ({ ...r, noUrut: idx + 1 }))
     );
   };
 
@@ -623,11 +769,52 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setShowCreditOverrideBox(false);
     const foundCust = customerOptions.find((c) => c.namaCustomer === customerName);
     if (foundCust) {
-      if (foundCust.sales) {
-        setNewSales(foundCust.sales);
-      }
+      if (foundCust.sales) setNewSales(foundCust.sales);
       const nextPpnPct = foundCust.ppn ? defaultCompanyPpn : 0;
       handlePpnPercentChange(String(nextPpnPct));
+    }
+  };
+
+  const handleSelectSalesQuotation = (selectedNoSq: string) => {
+    const cleanSq = selectedNoSq.trim().toUpperCase();
+    setNewNoSq(cleanSq);
+    if (!cleanSq) return;
+
+    const sq = sqOptions.find((q) => q.noSq === cleanSq);
+    if (sq) {
+      if (sq.namaCustomer) setNewCustomer(sq.namaCustomer);
+      if (sq.sales) setNewSales(sq.sales);
+      if (sq.lokasiStock) setNewLokasiStock(sq.lokasiStock);
+      if (sq.keterangan) setNewKeterangan(sq.keterangan);
+      setNewDiscPct(String(sq.discPct || 0));
+      setNewPpn(String(sq.ppn ?? defaultCompanyPpn));
+      setPpnManualOverride(false);
+
+      const sqDets = sqDetailsByIdMap[sq.id] || sqDetailsByIdMap[sq.noSq] || [];
+      if (sqDets.length > 0) {
+        const mappedRows: SalesOrderDetailItem[] = sqDets.map((d: any, idx: number) => {
+          const qty = Number(d.qty || 1);
+          const harga = Number(d.harga || 0);
+          const jumlah = Number(d.jumlah ?? qty * harga);
+          const total = Number(d.total ?? jumlah);
+          return {
+            id: `sq-fill-${Date.now()}-${idx}`,
+            noUrut: idx + 1,
+            kode: String(d.kode || '').trim().toUpperCase(),
+            namaBarang: String(d.nama_barang || '').trim(),
+            unit: String(d.unit || 'PCS').trim().toUpperCase(),
+            terima: 0,
+            qty,
+            harga,
+            jumlah,
+            total,
+          };
+        });
+        setDetailRows(mappedRows);
+        const sum = mappedRows.reduce((s, r) => s + r.total, 0);
+        recalcFromModalInputs(sum, sq.discPct || 0, sq.ppn ?? defaultCompanyPpn, newIsPpnIncluded, false, 0);
+        showFeedback(`${mappedRows.length} item dimuat dari Sales Quotation [${cleanSq}]`);
+      }
     }
   };
 
@@ -640,9 +827,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setShowCreditOverrideBox(false);
     setNewNoBukti(nextUniqueCode(soList.map((s) => s.noBukti), '2608-SO-', 3));
     setNewTanggal(todayDisp);
+    setNewNoSq('');
     setNewCustomer('');
     setNewSales('');
     setNewPoNo('');
+    setNewDiscPct('0');
+    setNewIsPpnIncluded(false);
     setNewNilaiSo('0');
     setNewDeposit('0');
     setNewTglKirim(todayDisp);
@@ -659,13 +849,9 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    const [defPpn, refInfo] = await Promise.all([
-      fetchDefaultPpnRate(),
-      loadMasterReferences(),
-    ]);
+    const [defPpn] = await Promise.all([fetchDefaultPpnRate(), loadMasterReferences()]);
     setDefaultCompanyPpn(defPpn);
     setNewPpn(String(defPpn));
-    if (refInfo?.defaultLokasi) setNewLokasiStock(refInfo.defaultLokasi);
   };
 
   const handleEdit = async () => {
@@ -682,9 +868,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setShowCreditOverrideBox(false);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal || todayDisp);
+    setNewNoSq(item.noSq || '');
     setNewCustomer(item.namaCustomer);
     setNewSales(item.sales);
     setNewPoNo(item.poNo);
+    setNewDiscPct(String(item.discPct || 0));
+    setNewIsPpnIncluded(Boolean(item.isPpnIncluded));
     setNewDeposit(String(parseNum(item.deposit)));
     setNewTglKirim(item.tglKirim === '-' ? '' : item.tglKirim);
     setNewPersen(String(parseNum(item.persen)));
@@ -703,15 +892,20 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     const existingDetails = soDetailsMap[item.id] || [];
     const existingDetailSum = existingDetails.reduce((acc, d) => acc + d.total, 0);
     if (existingDetails.length > 0) {
-      const autoCalc = calcPpnDeduction(existingDetailSum, pctVal);
+      const autoCalc = calcSalesOrderTotals(
+        existingDetailSum,
+        item.discPct || 0,
+        pctVal,
+        Boolean(item.isPpnIncluded)
+      );
       if (item.nilaiPpnNum > 0) {
         const isManual = Math.abs(item.nilaiPpnNum - autoCalc.nominalPpn) > 1;
         setNewNilaiPpn(String(item.nilaiPpnNum));
-        setNewNilaiSo(String(Math.max(0, Number((existingDetailSum - item.nilaiPpnNum).toFixed(2)))));
+        setNewNilaiSo(String(autoCalc.dpp + item.nilaiPpnNum));
         setPpnManualOverride(isManual);
       } else {
         setNewNilaiPpn(String(autoCalc.nominalPpn));
-        setNewNilaiSo(String(autoCalc.netNilaiSo));
+        setNewNilaiSo(String(autoCalc.grandTotal));
         setPpnManualOverride(false);
       }
     } else {
@@ -725,6 +919,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         ? existingDetails.map((d, idx) => ({ ...d, noUrut: idx + 1 }))
         : [createBlankDetailRow(1)]
     );
+
+    const linkedSjs = linkedSjMap[item.noBukti.trim().toUpperCase()] || [];
+    if (linkedSjs.length > 0 || item.soClose === 'Closed') {
+      showFeedback(
+        `Perhatian: SO [${item.noBukti}] sudah berstatus ${item.soClose} / memiliki Surat Jalan (${linkedSjs.join(', ') || '-'})`
+      );
+    }
 
     setIsAddOpen(true);
     await loadMasterReferences();
@@ -743,21 +944,35 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     );
     const totalFromDetails = activeDetails.reduce((acc, d) => acc + d.total, 0);
     const ppnPct = Math.max(0, parseNum(newPpn));
+    const discPctVal = Math.max(0, parseNum(newDiscPct));
+    const calc = calcSalesOrderTotals(
+      activeDetails.length > 0 ? totalFromDetails : parseNum(newNilaiSo),
+      discPctVal,
+      ppnPct,
+      newIsPpnIncluded
+    );
+
     let finalNilaiPpn = Math.max(0, parseNum(newNilaiPpn));
     let finalNilaiSo = parseNum(newNilaiSo);
+    let finalDpp = calc.dpp;
 
     if (activeDetails.length > 0) {
-      if (ppnManualOverride) {
-        finalNilaiSo = Math.max(0, Number((totalFromDetails - finalNilaiPpn).toFixed(2)));
+      if (ppnManualOverride && !newIsPpnIncluded) {
+        finalNilaiSo = calc.dpp + finalNilaiPpn;
       } else {
-        const calc = calcPpnDeduction(totalFromDetails, ppnPct);
         finalNilaiPpn = calc.nominalPpn;
-        finalNilaiSo = calc.netNilaiSo;
+        finalNilaiSo = calc.grandTotal;
       }
+    } else if (!ppnManualOverride && ppnPct > 0) {
+      finalNilaiPpn = Math.round((Math.max(0, finalNilaiSo) * ppnPct) / 100);
+      finalDpp = finalNilaiSo;
+      finalNilaiSo = finalDpp + finalNilaiPpn;
     }
 
     if (!overrideCreditLimit) {
-      const custMeta = customerOptions.find((c) => c.namaCustomer === newCustomer.trim().toUpperCase());
+      const custMeta = customerOptions.find(
+        (c) => c.namaCustomer === newCustomer.trim().toUpperCase()
+      );
       if (custMeta && custMeta.limitKredit > 0 && custMeta.piutang + finalNilaiSo > custMeta.limitKredit) {
         setShowCreditOverrideBox(true);
         setModalError(
@@ -785,9 +1000,14 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       const baseHeader: Record<string, any> = {
         no_bukti: newNoBukti.trim().toUpperCase(),
         tanggal: toIsoDate(newTanggal) || todayIso(),
+        no_sq: newNoSq.trim().toUpperCase(),
         nama_customer: newCustomer.trim().toUpperCase(),
         sales: newSales.trim().toUpperCase(),
         po_no: newPoNo.trim().toUpperCase(),
+        subtotal: calc.subtotal,
+        disc_pct: discPctVal,
+        nilai_disc: calc.nilaiDisc,
+        dpp: finalDpp,
         nilai_so: finalNilaiSo,
         deposit: parseNum(newDeposit),
         tgl_kirim: toIsoDate(newTglKirim),
@@ -795,6 +1015,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         keterangan: newKeterangan.trim(),
         ppn: ppnPct,
         nilai_ppn: finalNilaiPpn,
+        is_ppn_included: newIsPpnIncluded,
         so_close: newSoClose,
         lokasi_stock: newLokasiStock.trim().toUpperCase() || '01 - OFFICE',
         dibuat_oleh: newDibuatOleh.trim().toUpperCase() || currentUser,
@@ -824,7 +1045,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         total: Number(d.total || 0),
       }));
 
-      const res = await erpCompositeSave<{ header: any; details: any[] }>(
+      const res = await erpCompositeSave<{ header: any; details: any[]; detailWarning?: string }>(
         'sales-order',
         baseHeader,
         detailPayloads
@@ -835,11 +1056,19 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
       if (editingId) {
         setSoList((prev) => prev.map((item) => (item.id === editingId ? savedHeader : item)));
-        showFeedback('Sales Order & S.O. Detail diperbarui (PPN tersimpan)');
+        showFeedback(
+          res.detailWarning
+            ? `SO diperbarui (${res.detailWarning})`
+            : 'Sales Order & S.O. Detail diperbarui (DPP + PPN tersimpan)'
+        );
       } else {
         setSoList((prev) => [savedHeader, ...prev]);
         setSelectedId(savedHeader.id);
-        showFeedback('Sales Order & S.O. Detail tersimpan (PPN tersimpan)');
+        showFeedback(
+          res.detailWarning
+            ? `SO tersimpan (${res.detailWarning})`
+            : 'Sales Order tersimpan (DPP + PPN + qty_so tersinkron)'
+        );
       }
 
       setSoDetailsMap((prev) => ({
@@ -850,11 +1079,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      const rawMsg = err?.message || 'Gagal menyimpan Sales Order';
-      const msg =
-        rawMsg.includes('nilai_ppn') && rawMsg.toLowerCase().includes('schema cache')
-          ? `${rawMsg} — Jalankan SQL Query penambahan kolom "nilai_ppn" pada tabel sales_orders di Supabase SQL Editor.`
-          : rawMsg;
+      const msg = err?.message || 'Gagal menyimpan Sales Order';
       setModalError(msg);
       showFeedback(`Gagal simpan: ${msg}`);
     } finally {
@@ -862,22 +1087,39 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const requestDeleteSelected = () => {
+    if (!selectedSo) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
+    const linkedSjs = linkedSjMap[selectedSo.noBukti.trim().toUpperCase()] || [];
+    if (linkedSjs.length > 0) {
+      showFeedback(
+        `Tidak bisa hapus: SO [${selectedSo.noBukti}] sudah memiliki Surat Jalan (${linkedSjs.join(', ')})`
+      );
+      return;
+    }
+    setConfirmDeleteItem(selectedSo);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteItem) return;
     try {
       setIsBusy(true);
-      await erpDelete('sales_order_details', id, 'so_id').catch(() => {});
-      await erpDelete('sales_orders', id);
-      const updated = soList.filter((item) => item.id !== id);
+      await erpDelete('sales_order_details', confirmDeleteItem.id, 'so_id').catch(() => {});
+      await erpDelete('sales_orders', confirmDeleteItem.id);
+      const updated = soList.filter((item) => item.id !== confirmDeleteItem.id);
       setSoList(updated);
       setSoDetailsMap((prev) => {
         const copy = { ...prev };
-        delete copy[id];
+        delete copy[confirmDeleteItem.id];
         return copy;
       });
-      if (selectedId === id) {
+      if (selectedId === confirmDeleteItem.id) {
         setSelectedId(updated[0]?.id || '');
       }
-      showFeedback('Sales Order dihapus');
+      setConfirmDeleteItem(null);
+      showFeedback('Sales Order dihapus & qty_so disesuaikan');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -892,27 +1134,17 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     if (searchField === 'Kode' || searchField === 'No.Bukti') {
       return matchesMultiKeyword([item.noBukti], searchTerm);
     }
-    if (searchField === 'Nama Pelanggan') {
-      return matchesMultiKeyword([item.namaCustomer], searchTerm);
-    }
-    if (searchField === 'Sales') {
-      return matchesMultiKeyword([item.sales], searchTerm);
-    }
-    if (searchField === 'PO.NO') {
-      return matchesMultiKeyword([item.poNo], searchTerm);
-    }
-    if (searchField === 'Lokasi Stock') {
-      return matchesMultiKeyword([item.lokasiStock], searchTerm);
-    }
-    if (searchField === 'Keterangan') {
-      return matchesMultiKeyword([item.keterangan], searchTerm);
-    }
-    if (searchField === 'SO.Close') {
-      return matchesMultiKeyword([item.soClose], searchTerm);
-    }
+    if (searchField === 'No. SQ') return matchesMultiKeyword([item.noSq], searchTerm);
+    if (searchField === 'Nama Pelanggan') return matchesMultiKeyword([item.namaCustomer], searchTerm);
+    if (searchField === 'Sales') return matchesMultiKeyword([item.sales], searchTerm);
+    if (searchField === 'PO.NO') return matchesMultiKeyword([item.poNo], searchTerm);
+    if (searchField === 'Lokasi Stock') return matchesMultiKeyword([item.lokasiStock], searchTerm);
+    if (searchField === 'Keterangan') return matchesMultiKeyword([item.keterangan], searchTerm);
+    if (searchField === 'SO.Close') return matchesMultiKeyword([item.soClose], searchTerm);
     return matchesMultiKeyword(
       [
         item.noBukti,
+        item.noSq,
         item.tanggal,
         item.namaCustomer,
         item.sales,
@@ -977,10 +1209,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
       columns: [
         { header: 'No.Bukti', accessor: 'noBukti' },
         { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
+        { header: 'No. SQ', accessor: 'noSq' },
         { header: 'Nama Customer', accessor: 'namaCustomer' },
         { header: 'Sales', accessor: 'sales' },
         { header: 'PO.NO', accessor: 'poNo' },
         { header: 'Lokasi Stock', accessor: 'lokasiStock' },
+        { header: 'DPP', accessor: 'dpp', align: 'right' },
         { header: 'PPN', accessor: 'ppn', align: 'center' },
         { header: 'Nominal PPN', accessor: 'nilaiPpnNum', align: 'right' },
         { header: 'Nilai SO', accessor: 'nilaiSoNum', align: 'right' },
@@ -988,8 +1222,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         { header: 'SO.Close', accessor: 'soClose', align: 'center' },
         { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
         { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center' },
-        { header: 'Diupdate Oleh', accessor: 'diupdateOleh' },
-        { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center' },
       ],
       rows: filteredList,
     });
@@ -998,7 +1230,9 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const customerDropdownChoices = Array.from(
     new Set(
-      [...customerOptions.map((c) => c.namaCustomer), newCustomer.trim().toUpperCase()].filter(Boolean)
+      [...customerOptions.map((c) => c.namaCustomer), newCustomer.trim().toUpperCase()].filter(
+        Boolean
+      )
     )
   );
 
@@ -1006,8 +1240,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     new Set([...salesOptions, newSales.trim().toUpperCase()].filter(Boolean))
   );
 
-  const poDropdownChoices = Array.from(
-    new Set([...poOptions.map((p) => p.noBukti), newPoNo.trim().toUpperCase()].filter(Boolean))
+  const sqDropdownChoices = Array.from(
+    new Set([...sqOptions.map((q) => q.noSq), newNoSq.trim().toUpperCase()].filter(Boolean))
   );
 
   const lokasiDropdownChoices = Array.from(
@@ -1017,19 +1251,15 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
   const listPrintColumns: PrintColumn<SalesOrderItem>[] = [
     { header: 'No.Bukti', accessor: 'noBukti', width: '86px' },
     { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '60px' },
-    { header: 'Nama Customer', accessor: 'namaCustomer', width: '126px' },
+    { header: 'Nama Customer', accessor: 'namaCustomer', width: '130px' },
     { header: 'Sales', accessor: 'sales', width: '68px' },
-    { header: 'PO.NO', accessor: 'poNo', width: '80px' },
-    { header: 'Lokasi Stock', accessor: 'lokasiStock', width: '80px' },
-    { header: 'PPN', accessor: 'ppn', align: 'center', width: '44px' },
-    { header: 'Nominal PPN', accessor: 'nilaiPpn', align: 'right', width: '78px' },
-    { header: 'Nilai SO', accessor: 'nilaiSo', align: 'right', width: '82px' },
+    { header: 'PO.NO', accessor: 'poNo', width: '78px' },
+    { header: 'DPP', accessor: (r) => formatMoney(r.dpp), align: 'right', width: '80px' },
+    { header: 'PPN', accessor: 'ppn', align: 'center', width: '42px' },
+    { header: 'Nominal PPN', accessor: 'nilaiPpn', align: 'right', width: '76px' },
+    { header: 'Nilai SO (Net)', accessor: 'nilaiSo', align: 'right', width: '86px' },
     { header: 'Tgl.Kirim', accessor: 'tglKirim', align: 'center', width: '60px' },
-    { header: 'SO.Close', accessor: 'soClose', align: 'center', width: '50px' },
-    { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '60px' },
-    { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '58px' },
-    { header: 'Diupdate Oleh', accessor: 'diupdateOleh', width: '60px' },
-    { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center', width: '58px' },
+    { header: 'SO.Close', accessor: 'soClose', align: 'center', width: '54px' },
   ];
 
   const detailPrintColumns: PrintColumn<SalesOrderDetailItem>[] = [
@@ -1037,7 +1267,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     { header: 'Nama Barang', accessor: 'namaBarang' },
     { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
     {
-      header: 'Terima',
+      header: 'Terkirim',
       accessor: (r) => formatMoney(r.terima),
       align: 'right',
       width: '68px',
@@ -1090,7 +1320,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={() => (selectedId ? handleDelete(selectedId) : showFeedback('Pilih data yang akan dihapus'))}
+            onHapus={requestDeleteSelected}
             onPrint={() => handleOpenPrint()}
             onFind={handleFind}
             isBusy={isBusy}
@@ -1135,25 +1365,27 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         </div>
       </div>
 
-      {/* Upper Table: List Sales Order */}
+      {/* Upper Table */}
       <div className="flex-[1.35] min-h-[160px] overflow-auto bg-white border border-[#7A7A7A] mx-2 mt-2 relative">
-        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1620px]">
+        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1680px]">
           <thead>
             <tr className="bg-[#ECE9D8] text-black border-b border-[#919191] text-[11px] font-semibold sticky top-0 z-10">
               <th className="border-r border-[#919191] px-2 py-1.5 w-8 text-center">▶</th>
               <th className="border-r border-[#919191] px-3 py-1.5">No.Bukti</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tanggal</th>
+              <th className="border-r border-[#919191] px-3 py-1.5">No. SQ</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Nama Customer</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Sales</th>
               <th className="border-r border-[#919191] px-3 py-1.5">PO.NO</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Lokasi Stock</th>
-              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nilai SO</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">DPP</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-center">PPN</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nominal PPN</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nilai SO (+PPN)</th>
               <th className="border-r border-[#919191] px-3 py-1.5 text-right">Deposit</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tgl.Kirim</th>
               <th className="border-r border-[#919191] px-3 py-1.5 text-center">Persen</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Keterangan</th>
-              <th className="border-r border-[#919191] px-3 py-1.5 text-center">PPN</th>
-              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nominal PPN</th>
               <th className="border-r border-[#919191] px-3 py-1.5">SO.Close</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Dibuat Oleh</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tgl.Created</th>
@@ -1182,17 +1414,19 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   </td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noBukti}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tanggal}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noSq || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-medium">{item.namaCustomer}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.sales}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.poNo}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.lokasiStock}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{formatMoney(item.dpp)}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.ppn}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.nilaiPpn}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono font-semibold">{item.nilaiSo}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.deposit}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglKirim}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.persen}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.ppn}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.nilaiPpn}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.soClose}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.dibuatOleh}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglCreated}</td>
@@ -1203,7 +1437,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             })}
             {filteredList.length === 0 && (
               <tr>
-                <td colSpan={19} className="text-center py-6 text-gray-500">
+                <td colSpan={21} className="text-center py-6 text-gray-500">
                   Tidak ada data sales order
                 </td>
               </tr>
@@ -1212,7 +1446,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         </table>
       </div>
 
-      {/* Lower Panel: S.O. Detail for Selected Sales Order */}
+      {/* Lower Panel */}
       <div className="flex-1 min-h-[145px] flex flex-col mx-2 mt-1.5 mb-1 border border-[#7A7A7A] bg-white shadow-inner overflow-hidden">
         <div className="shrink-0 bg-[#E6E3D5] border-b border-[#ACA899] px-2.5 py-1 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
@@ -1231,15 +1465,15 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[11px] font-bold text-gray-900 font-mono">
-              Total Detail: {formatRupiah(selectedDetailTotal)}
+              Subtotal: {formatRupiah(selectedDetailTotal)}
             </span>
             {selectedSo && (
               <>
-                <span className="text-[11px] font-semibold text-[#9A3412] font-mono">
-                  Potongan PPN ({selectedSo.ppn}): -{formatRupiah(selectedSo.nilaiPpnNum)}
+                <span className="text-[11px] font-semibold text-[#166534] font-mono">
+                  PPN ({selectedSo.ppn}): +{formatRupiah(selectedSo.nilaiPpnNum)}
                 </span>
                 <span className="text-[11px] font-bold text-[#000084] font-mono">
-                  Nilai SO: {formatRupiah(selectedSo.nilaiSoNum)}
+                  Grand Total SO: {formatRupiah(selectedSo.nilaiSoNum)}
                 </span>
               </>
             )}
@@ -1263,7 +1497,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 <th className="px-2 py-1 border-r border-[#C0C0C0] w-28">Kode</th>
                 <th className="px-2 py-1 border-r border-[#C0C0C0]">Nama Barang</th>
                 <th className="px-2 py-1 border-r border-[#C0C0C0] text-center w-20">Unit</th>
-                <th className="px-2 py-1 border-r border-[#C0C0C0] text-right w-20">Terima</th>
+                <th className="px-2 py-1 border-r border-[#C0C0C0] text-right w-20">Terkirim</th>
                 <th className="px-2 py-1 border-r border-[#C0C0C0] text-right w-20">QTY</th>
                 <th className="px-2 py-1 border-r border-[#C0C0C0] text-right w-28">Harga</th>
                 <th className="px-2 py-1 border-r border-[#C0C0C0] text-right w-32">Jumlah</th>
@@ -1281,9 +1515,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 selectedSoDetails.map((d, idx) => (
                   <tr
                     key={d.id}
-                    className={`border-b border-[#E5E5E5] ${
-                      idx % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'
-                    }`}
+                    className={`border-b border-[#E5E5E5] ${idx % 2 === 0 ? 'bg-white' : 'bg-[#FAFAFA]'}`}
                   >
                     <td className="px-2 py-1 border-r border-[#E5E5E5] text-center">{idx + 1}</td>
                     <td className="px-2 py-1 border-r border-[#E5E5E5] font-mono font-semibold">{d.kode}</td>
@@ -1319,6 +1551,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             { value: 'Semua', label: 'Semua' },
             { value: 'Kode', label: 'Kode (No.Bukti)' },
             { value: 'No.Bukti', label: 'No.Bukti' },
+            { value: 'No. SQ', label: 'No. SQ' },
             { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
             { value: 'Sales', label: 'Sales' },
             { value: 'PO.NO', label: 'PO.NO' },
@@ -1337,7 +1570,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         </div>
       </div>
 
-      {/* Add / Koreksi Sales Order Modal */}
+      {/* Add / Koreksi Modal */}
       {isAddOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-3">
           <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[940px] max-w-[97vw] max-h-[93vh] flex flex-col overflow-hidden">
@@ -1355,14 +1588,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
               </button>
             </div>
             <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs overflow-y-auto">
-              {/* Header Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">No. Bukti:</label>
+                  <label className="font-semibold shrink-0">No. Bukti SO:</label>
                   <input
                     type="text"
                     value={newNoBukti}
-                    onChange={(e) => setNewNoBukti(e.target.value)}
+                    onChange={(e) => setNewNoBukti(e.target.value.toUpperCase())}
                     className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
                     required
                   />
@@ -1376,6 +1608,34 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                       format="dMyShort"
                     />
                   </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold shrink-0 text-[#000084]">Tarik dari No. SQ:</label>
+                  <select
+                    value={newNoSq}
+                    onChange={(e) => handleSelectSalesQuotation(e.target.value)}
+                    className="w-64 px-2 py-1 bg-[#FFFF99] border border-[#000084] uppercase font-mono cursor-pointer"
+                  >
+                    <option value="">-- Pilih Sales Quotation --</option>
+                    {sqDropdownChoices.map((sqCode) => {
+                      const info = sqOptions.find((x) => x.noSq === sqCode);
+                      return (
+                        <option key={sqCode} value={sqCode}>
+                          {info ? `${sqCode} - ${info.namaCustomer}` : sqCode}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold shrink-0">PO.NO (Customer PO):</label>
+                  <input
+                    type="text"
+                    value={newPoNo}
+                    onChange={(e) => setNewPoNo(e.target.value.toUpperCase())}
+                    placeholder="No. PO dari Customer..."
+                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
+                  />
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">Nama Customer:</label>
@@ -1409,16 +1669,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   </select>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">PO.NO:</label>
-                  <input
-                    type="text"
-                    value={newPoNo}
-                    onChange={(e) => setNewPoNo(e.target.value)}
-                    placeholder="Ketik No PO..."
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">Lokasi Stock:</label>
                   <select
                     value={newLokasiStock}
@@ -1433,36 +1683,55 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   </select>
                 </div>
                 <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold shrink-0">Disc (%) & Harga Termasuk PPN:</label>
+                  <div className="w-64 flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={newDiscPct}
+                      onChange={(e) => handleDiscPctChange(e.target.value)}
+                      className="w-20 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                      title="Diskon %"
+                    />
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newIsPpnIncluded}
+                        onChange={(e) => handleTogglePpnIncluded(e.target.checked)}
+                      />
+                      Harga Termasuk PPN
+                    </label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">PPN (%) / Nominal PPN:</label>
                   <div className="w-64 flex gap-2">
-                    <div className="w-20 relative">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={newPpn}
-                        onChange={(e) => handlePpnPercentChange(e.target.value)}
-                        className="w-full px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
-                        placeholder="PPN %"
-                        title="Persentase PPN (%) — Memotong Total S.O. Detail"
-                      />
-                    </div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newPpn}
+                      onChange={(e) => handlePpnPercentChange(e.target.value)}
+                      className="w-20 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
+                      title="Persentase PPN (%)"
+                    />
                     <input
                       type="number"
                       step="0.01"
                       value={newNilaiPpn}
                       onChange={(e) => handleManualNilaiPpnChange(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-[#FFFBEB] border border-[#7A7A7A] font-mono text-right font-semibold text-[#9A3412]"
+                      className="flex-1 px-2 py-1 bg-[#F0FDF4] border border-[#7A7A7A] font-mono text-right font-semibold text-[#166534]"
                       placeholder="Nominal PPN"
-                      title="Nominal Potongan PPN (Rp) tersimpan di tabel sales_orders"
                     />
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">
-                    Nilai SO (Rp)
+                    Nilai SO Total (Rp)
                     {hasFilledDetailRows && (
                       <span className="ml-1 text-[10px] font-normal text-[#0055EA]">
-                        (Detail - PPN)
+                        (DPP + PPN)
                       </span>
                     )}
                     :
@@ -1479,18 +1748,15 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   />
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Deposit (Rp):</label>
-                  <input
-                    type="number"
-                    value={newDeposit}
-                    onChange={(e) => setNewDeposit(e.target.value)}
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
-                    placeholder="Deposit"
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Tgl. Kirim:</label>
-                  <div className="w-64">
+                  <label className="font-semibold shrink-0">Deposit / Tgl. Kirim:</label>
+                  <div className="w-64 grid grid-cols-2 gap-1.5">
+                    <input
+                      type="number"
+                      value={newDeposit}
+                      onChange={(e) => setNewDeposit(e.target.value)}
+                      className="px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                      placeholder="Deposit"
+                    />
                     <DatePickerInput
                       value={newTglKirim}
                       onChange={(formatted) => setNewTglKirim(formatted)}
@@ -1506,7 +1772,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                       value={newPersen}
                       onChange={(e) => setNewPersen(e.target.value)}
                       className="w-1/2 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
-                      placeholder="Persen %"
                     />
                     <select
                       value={newSoClose}
@@ -1535,7 +1800,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-xs text-[#003C74]">S.O. Detail</span>
                     <span className="text-[11px] text-gray-600">
-                      (Pilih Kode Barang dari Master Barang atau isi manual)
+                      (Pilih Kode Barang dari Master Barang atau tarik dari No. SQ)
                     </span>
                   </div>
                   <button
@@ -1554,7 +1819,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                         <th className="px-1.5 py-1 border-r border-[#C0C0C0] w-36">Kode</th>
                         <th className="px-1.5 py-1 border-r border-[#C0C0C0]">Nama Barang</th>
                         <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-center w-16">Unit</th>
-                        <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-16">Terima</th>
+                        <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-16">Terkirim</th>
                         <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-16">QTY</th>
                         <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-24">Harga</th>
                         <th className="px-1.5 py-1 border-r border-[#C0C0C0] text-right w-24">Jumlah</th>
@@ -1670,17 +1935,17 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 </div>
                 <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] font-bold">
                   <span>
-                    Jumlah Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}
+                    Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}
                   </span>
-                  <div className="flex flex-wrap items-center gap-4 font-mono">
-                    <span className="text-[#003C74]">
-                      Total S.O. Detail: {formatRupiah(modalDetailTotal)}
-                    </span>
-                    <span className="text-[#9A3412]">
-                      Potongan PPN ({parseNum(newPpn)}%): -{formatRupiah(modalNominalPpn)}
+                  <div className="flex flex-wrap items-center gap-3 font-mono">
+                    <span>Subtotal: {formatRupiah(modalTotals.subtotal)}</span>
+                    <span>Disc: -{formatRupiah(modalTotals.nilaiDisc)}</span>
+                    <span>DPP: {formatRupiah(modalTotals.dpp)}</span>
+                    <span className="text-[#166534]">
+                      PPN ({parseNum(newPpn)}%): +{formatRupiah(parseNum(newNilaiPpn))}
                     </span>
                     <span className="text-[#000084] bg-[#E8EEFF] px-2 py-0.5 border border-[#8BA4E8]">
-                      Nilai SO: {formatRupiah(parseNum(newNilaiSo))}
+                      Total SO: {formatRupiah(parseNum(newNilaiSo))}
                     </span>
                   </div>
                 </div>
@@ -1763,7 +2028,22 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         </div>
       )}
 
-      {/* Find Modal: Cari & Daftar Sales Order */}
+      <ConfirmDialog
+        isOpen={Boolean(confirmDeleteItem)}
+        title="Konfirmasi Hapus Sales Order"
+        message={`Yakin ingin menghapus Sales Order [${confirmDeleteItem?.noBukti || ''}]?`}
+        detail={
+          confirmDeleteItem
+            ? `Customer: ${confirmDeleteItem.namaCustomer}\nNilai SO: ${formatRupiah(confirmDeleteItem.nilaiSoNum)}`
+            : undefined
+        }
+        confirmLabel="Ya, Hapus"
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteItem(null)}
+      />
+
+      {/* Find Modal */}
       <SupabaseFindModal
         isOpen={isFindOpen}
         onClose={() => setIsFindOpen(false)}
@@ -1773,6 +2053,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         getRowId={(r) => r.id}
         getSearchValues={(r) => [
           r.noBukti,
+          r.noSq,
           r.tanggal,
           r.namaCustomer,
           r.sales,
@@ -1780,8 +2061,6 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
           r.lokasiStock,
           r.keterangan,
           r.soClose,
-          r.ppn,
-          r.nilaiPpn,
           r.nilaiSo,
         ]}
         initialQuery={searchTerm}
@@ -1805,23 +2084,20 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         columns={[
           { header: 'Kode / No.Bukti', accessor: (r) => r.noBukti, widthClass: 'w-28', mono: true, bold: true },
           { header: 'Tanggal', accessor: (r) => r.tanggal, widthClass: 'w-22', align: 'center' },
+          { header: 'No. SQ', accessor: (r) => r.noSq || '-', widthClass: 'w-24', mono: true },
           { header: 'Nama Customer', accessor: (r) => r.namaCustomer, bold: true },
           { header: 'Sales', accessor: (r) => r.sales || '-', widthClass: 'w-24' },
           { header: 'PO.NO', accessor: (r) => r.poNo || '-', widthClass: 'w-24', mono: true },
-          { header: 'Lokasi Stock', accessor: (r) => r.lokasiStock || '-', widthClass: 'w-28' },
           { header: 'PPN', accessor: (r) => r.ppn, widthClass: 'w-14', align: 'center' },
-          { header: 'Nominal PPN', accessor: (r) => r.nilaiPpn, widthClass: 'w-24', align: 'right', mono: true },
           { header: 'Nilai SO', accessor: (r) => r.nilaiSo, widthClass: 'w-24', align: 'right', mono: true, bold: true },
         ]}
       />
 
-      {/* Dual-mode Print Preview: List Sales Order & S.O. Detail */}
+      {/* Dual-mode Print Preview */}
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
-        title={
-          printMode === 'detail' ? 'SALES ORDER (S.O. DETAIL)' : 'LAPORAN LIST SALES ORDER'
-        }
+        title={printMode === 'detail' ? 'SALES ORDER (S.O. DETAIL)' : 'LAPORAN LIST SALES ORDER'}
         subtitle={
           printMode === 'detail'
             ? `No. Bukti: ${selectedSo?.noBukti || '-'} | Customer: ${selectedSo?.namaCustomer || '-'}`
@@ -1832,24 +2108,18 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             ? [
                 { label: 'No. Bukti', value: selectedSo.noBukti },
                 { label: 'Tanggal', value: selectedSo.tanggal },
+                { label: 'No. SQ', value: selectedSo.noSq || '-' },
                 { label: 'Nama Customer', value: selectedSo.namaCustomer },
                 { label: 'Sales', value: selectedSo.sales || '-' },
                 { label: 'PO.NO', value: selectedSo.poNo || '-' },
                 { label: 'Lokasi Stock', value: selectedSo.lokasiStock || '-' },
                 { label: 'Tgl. Kirim', value: selectedSo.tglKirim || '-' },
                 { label: 'SO. Close', value: selectedSo.soClose || '-' },
-                { label: 'PPN (%)', value: selectedSo.ppn },
-                { label: 'Nominal PPN', value: `-${formatRupiah(selectedSo.nilaiPpnNum)}` },
-                { label: 'Nilai SO (Net)', value: formatRupiah(selectedSo.nilaiSoNum) },
-                { label: 'Persen', value: selectedSo.persen },
                 { label: 'Keterangan', value: selectedSo.keterangan || '-' },
-                { label: 'Dibuat Oleh', value: selectedSo.dibuatOleh },
-                { label: 'Tgl. Created', value: selectedSo.tglCreated || '-' },
-                { label: 'Diupdate Oleh', value: selectedSo.diupdateOleh || '-' },
-                { label: 'Tgl.Update', value: selectedSo.tglUpdate || '-' },
               ]
             : []
         }
+        showSignatures={printMode === 'detail'}
         orientation="landscape"
         columns={
           printMode === 'detail'
@@ -1872,19 +2142,23 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
             ? [
                 { label: 'Total Item', value: `${selectedSoDetails.length} Item` },
                 {
-                  label: 'Total QTY',
-                  value: formatMoney(selectedSoDetails.reduce((acc, d) => acc + d.qty, 0)),
+                  label: 'Subtotal',
+                  value: formatRupiah(selectedDetailTotal || selectedSo?.subtotal || 0),
                 },
                 {
-                  label: 'Total S.O. Detail',
-                  value: formatRupiah(selectedDetailTotal),
+                  label: `Diskon (${selectedSo?.discPct || 0}%)`,
+                  value: `-${formatRupiah(selectedSo?.nilaiDisc || 0)}`,
                 },
                 {
-                  label: `Potongan PPN (${selectedSo?.ppn || '0%'})`,
-                  value: `-${formatRupiah(selectedSo?.nilaiPpnNum || 0)}`,
+                  label: 'DPP',
+                  value: formatRupiah(selectedSo?.dpp || 0),
                 },
                 {
-                  label: 'Nilai SO (Setelah PPN)',
+                  label: `PPN (${selectedSo?.ppn || '0%'})`,
+                  value: `+${formatRupiah(selectedSo?.nilaiPpnNum || 0)}`,
+                },
+                {
+                  label: 'Grand Total Nilai SO',
                   value: formatRupiah(selectedSo?.nilaiSoNum || 0),
                 },
               ]
@@ -1909,7 +2183,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                 { label: 'Customer', value: selectedSo.namaCustomer },
                 { label: 'Sales', value: selectedSo.sales || '-' },
                 { label: 'PO.NO', value: selectedSo.poNo || '-' },
-                { label: 'Nilai SO', value: formatRupiah(selectedSo.nilaiSoNum) },
+                { label: 'Nilai SO (+PPN)', value: formatRupiah(selectedSo.nilaiSoNum) },
               ]
             : undefined
         }

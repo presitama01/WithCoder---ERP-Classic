@@ -937,7 +937,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                               new Set([...barangOptions.map((b) => b.kode), d.kode].filter(Boolean))
                             );
                             return (
-                              <tr key={d.id} className="border-b border-[#E5E5E5] text-[11px]">
+                              <tr key={d.id ? `${d.id}-${idx}` : `row-${idx}`} className="border-b border-[#E5E5E5] text-[11px]">
                                 <td className="px-1.5 py-1 border-r border-[#E5E5E5] text-center">{idx + 1}</td>
                                 <td className="p-0.5 border-r border-[#E5E5E5]">
                                   <select
@@ -946,10 +946,10 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                                     className="w-full px-1 py-0.5 bg-white border border-[#C0C0C0] rounded-xs font-mono text-[11px] uppercase cursor-pointer"
                                   >
                                     <option value="">-- Kode Barang --</option>
-                                    {kodeChoices.map((kode) => {
+                                    {kodeChoices.map((kode, kIdx) => {
                                       const b = barangOptions.find((item) => item.kode === kode);
                                       return (
-                                        <option key={kode} value={kode}>
+                                        <option key={`${kode}-${kIdx}`} value={kode}>
                                           {b ? `${kode} - ${b.namaBarang}` : kode}
                                         </option>
                                       );

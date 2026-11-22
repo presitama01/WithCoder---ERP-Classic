@@ -1,14 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
-  erpCreate,
+  addDaysToIsoDate,
+  erpCompositeSave,
   erpDelete,
   erpList,
-  erpUpdate,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -37,6 +39,9 @@ export interface FakturLainItem {
   jthTmp: string;
   keterangan: string;
   ppn: string;
+  ppnNum: number;
+  dpp: number;
+  nilaiPpn: number;
   nilaiPenjualan: string;
   nilaiPenjualanNum: number;
   lokasiStock: string;
@@ -52,13 +57,59 @@ export interface FakturLainItem {
   tglUpdate: string;
 }
 
+interface CustomerMeta {
+  namaCustomer: string;
+  sales: string;
+  ppn: boolean;
+  tmpPembayaran: number;
+  limitKredit: number;
+  piutang: number;
+}
+
+interface SalesOrderRef {
+  noBukti: string;
+  namaCustomer: string;
+  poNo: string;
+  sales: string;
+  lokasiStock: string;
+  ppn: number;
+}
+
+interface SuratJalanRef {
+  noBukti: string;
+  noSo: string;
+  poNo: string;
+  namaCustomer: string;
+  sales: string;
+  lokasiStock: string;
+}
+
 interface ListFakturLainFormProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+function calcFakturLainTotals(dppVal: number, ppnPct: number) {
+  const safeDpp = Math.max(0, Math.round(dppVal));
+  const safePpn = Math.max(0, Number(ppnPct || 0));
+  const nilaiPpn = Math.round((safeDpp * safePpn) / 100);
+  return { dpp: safeDpp, nilaiPpn, total: safeDpp + nilaiPpn };
+}
+
 function mapDbToFakturLain(r: any): FakturLainItem {
   const nilaiNum = Number(r.nilai_penjualan || 0);
+  const ppnNum = Number(r.ppn ?? 11);
+  const nilaiPpn =
+    r.nilai_ppn !== undefined && r.nilai_ppn !== null
+      ? Number(r.nilai_ppn || 0)
+      : ppnNum > 0
+      ? Math.round(nilaiNum - nilaiNum / (1 + ppnNum / 100))
+      : 0;
+  const dpp =
+    r.dpp !== undefined && r.dpp !== null && Number(r.dpp) > 0
+      ? Number(r.dpp)
+      : Math.max(0, nilaiNum - nilaiPpn);
+
   return {
     id: r.id,
     noBukti: r.no_bukti || '',
@@ -72,7 +123,10 @@ function mapDbToFakturLain(r: any): FakturLainItem {
     sales: r.sales || '',
     jthTmp: toDisplayDMyShort(r.jth_tmp),
     keterangan: r.keterangan || '',
-    ppn: `${Number(r.ppn ?? 11)}.`,
+    ppn: `${ppnNum}%`,
+    ppnNum,
+    dpp,
+    nilaiPpn,
     nilaiPenjualan: formatMoney(nilaiNum, true),
     nilaiPenjualanNum: nilaiNum,
     lokasiStock: r.lokasi_stock || '01 - OFFICE',
@@ -104,7 +158,19 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // References
+  const [defaultCompanyPpn, setDefaultCompanyPpn] = useState<number>(11);
+  const [customerOptions, setCustomerOptions] = useState<string[]>([]);
+  const [customerMetaMap, setCustomerMetaMap] = useState<Record<string, CustomerMeta>>({});
+  const [salesOptions, setSalesOptions] = useState<string[]>([]);
+  const [soOptions, setSoOptions] = useState<SalesOrderRef[]>([]);
+  const [sjOptions, setSjOptions] = useState<SuratJalanRef[]>([]);
+  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
+  const [overrideCreditLimit, setOverrideCreditLimit] = useState<boolean>(false);
+  const [showCreditOverrideBox, setShowCreditOverrideBox] = useState<boolean>(false);
 
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -115,23 +181,23 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   const [newPoNo, setNewPoNo] = useState<string>('');
   const [newNoSj, setNewNoSj] = useState<string>('');
   const [newNoFakturPajak, setNewNoFakturPajak] = useState<string>('');
-  const [newSales, setNewSales] = useState<string>('01');
+  const [newSales, setNewSales] = useState<string>('');
   const [newJthTmp, setNewJthTmp] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
   const [newPpn, setNewPpn] = useState<string>('11');
+  const [newDpp, setNewDpp] = useState<string>('0');
   const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('0');
   const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
   const [newStsLunas, setNewStsLunas] = useState<string>('Not Yet');
   const [newTglLunas, setNewTglLunas] = useState<string>('');
   const [newStsPrint, setNewStsPrint] = useState<string>('Not Yet');
   const [newTglPrint, setNewTglPrint] = useState<string>('');
-  const [newStsPost, setNewStsPost] = useState<string>('Not Yet');
+  const [newStsPost, setNewStsPost] = useState<string>('Posting');
   const [newTglPost, setNewTglPost] = useState<string>('');
-  const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
+    setTimeout(() => setFeedback(null), 2800);
   };
 
   const SEARCH_COL_MAP: Record<string, string> = {
@@ -142,6 +208,105 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     'PO.No': 'po_no',
     'No.Faktur Pajak': 'no_faktur_pajak',
     Keterangan: 'keterangan',
+  };
+
+  const loadMasterReferences = async () => {
+    const [custRes, salesRes, soRes, sjRes, lokRes, ppnRate] = await Promise.allSettled([
+      erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
+      erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
+      erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 500 }),
+      fetchDefaultPpnRate(),
+    ]);
+
+    if (ppnRate.status === 'fulfilled') setDefaultCompanyPpn(ppnRate.value);
+
+    if (custRes.status === 'fulfilled') {
+      const meta: Record<string, CustomerMeta> = {};
+      const list = Array.from(
+        new Set(
+          custRes.value
+            .filter((c: any) => c.is_active !== false)
+            .map((c: any) => {
+              const nm = String(c.nama_customer || '').trim().toUpperCase();
+              if (nm) {
+                meta[nm] = {
+                  namaCustomer: nm,
+                  sales: String(c.sales || c.nama_sales || '').trim().toUpperCase(),
+                  ppn: c.ppn !== false,
+                  tmpPembayaran: Math.max(0, Number(c.tmp_pembayaran || 0)),
+                  limitKredit: Math.max(0, Number(c.limit_kredit || 0)),
+                  piutang: Math.max(0, Number(c.piutang || 0)),
+                };
+              }
+              return nm;
+            })
+            .filter(Boolean)
+        )
+      );
+      setCustomerMetaMap(meta);
+      setCustomerOptions(list);
+    }
+
+    if (salesRes.status === 'fulfilled') {
+      const list = Array.from(
+        new Set(
+          salesRes.value
+            .filter((s: any) => s.is_active !== false)
+            .map((s: any) => String(s.nama_sales || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      setSalesOptions(list);
+    }
+
+    if (soRes.status === 'fulfilled') {
+      setSoOptions(
+        soRes.value
+          .map((s: any) => ({
+            noBukti: String(s.no_bukti || '').trim().toUpperCase(),
+            namaCustomer: String(s.nama_customer || '').trim().toUpperCase(),
+            poNo: String(s.po_no || '').trim().toUpperCase(),
+            sales: String(s.sales || '').trim().toUpperCase(),
+            lokasiStock: String(s.lokasi_stock || '01 - OFFICE').trim().toUpperCase(),
+            ppn: Number(s.ppn ?? 11),
+          }))
+          .filter((s: SalesOrderRef) => s.noBukti)
+      );
+    }
+
+    if (sjRes.status === 'fulfilled') {
+      setSjOptions(
+        sjRes.value
+          .map((s: any) => ({
+            noBukti: String(s.no_bukti || '').trim().toUpperCase(),
+            noSo: String(s.no_so || '').trim().toUpperCase(),
+            poNo: String(s.po_no || '').trim().toUpperCase(),
+            namaCustomer: String(s.nama_customer || '').trim().toUpperCase(),
+            sales: String(s.sales || '').trim().toUpperCase(),
+            lokasiStock: String(s.lokasi_stock || '01 - OFFICE').trim().toUpperCase(),
+          }))
+          .filter((s: SuratJalanRef) => s.noBukti)
+      );
+    }
+
+    if (lokRes.status === 'fulfilled') {
+      const loks = Array.from(
+        new Set(
+          lokRes.value
+            .filter((l: any) => l.is_active !== false)
+            .sort((a: any, b: any) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))
+            .map((l: any) => {
+              const kode = String(l.kode || '').trim().toUpperCase();
+              const nama = String(l.nama_lokasi || '').trim().toUpperCase();
+              return kode && nama ? `${kode} - ${nama}` : nama || kode;
+            })
+            .filter(Boolean)
+        )
+      );
+      setLokasiOptions(loks);
+    }
   };
 
   const loadData = async (opts?: {
@@ -169,7 +334,10 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           queryOpts.searchVal = activeTerm;
         }
       }
-      const rows = await erpList<any>('faktur_penjualans', queryOpts);
+      const [rows] = await Promise.all([
+        erpList<any>('faktur_penjualans', queryOpts),
+        loadMasterReferences(),
+      ]);
       const mapped = rows.map(mapDbToFakturLain);
       setFakturLainList(mapped);
       if (mapped.length > 0 && !mapped.some((r) => r.id === selectedId)) {
@@ -194,33 +362,50 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     }
     try {
       setIsBusy(true);
-      const saved = await erpUpdate<any>('faktur_penjualans', selected.id, {
-        jenis_faktur: 'LAIN',
-        no_bukti: selected.noBukti,
-        tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
-        nama_customer: selected.namaCustomer,
-        no_so: selected.noSo,
-        po_no: selected.poNo,
-        no_sj: selected.noSj,
-        no_faktur_pajak: selected.noFakturPajak,
-        sales: selected.sales,
-        jth_tmp: toIsoDate(selected.jthTmp) || selected.tanggalIso || todayIso(),
-        keterangan: selected.keterangan,
-        ppn: parseNum(selected.ppn),
-        nilai_penjualan: selected.nilaiPenjualanNum,
-        lokasi_stock: selected.lokasiStock || '01 - OFFICE',
-        sts_lunas: selected.stsLunas || 'Not Yet',
-        tgl_lunas: toIsoDate(selected.tglLunas) || null,
-        sts_print: selected.stsPrint || 'Not Yet',
-        tgl_print: toIsoDate(selected.tglPrint) || null,
-        sts_post: selected.stsPost || 'Not Yet',
-        tgl_post: toIsoDate(selected.tglPost) || null,
-        diupdate_oleh: getCurrentUser().username || 'ADMIN',
-        tgl_update: todayIso(),
-      });
-      const mapped = mapDbToFakturLain(saved);
+      const ppnRate = parseNum(selected.ppn);
+      const calc = calcFakturLainTotals(selected.dpp, ppnRate);
+      const finalNilai = calc.dpp > 0 ? calc.total : selected.nilaiPenjualanNum;
+      const res = await erpCompositeSave<{ header: any; detailWarning?: string }>(
+        'faktur-penjualan',
+        {
+          id: selected.id,
+          jenis_faktur: 'LAIN',
+          no_bukti: selected.noBukti,
+          tanggal: selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso(),
+          nama_customer: selected.namaCustomer,
+          no_so: selected.noSo,
+          po_no: selected.poNo,
+          no_sj: selected.noSj,
+          no_faktur_pajak: selected.noFakturPajak,
+          sales: selected.sales,
+          jth_tmp: toIsoDate(selected.jthTmp) || selected.tanggalIso || todayIso(),
+          keterangan: selected.keterangan,
+          ppn: ppnRate,
+          subtotal: calc.dpp,
+          disc_pct: 0,
+          nilai_disc: 0,
+          dpp: calc.dpp,
+          nilai_ppn: calc.nilaiPpn,
+          nilai_penjualan: finalNilai,
+          lokasi_stock: selected.lokasiStock || '01 - OFFICE',
+          sts_lunas: selected.stsLunas || 'Not Yet',
+          tgl_lunas: toIsoDate(selected.tglLunas) || null,
+          sts_print: selected.stsPrint || 'Not Yet',
+          tgl_print: toIsoDate(selected.tglPrint) || null,
+          sts_post: selected.stsPost || 'Not Yet',
+          tgl_post: toIsoDate(selected.tglPost) || null,
+          diupdate_oleh: (getCurrentUser().username || 'ADMIN').toUpperCase(),
+          tgl_update: todayIso(),
+        },
+        []
+      );
+      const mapped = mapDbToFakturLain(res.header);
       setFakturLainList((prev) => prev.map((r) => (r.id === selected.id ? mapped : r)));
-      showFeedback(`Data Faktur Lain [${mapped.noBukti}] tersimpan`);
+      showFeedback(
+        res.detailWarning
+          ? `Faktur Lain [${mapped.noBukti}] tersimpan (${res.detailWarning})`
+          : `Data Faktur Lain [${mapped.noBukti}] tersimpan`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -231,18 +416,83 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     loadData();
-    erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true })
-      .then((lokasis) =>
-        setLokasiOptions(lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()))
-      )
-      .catch(() => {});
   }, [isOpen]);
+
+  const modalBreakdown = useMemo(
+    () => calcFakturLainTotals(parseNum(newDpp), parseNum(newPpn)),
+    [newDpp, newPpn]
+  );
 
   if (!isOpen) return null;
 
-  const handleBaru = () => {
+  const applyCustomerSelection = (rawCust: string) => {
+    const clean = rawCust.trim().toUpperCase();
+    setNewCustomer(clean);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
+    const meta = customerMetaMap[clean];
+    if (meta) {
+      if (meta.sales) setNewSales(meta.sales);
+      const nextPpn = meta.ppn ? defaultCompanyPpn : 0;
+      setNewPpn(String(nextPpn));
+      const baseIso = toIsoDate(newTanggal) || todayIso();
+      setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseIso, meta.tmpPembayaran)));
+      setNewNilaiPenjualan(String(calcFakturLainTotals(parseNum(newDpp), nextPpn).total));
+    }
+  };
+
+  const applySoSelection = (rawNoSo: string) => {
+    const clean = rawNoSo.trim().toUpperCase();
+    setNewNoSo(clean);
+    const so = soOptions.find((s) => s.noBukti === clean);
+    if (!so) return;
+    setNewCustomer(so.namaCustomer);
+    setNewPoNo(so.poNo);
+    if (so.sales) setNewSales(so.sales);
+    if (so.lokasiStock) setNewLokasiStock(so.lokasiStock);
+    setNewPpn(String(so.ppn ?? defaultCompanyPpn));
+    const meta = customerMetaMap[so.namaCustomer];
+    if (meta) {
+      const baseIso = toIsoDate(newTanggal) || todayIso();
+      setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseIso, meta.tmpPembayaran)));
+    }
+  };
+
+  const applySjSelection = (rawNoSj: string) => {
+    const clean = rawNoSj.trim().toUpperCase();
+    setNewNoSj(clean);
+    const sj = sjOptions.find((s) => s.noBukti === clean);
+    if (!sj) return;
+    if (sj.noSo) setNewNoSo(sj.noSo);
+    if (sj.poNo) setNewPoNo(sj.poNo);
+    if (sj.namaCustomer) setNewCustomer(sj.namaCustomer);
+    if (sj.sales) setNewSales(sj.sales);
+    if (sj.lokasiStock) setNewLokasiStock(sj.lokasiStock);
+  };
+
+  const handleDppChange = (rawDpp: string) => {
+    setNewDpp(rawDpp);
+    setNewNilaiPenjualan(String(calcFakturLainTotals(parseNum(rawDpp), parseNum(newPpn)).total));
+  };
+
+  const handlePpnChange = (rawPpn: string) => {
+    setNewPpn(rawPpn);
+    setNewNilaiPenjualan(String(calcFakturLainTotals(parseNum(newDpp), parseNum(rawPpn)).total));
+  };
+
+  const handleTotalManualChange = (rawTotal: string) => {
+    setNewNilaiPenjualan(rawTotal);
+    const tot = Math.max(0, parseNum(rawTotal));
+    const ppnRate = parseNum(newPpn);
+    const derivedDpp = ppnRate > 0 ? Math.round(tot / (1 + ppnRate / 100)) : tot;
+    setNewDpp(String(derivedDpp));
+  };
+
+  const handleBaru = async () => {
     setEditingId(null);
     setModalError(null);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     const todayDisp = toDisplayDMyShort(todayIso());
     setNewNoBukti(nextUniqueCode(fakturLainList.map((f) => f.noBukti), 'INV-LAIN-', 4));
     setNewTanggal(todayDisp);
@@ -251,19 +501,23 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     setNewPoNo('');
     setNewNoSj('');
     setNewNoFakturPajak('');
-    setNewSales('01');
+    setNewSales(salesOptions[0] || '');
     setNewJthTmp(todayDisp);
     setNewKeterangan('');
-    setNewPpn('11');
+    setNewPpn(String(defaultCompanyPpn));
+    setNewDpp('0');
     setNewNilaiPenjualan('0');
     setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setNewStsLunas('Not Yet');
     setNewTglLunas('');
     setNewStsPrint('Not Yet');
     setNewTglPrint('');
-    setNewStsPost('Not Yet');
-    setNewTglPost('');
+    setNewStsPost('Posting');
+    setNewTglPost(todayDisp);
     setIsAddOpen(true);
+    const [ppnRate] = await Promise.all([fetchDefaultPpnRate(), loadMasterReferences()]);
+    setDefaultCompanyPpn(ppnRate);
+    setNewPpn(String(ppnRate));
   };
 
   const handleKoreksi = () => {
@@ -274,6 +528,8 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     }
     setEditingId(item.id);
     setModalError(null);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal);
     setNewCustomer(item.namaCustomer);
@@ -284,7 +540,8 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     setNewSales(item.sales);
     setNewJthTmp(item.jthTmp);
     setNewKeterangan(item.keterangan);
-    setNewPpn(String(parseNum(item.ppn)));
+    setNewPpn(String(item.ppnNum));
+    setNewDpp(String(item.dpp));
     setNewNilaiPenjualan(String(item.nilaiPenjualanNum));
     setNewLokasiStock(item.lokasiStock || '01 - OFFICE');
     setNewStsLunas(item.stsLunas || 'Not Yet');
@@ -303,10 +560,36 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
       setModalError('No.Bukti dan Nama Customer wajib diisi.');
       return;
     }
+    const finalNilai = parseNum(newNilaiPenjualan);
+    if (finalNilai <= 0) {
+      setModalError('Nilai Faktur Lain harus lebih besar dari 0.');
+      return;
+    }
+
+    if (!overrideCreditLimit) {
+      const custMeta = customerMetaMap[newCustomer.trim().toUpperCase()];
+      const existingEditedVal = editingId
+        ? fakturLainList.find((f) => f.id === editingId)?.nilaiPenjualanNum || 0
+        : 0;
+      const projectedPiutang = Math.max(0, (custMeta?.piutang || 0) - existingEditedVal) + finalNilai;
+      if (custMeta && custMeta.limitKredit > 0 && projectedPiutang > custMeta.limitKredit) {
+        setShowCreditOverrideBox(true);
+        setModalError(
+          `Peringatan Limit Kredit Customer: Proyeksi Piutang (${formatRupiah(
+            projectedPiutang
+          )}) melebihi Limit Kredit (${formatRupiah(custMeta.limitKredit)}). Centang "Abaikan batas limit kredit" untuk tetap menyimpan.`
+        );
+        return;
+      }
+    }
 
     try {
       setIsBusy(true);
-      const payload = {
+      const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
+      const ppnRate = parseNum(newPpn);
+      const calc = calcFakturLainTotals(parseNum(newDpp), ppnRate);
+
+      const headerPayload: Record<string, any> = {
         jenis_faktur: 'LAIN',
         no_bukti: newNoBukti.trim().toUpperCase(),
         tanggal: toIsoDate(newTanggal) || todayIso(),
@@ -318,8 +601,13 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
         sales: newSales.trim().toUpperCase(),
         jth_tmp: toIsoDate(newJthTmp) || toIsoDate(newTanggal) || todayIso(),
         keterangan: newKeterangan.trim(),
-        ppn: parseNum(newPpn),
-        nilai_penjualan: parseNum(newNilaiPenjualan),
+        ppn: ppnRate,
+        subtotal: calc.dpp,
+        disc_pct: 0,
+        nilai_disc: 0,
+        dpp: calc.dpp,
+        nilai_ppn: calc.nilaiPpn,
+        nilai_penjualan: finalNilai,
         lokasi_stock: newLokasiStock.trim() || '01 - OFFICE',
         sts_lunas: newStsLunas || 'Not Yet',
         tgl_lunas: toIsoDate(newTglLunas) || null,
@@ -330,24 +618,35 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
       };
 
       if (editingId) {
-        const saved = await erpUpdate<any>('faktur_penjualans', editingId, {
-          ...payload,
-          diupdate_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_update: todayIso(),
-        });
-        const mapped = mapDbToFakturLain(saved);
-        setFakturLainList((prev) => prev.map((item) => (item.id === editingId ? mapped : item)));
-        showFeedback('Faktur Lain diperbarui');
+        headerPayload.id = editingId;
+        headerPayload.diupdate_oleh = currentUser;
+        headerPayload.tgl_update = todayIso();
       } else {
-        const saved = await erpCreate<any>('faktur_penjualans', {
-          ...payload,
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-        });
-        const mapped = mapDbToFakturLain(saved);
+        headerPayload.dibuat_oleh = currentUser;
+        headerPayload.tgl_created = todayIso();
+      }
+
+      const res = await erpCompositeSave<{ header: any; detailWarning?: string }>(
+        'faktur-penjualan',
+        headerPayload,
+        []
+      );
+      const mapped = mapDbToFakturLain(res.header);
+      if (editingId) {
+        setFakturLainList((prev) => prev.map((item) => (item.id === editingId ? mapped : item)));
+        showFeedback(
+          res.detailWarning
+            ? `Faktur Lain diperbarui (${res.detailWarning})`
+            : 'Faktur Lain diperbarui & Piutang disinkronkan'
+        );
+      } else {
         setFakturLainList((prev) => [mapped, ...prev]);
         setSelectedId(mapped.id);
-        showFeedback('Faktur Lain ditambahkan');
+        showFeedback(
+          res.detailWarning
+            ? `Faktur Lain ditambahkan (${res.detailWarning})`
+            : 'Faktur Lain ditambahkan & Piutang disinkronkan'
+        );
       }
       setIsAddOpen(false);
       setEditingId(null);
@@ -360,18 +659,33 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     }
   };
 
-  const handleHapus = async () => {
-    if (!selectedId) {
+  const handleRequestHapus = () => {
+    const selected = fakturLainList.find((r) => r.id === selectedId);
+    if (!selected) {
       showFeedback('Pilih baris yang akan dihapus');
+      return;
+    }
+    if (selected.stsLunas.toUpperCase() === 'LUNAS') {
+      showFeedback(`Faktur Lain [${selected.noBukti}] sudah LUNAS dan tidak boleh dihapus.`);
+      return;
+    }
+    setConfirmDeleteOpen(true);
+  };
+
+  const handleConfirmHapus = async () => {
+    const selected = fakturLainList.find((r) => r.id === selectedId);
+    if (!selected) {
+      setConfirmDeleteOpen(false);
       return;
     }
     try {
       setIsBusy(true);
-      await erpDelete('faktur_penjualans', selectedId);
-      const updated = fakturLainList.filter((item) => item.id !== selectedId);
+      await erpDelete('faktur_penjualans', selected.id);
+      const updated = fakturLainList.filter((item) => item.id !== selected.id);
       setFakturLainList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data Faktur Lain dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback(`Faktur Lain [${selected.noBukti}] dihapus`);
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -463,6 +777,8 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
         { header: 'No.SO', accessor: 'noSo' },
         { header: 'PO.No', accessor: 'poNo' },
         { header: 'Keterangan', accessor: 'keterangan' },
+        { header: 'DPP', accessor: 'dpp', align: 'right' },
+        { header: 'Nilai PPN', accessor: 'nilaiPpn', align: 'right' },
         { header: 'Nilai Penjualan', accessor: 'nilaiPenjualanNum', align: 'right' },
         { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center' },
       ],
@@ -470,6 +786,22 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     });
     showFeedback('Export Excel selesai');
   };
+
+  const customerChoices = Array.from(
+    new Set([...customerOptions, newCustomer.trim().toUpperCase()].filter(Boolean))
+  );
+  const salesChoices = Array.from(
+    new Set([...salesOptions, newSales.trim().toUpperCase()].filter(Boolean))
+  );
+  const soChoices = Array.from(
+    new Set([...soOptions.map((s) => s.noBukti), newNoSo.trim().toUpperCase()].filter(Boolean))
+  );
+  const sjChoices = Array.from(
+    new Set([...sjOptions.map((s) => s.noBukti), newNoSj.trim().toUpperCase()].filter(Boolean))
+  );
+  const lokasiChoices = Array.from(
+    new Set(['01 - OFFICE', ...lokasiOptions, newLokasiStock.trim().toUpperCase()].filter(Boolean))
+  );
 
   return (
     <div
@@ -492,7 +824,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
               onSimpan={handleToolbarSimpan}
               onBaru={handleBaru}
               onKoreksi={handleKoreksi}
-              onHapus={handleHapus}
+              onHapus={handleRequestHapus}
               onPrint={() => setIsPrintOpen(true)}
               onFind={handleFind}
               isBusy={isBusy}
@@ -536,13 +868,13 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[160px]">Nama Customer</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[105px]">No.SO</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[155px]">PO.No</th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[180px]">No.SJ</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[130px]">No.SJ</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[110px]">No.Faktur Pajak</th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[50px]">Sales</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[60px]">Sales</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Jth.Tmp</th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[110px]">Keterangan</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[160px]">Keterangan</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[45px]">PPN</th>
-                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[95px]">Nilai Penjualan</th>
+                <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[95px] text-right">Nilai Penjualan</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">Sts.Lunas</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[75px]">Tgl.Lunas</th>
                 <th className="px-2 py-0.5 border-r border-[#ACA899] font-normal w-[65px]">Sts.Print</th>
@@ -571,24 +903,24 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                       onClick={() => setSelectedId(item.id)}
                       onDoubleClick={handleKoreksi}
                       className={`cursor-pointer border-b border-[#00B800] text-black ${
-                        isSelected ? 'bg-[#00FF00] font-medium' : 'bg-[#00FF00] hover:bg-[#33FF33]'
+                        isSelected ? 'bg-[#00FF00] font-semibold' : 'bg-[#00E800] hover:bg-[#33FF33]'
                       }`}
                     >
                       <td className="px-1 py-0.5 border-r border-[#ACA899] bg-[#ECE9D8] text-center text-[10px] font-bold text-black">
                         {isSelected ? '▸' : ''}
                       </td>
-                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noBukti}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] font-mono">{item.noBukti}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tanggal}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.namaCustomer}</td>
-                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noSo}</td>
-                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.poNo}</td>
-                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noSj}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] font-mono">{item.noSo}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] font-mono">{item.poNo}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] font-mono">{item.noSj}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noFakturPajak}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.sales}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.jthTmp}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.keterangan}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800] text-right">{item.ppn}</td>
-                      <td className="px-2 py-0.5 border-r border-[#00B800] text-right">{item.nilaiPenjualan}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] text-right font-mono">{item.nilaiPenjualan}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.stsLunas}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.tglLunas}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.stsPrint}</td>
@@ -646,7 +978,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
 
         {isAddOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[520px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[560px] max-w-[96vw] max-h-[92vh] flex flex-col overflow-hidden">
               <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex justify-between items-center font-bold text-xs shrink-0">
                 <span>{editingId ? 'Koreksi Faktur Lain' : 'Tambah Faktur Lain Baru'}</span>
                 <button
@@ -661,19 +993,19 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                 </button>
               </div>
               <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-2 text-xs overflow-y-auto">
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">No.Bukti:</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">No.Bukti:</label>
                   <input
                     type="text"
                     value={newNoBukti}
                     onChange={(e) => setNewNoBukti(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Tanggal:</label>
-                  <div className="w-72">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Tanggal:</label>
+                  <div className="w-80">
                     <DatePickerInput
                       value={newTanggal}
                       onChange={(formatted) => setNewTanggal(formatted)}
@@ -681,117 +1013,153 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Nama Customer:</label>
-                  <input
-                    type="text"
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-[#000084] shrink-0">No.SO / No.SJ:</label>
+                  <div className="w-80 grid grid-cols-2 gap-2">
+                    <select
+                      value={newNoSo}
+                      onChange={(e) => applySoSelection(e.target.value)}
+                      className="px-2 py-1 bg-[#FFFF99] border border-[#000084] uppercase font-mono cursor-pointer"
+                    >
+                      <option value="">-- No.SO (Opsional) --</option>
+                      {soChoices.map((soNo) => (
+                        <option key={soNo} value={soNo}>
+                          {soNo}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={newNoSj}
+                      onChange={(e) => applySjSelection(e.target.value)}
+                      className="px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono cursor-pointer"
+                    >
+                      <option value="">-- No.SJ (Opsional) --</option>
+                      {sjChoices.map((sjNo) => (
+                        <option key={sjNo} value={sjNo}>
+                          {sjNo}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Nama Customer:</label>
+                  <select
                     value={newCustomer}
-                    onChange={(e) => setNewCustomer(e.target.value)}
+                    onChange={(e) => applyCustomerSelection(e.target.value)}
                     required
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                  />
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Customer Aktif --</option>
+                    {customerChoices.map((cust) => (
+                      <option key={cust} value={cust}>
+                        {cust}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">No.SO:</label>
-                  <input
-                    type="text"
-                    value={newNoSo}
-                    onChange={(e) => setNewNoSo(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">PO.No:</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">PO.No:</label>
                   <input
                     type="text"
                     value={newPoNo}
                     onChange={(e) => setNewPoNo(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">No.SJ:</label>
-                  <input
-                    type="text"
-                    value={newNoSj}
-                    onChange={(e) => setNewNoSj(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">No.Faktur Pajak:</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">No.Faktur Pajak:</label>
                   <input
                     type="text"
                     value={newNoFakturPajak}
                     onChange={(e) => setNewNoFakturPajak(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A] font-mono"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Sales / PPN (%):</label>
-                  <div className="w-72 flex gap-2">
-                    <input
-                      type="text"
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Sales / PPN (%):</label>
+                  <div className="w-80 flex gap-2">
+                    <select
                       value={newSales}
                       onChange={(e) => setNewSales(e.target.value)}
-                      className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                    />
+                      className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                    >
+                      <option value="">-- Pilih Sales --</option>
+                      {salesChoices.map((sl) => (
+                        <option key={sl} value={sl}>
+                          {sl}
+                        </option>
+                      ))}
+                    </select>
                     <input
                       type="number"
+                      min="0"
                       value={newPpn}
-                      onChange={(e) => setNewPpn(e.target.value)}
-                      className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-center"
+                      onChange={(e) => handlePpnChange(e.target.value)}
+                      className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-center font-mono"
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Jth.Tmp:</label>
-                  <div className="w-72">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Jth.Tmp / Lokasi:</label>
+                  <div className="w-80 grid grid-cols-2 gap-2">
                     <DatePickerInput
                       value={newJthTmp}
                       onChange={(formatted) => setNewJthTmp(formatted)}
                       format="dMyShort"
                     />
+                    <select
+                      value={newLokasiStock}
+                      onChange={(e) => setNewLokasiStock(e.target.value)}
+                      className="px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                    >
+                      {lokasiChoices.map((loc) => (
+                        <option key={loc} value={loc}>
+                          {loc}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Keterangan:</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Keterangan:</label>
                   <input
                     type="text"
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Contoh: Biaya Ongkir / Jasa Kalibrasi / Lainnya"
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A]"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Nilai Penjualan (Rp):</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">DPP (Rp):</label>
                   <input
                     type="number"
-                    value={newNilaiPenjualan}
-                    onChange={(e) => setNewNilaiPenjualan(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
+                    min="0"
+                    value={newDpp}
+                    onChange={(e) => handleDppChange(e.target.value)}
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Lokasi Stock:</label>
-                  <div className="w-72">
-                    <input
-                      type="text"
-                      list="faktur-lain-lokasi-list"
-                      value={newLokasiStock}
-                      onChange={(e) => setNewLokasiStock(e.target.value)}
-                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A]"
-                    />
-                    <datalist id="faktur-lain-lokasi-list">
-                      {lokasiOptions.map((loc) => (
-                        <option key={loc} value={loc} />
-                      ))}
-                    </datalist>
-                  </div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Total Faktur (Rp):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newNilaiPenjualan}
+                    onChange={(e) => handleTotalManualChange(e.target.value)}
+                    className="w-80 px-2 py-1 bg-[#FFFF99] border border-[#7A7A7A] text-right font-mono font-bold"
+                  />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Sts / Tgl Lunas:</label>
-                  <div className="w-72 grid grid-cols-2 gap-2">
+                <div className="flex justify-end text-[10.5px] text-gray-700 font-mono">
+                  DPP: {formatRupiah(modalBreakdown.dpp)} + PPN ({parseNum(newPpn)}%):{' '}
+                  {formatRupiah(modalBreakdown.nilaiPpn)} = Total:{' '}
+                  <b className="ml-1 text-black">{formatRupiah(parseNum(newNilaiPenjualan))}</b>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Sts / Tgl Lunas:</label>
+                  <div className="w-80 grid grid-cols-2 gap-2">
                     <select
                       value={newStsLunas}
                       onChange={(e) => setNewStsLunas(e.target.value)}
@@ -808,9 +1176,9 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Sts / Tgl Print:</label>
-                  <div className="w-72 grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Sts / Tgl Print:</label>
+                  <div className="w-80 grid grid-cols-2 gap-2">
                     <select
                       value={newStsPrint}
                       onChange={(e) => setNewStsPrint(e.target.value)}
@@ -827,9 +1195,9 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-black">Sts / Tgl Post:</label>
-                  <div className="w-72 grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0">Sts / Tgl Post:</label>
+                  <div className="w-80 grid grid-cols-2 gap-2">
                     <select
                       value={newStsPost}
                       onChange={(e) => setNewStsPost(e.target.value)}
@@ -847,8 +1215,18 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                   </div>
                 </div>
                 {modalError && (
-                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
-                    ⚠ {modalError}
+                  <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold space-y-1">
+                    <div>⚠ {modalError}</div>
+                    {showCreditOverrideBox && (
+                      <label className="inline-flex items-center gap-1.5 text-[11px] text-black font-normal cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={overrideCreditLimit}
+                          onChange={(e) => setOverrideCreditLimit(e.target.checked)}
+                        />
+                        Abaikan batas limit kredit dan tetap simpan Faktur Lain ini
+                      </label>
+                    )}
                   </div>
                 )}
                 <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
@@ -874,6 +1252,23 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
             </div>
           </div>
         )}
+
+        <ConfirmDialog
+          isOpen={confirmDeleteOpen}
+          title="Konfirmasi Hapus Faktur Lain"
+          message={`Yakin ingin menghapus Faktur Lain ${selectedFakturLain?.noBukti || ''}?`}
+          detail={
+            selectedFakturLain
+              ? `Customer: ${selectedFakturLain.namaCustomer}\nKeterangan: ${selectedFakturLain.keterangan || '-'}\nNilai: ${formatRupiah(selectedFakturLain.nilaiPenjualanNum)}`
+              : undefined
+          }
+          confirmLabel="Ya, Hapus"
+          cancelLabel="Batal"
+          isBusy={isBusy}
+          danger
+          onConfirm={handleConfirmHapus}
+          onCancel={() => setConfirmDeleteOpen(false)}
+        />
 
         <SupabaseFindModal
           isOpen={isFindOpen}
@@ -944,7 +1339,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
             { label: 'Total Nilai', value: formatRupiah(totalNilai) },
           ]}
           selectedRow={selectedFakturLain}
-          selectedTitle="DETAIL FAKTUR LAIN"
+          selectedTitle="FAKTUR PENJUALAN LAINNYA"
           selectedSubtitle={
             selectedFakturLain
               ? `No.Bukti: ${selectedFakturLain.noBukti} | Customer: ${selectedFakturLain.namaCustomer}`
@@ -953,10 +1348,10 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           selectedMetaLines={
             selectedFakturLain
               ? [
-                  { label: 'No.Bukti', value: selectedFakturLain.noBukti },
+                  { label: 'No.Bukti', value: selectedFakturDpValue(selectedFakturLain.noBukti) },
                   { label: 'Tanggal', value: selectedFakturLain.tanggal },
                   { label: 'Customer', value: selectedFakturLain.namaCustomer },
-                  { label: 'No.SO / PO.No', value: `${selectedFakturLain.noSo || '-'} / ${selectedFakturLain.poNo || '-'}` },
+                  { label: 'No.SO / No.SJ', value: `${selectedFakturLain.noSo || '-'} / ${selectedFakturLain.noSj || '-'}` },
                   { label: 'Jth.Tmp', value: selectedFakturLain.jthTmp || '-' },
                   { label: 'Sts.Lunas', value: selectedFakturLain.stsLunas },
                 ]
@@ -965,8 +1360,9 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
           selectedSummaryItems={
             selectedFakturLain
               ? [
-                  { label: 'PPN (%)', value: selectedFakturLain.ppn },
-                  { label: 'Nilai Faktur Lain', value: formatRupiah(selectedFakturLain.nilaiPenjualanNum) },
+                  { label: 'DPP', value: formatRupiah(selectedFakturLain.dpp) },
+                  { label: `PPN (${selectedFakturLain.ppn})`, value: formatRupiah(selectedFakturLain.nilaiPpn) },
+                  { label: 'Total Faktur Lain', value: formatRupiah(selectedFakturLain.nilaiPenjualanNum) },
                 ]
               : undefined
           }
@@ -975,3 +1371,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
     </div>
   );
 };
+
+function selectedFakturDpValue(val?: string) {
+  return val || '-';
+}

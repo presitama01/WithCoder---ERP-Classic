@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { FormActionButtons } from './FormActionButtons';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
@@ -7,23 +6,16 @@ import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
 import {
-  erpCreate,
-  erpDelete,
   erpList,
-  erpUpdate,
-  erpUpsert,
   fetchActiveCompanyProfile,
   formatMoney,
   formatRupiah,
-  nextUniqueCode,
-  parseNum,
   syncAppSettings,
   todayIso,
   toDisplayDMyShort,
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
-import { getCurrentUser } from '../lib/authService';
 
 interface SalesOrderDetailFormProps {
   isOpen: boolean;
@@ -37,15 +29,20 @@ interface SoDetailGridRow {
   tanggal: string;
   tanggalIso: string;
   no_po: string;
+  no_sq: string;
   customer: string;
   sales: string;
   kode_barang: string;
   nama_barang: string;
+  merk_barang: string;
   unit: string;
   pesan: number;
   kirim: number;
   sisa: number;
-  nilai: number;
+  persen: number;
+  harga: number;
+  total_item: number;
+  nilai_so: number;
   lokasi_stock: string;
   so_close: string;
 }
@@ -54,11 +51,21 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [tglStart, setTglStart] = useState<string>('12-09-2026');
-  const [tglEnd, setTglEnd] = useState<string>('12-09-2026');
+  const defaultRange = useMemo(() => {
+    const now = todayIso();
+    const monthStart = `${now.slice(0, 8)}01`;
+    return {
+      start: toDisplayDMyShort(monthStart),
+      end: toDisplayDMyShort(now),
+    };
+  }, []);
+
+  const [tglStart, setTglStart] = useState<string>(defaultRange.start);
+  const [tglEnd, setTglEnd] = useState<string>(defaultRange.end);
   const [filterType, setFilterType] = useState<
     'merk' | 'batasan_kode' | 'customer' | 'all_periode'
   >('all_periode');
+  const [merkFilter, setMerkFilter] = useState<string>('');
   const [kodeBarang, setKodeBarang] = useState<string>('');
   const [namaBarangDesc, setNamaBarangDesc] = useState<string>('');
   const [customerFilter, setCustomerFilter] = useState<string>('');
@@ -68,10 +75,12 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const [isBusy, setIsBusy] = useState<boolean>(false);
 
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
-  const [barangCatalog, setBarangCatalog] = useState<{ kode: string; nama: string; unit: string }[]>([]);
+  const [merkOptions, setMerkOptions] = useState<string[]>([]);
+  const [barangCatalog, setBarangCatalog] = useState<
+    { kode: string; nama: string; unit: string; merk: string }[]
+  >([]);
   const [customerCatalog, setCustomerCatalog] = useState<string[]>([]);
 
-  // Live Supabase table + Search state
   const [tableRows, setTableRows] = useState<SoDetailGridRow[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
@@ -79,187 +88,146 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Add / Koreksi Modal
-  const [isCrudOpen, setIsCrudOpen] = useState<boolean>(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formNoSo, setFormNoSo] = useState<string>('');
-  const [formTanggal, setFormTanggal] = useState<string>(() => toDisplayDMyShort(todayIso()));
-  const [formNoPo, setFormNoPo] = useState<string>('');
-  const [formCustomer, setFormCustomer] = useState<string>('');
-  const [formKodeBarang, setFormKodeBarang] = useState<string>('');
-  const [formNamaBarang, setFormNamaBarang] = useState<string>('');
-  const [formUnit, setFormUnit] = useState<string>('PCS');
-  const [formPesan, setFormPesan] = useState<string>('10');
-  const [formKirim, setFormKirim] = useState<string>('0');
-  const [formLokasiStock, setFormLokasiStock] = useState<string>('01 - OFFICE');
-  const [formSoClose, setFormSoClose] = useState<string>('Not Yet');
-  const [modalError, setModalError] = useState<string | null>(null);
-  const [confirmDeleteRow, setConfirmDeleteRow] = useState<SoDetailGridRow | null>(null);
-
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
+    setTimeout(() => setFeedback(null), 2800);
   };
 
-  const loadLiveRows = async (opts?: {
-    field?: string;
-    term?: string;
-    skipSearch?: boolean;
-  }): Promise<SoDetailGridRow[]> => {
-    const activeField = opts?.field ?? searchField;
-    const activeTerm = opts?.skipSearch ? '' : (opts?.term ?? searchTerm).trim();
+  const loadLiveRows = async (
+    catalogOverride?: { kode: string; nama: string; unit: string; merk: string }[]
+  ): Promise<SoDetailGridRow[]> => {
+    const activeCatalog = catalogOverride || barangCatalog;
+    const merkByKode = new Map<string, string>();
+    for (const b of activeCatalog) {
+      if (b.kode) merkByKode.set(b.kode.trim().toUpperCase(), b.merk || '');
+    }
 
-    let items: any[] = [];
-    let orders: any[] = [];
+    const viewRows = await erpList<any>('v_mutasi_sales_order', {
+      orderBy: 'tanggal',
+      asc: false,
+      limit: 2000,
+    }).catch(() => null);
 
-    if (activeTerm) {
-      if (activeField === 'No.SO') {
-        [items, orders] = await Promise.all([
-          erpList<any>('sales_order_items', {
-            orderBy: 'created_at',
-            asc: false,
-            searchCol: 'no_so',
-            searchVal: activeTerm,
-          }),
-          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-        ]);
-      } else if (activeField === 'Kode Barang') {
-        [items, orders] = await Promise.all([
-          erpList<any>('sales_order_items', {
-            orderBy: 'created_at',
-            asc: false,
-            searchCol: 'kode_barang',
-            searchVal: activeTerm,
-          }),
-          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-        ]);
-      } else if (activeField === 'Nama Barang') {
-        [items, orders] = await Promise.all([
-          erpList<any>('sales_order_items', {
-            orderBy: 'created_at',
-            asc: false,
-            searchCol: 'nama_barang',
-            searchVal: activeTerm,
-          }),
-          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-        ]);
-      } else if (activeField === 'Kode') {
-        [items, orders] = await Promise.all([
-          erpList<any>('sales_order_items', {
-            orderBy: 'created_at',
-            asc: false,
-            orSearch: 'no_so,kode_barang,nama_barang',
-            searchVal: activeTerm,
-          }),
-          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-        ]);
-      } else if (activeField === 'Customer' || activeField === 'No.PO') {
-        const orderCol = activeField === 'Customer' ? 'nama_customer' : 'po_no';
-        const [allItems, matchedOrders] = await Promise.all([
-          erpList<any>('sales_order_items', { orderBy: 'created_at', asc: false }),
-          erpList<any>('sales_orders', {
-            orderBy: 'tanggal',
-            asc: false,
-            searchCol: orderCol,
-            searchVal: activeTerm,
-          }),
-        ]);
-        orders = matchedOrders;
-        const matchedIds = new Set(matchedOrders.map((o) => String(o.id)));
-        const matchedNos = new Set(
-          matchedOrders.map((o) => String(o.no_bukti || '').toUpperCase()).filter(Boolean)
-        );
-        items = allItems.filter(
-          (it) =>
-            (it.so_id && matchedIds.has(String(it.so_id))) ||
-            matchedNos.has(String(it.no_so || '').toUpperCase())
-        );
-      } else {
-        const [itemHits, orderHits, allOrders] = await Promise.all([
-          erpList<any>('sales_order_items', {
-            orderBy: 'created_at',
-            asc: false,
-            orSearch: 'no_so,kode_barang,nama_barang,unit',
-            searchVal: activeTerm,
-          }),
-          erpList<any>('sales_orders', {
-            orderBy: 'tanggal',
-            asc: false,
-            orSearch: 'no_bukti,nama_customer,po_no,sales,lokasi_stock',
-            searchVal: activeTerm,
-          }),
-          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
-        ]);
-        orders = allOrders;
-        const seen = new Map<string, any>();
-        for (const it of itemHits) seen.set(String(it.id), it);
-        if (orderHits.length > 0) {
-          const allItems = await erpList<any>('sales_order_items', {
-            orderBy: 'created_at',
-            asc: false,
-          });
-          const hitIds = new Set(orderHits.map((o) => String(o.id)));
-          const hitNos = new Set(
-            orderHits.map((o) => String(o.no_bukti || '').toUpperCase()).filter(Boolean)
-          );
-          for (const it of allItems) {
-            if (
-              (it.so_id && hitIds.has(String(it.so_id))) ||
-              hitNos.has(String(it.no_so || '').toUpperCase())
-            ) {
-              seen.set(String(it.id), it);
-            }
-          }
-        }
-        items = Array.from(seen.values());
+    let mapped: SoDetailGridRow[] = [];
+
+    if (Array.isArray(viewRows)) {
+      const orders = await erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }).catch(
+        () => []
+      );
+      const nilaiBySoId = new Map<string, number>();
+      for (const o of orders) {
+        if (o.id) nilaiBySoId.set(String(o.id), Number(o.nilai_so || 0));
       }
+
+      mapped = viewRows.map((r) => {
+        const tglIso = toIsoDate(r.tanggal) || '';
+        const kodeBrg = String(r.kode_barang || '').trim().toUpperCase();
+        const pesan = Number(r.pesan || 0);
+        const kirim = Number(r.kirim || 0);
+        const sisa =
+          r.sisa !== undefined && r.sisa !== null ? Number(r.sisa) : Math.max(0, pesan - kirim);
+        const harga = Number(r.harga || 0);
+        const totalItem = Number(r.total || pesan * harga);
+        const isClosed = String(r.so_close || '').toLowerCase() === 'closed' || (pesan > 0 && sisa <= 0);
+        return {
+          id: String(r.id),
+          so_id: r.so_id || null,
+          no_so: String(r.no_so || ''),
+          tanggal: toDisplayDMyShort(tglIso) || '-',
+          tanggalIso: tglIso,
+          no_po: String(r.no_po || ''),
+          no_sq: String(r.no_sq || ''),
+          customer: String(r.customer || ''),
+          sales: String(r.sales || ''),
+          kode_barang: kodeBrg,
+          nama_barang: String(r.nama_barang || ''),
+          merk_barang: merkByKode.get(kodeBrg) || '',
+          unit: String(r.unit || 'PCS'),
+          pesan,
+          kirim,
+          sisa,
+          persen: pesan > 0 ? Math.min(100, Math.round((kirim / pesan) * 100)) : 0,
+          harga,
+          total_item: totalItem,
+          nilai_so: (r.so_id && nilaiBySoId.get(String(r.so_id))) || totalItem,
+          lokasi_stock: String(r.lokasi_stock || '01 - OFFICE'),
+          so_close: isClosed ? 'Closed' : 'Not Yet',
+        };
+      });
     } else {
-      [items, orders] = await Promise.all([
-        erpList<any>('sales_order_items', { orderBy: 'created_at', asc: false }),
-        erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false }),
+      const [orders, details, sjHeaders, sjDetails] = await Promise.all([
+        erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false, limit: 1500 }),
+        erpList<any>('sales_order_details', { limit: 4000 }),
+        erpList<any>('surat_jalans', { limit: 2000 }).catch(() => []),
+        erpList<any>('surat_jalan_details', { limit: 4000 }).catch(() => []),
       ]);
-    }
 
-    const orderById = new Map<string, any>();
-    const orderByNo = new Map<string, any>();
-    for (const o of orders) {
-      if (o.id) orderById.set(o.id, o);
-      if (o.no_bukti) orderByNo.set(String(o.no_bukti).toUpperCase(), o);
-    }
+      const orderById = new Map<string, any>();
+      for (const o of orders) {
+        if (o.id) orderById.set(String(o.id), o);
+      }
 
-    const mapped: SoDetailGridRow[] = items.map((it) => {
-      const parent =
-        (it.so_id && orderById.get(it.so_id)) ||
-        orderByNo.get(String(it.no_so || '').toUpperCase());
-      const tglIso = toIsoDate(parent?.tanggal) || toIsoDate(it.created_at) || '';
-      const pesan = Number(it.pesan || 0);
-      const kirim = Number(it.kirim || 0);
-      const sisa =
-        it.sisa !== undefined && it.sisa !== null ? Number(it.sisa) : Math.max(0, pesan - kirim);
-      return {
-        id: String(it.id),
-        so_id: it.so_id || parent?.id || null,
-        no_so: it.no_so || parent?.no_bukti || '',
-        tanggal: toDisplayDMyShort(tglIso) || '-',
-        tanggalIso: tglIso,
-        no_po: parent?.po_no || '',
-        customer: parent?.nama_customer || '',
-        sales: parent?.sales || '',
-        kode_barang: it.kode_barang || '',
-        nama_barang: it.nama_barang || '',
-        unit: it.unit || 'PCS',
-        pesan,
-        kirim,
-        sisa,
-        nilai: Number(parent?.nilai_so || 0),
-        lokasi_stock: parent?.lokasi_stock || '01 - OFFICE',
-        so_close: parent?.so_close || (sisa === 0 ? 'Closed' : 'Not Yet'),
-      };
-    });
+      const sjHdrById = new Map<string, any>();
+      for (const h of sjHeaders) {
+        if (h.id) sjHdrById.set(String(h.id), h);
+      }
+
+      const kirimBySoKode = new Map<string, number>();
+      for (const d of sjDetails) {
+        const h = sjHdrById.get(String(d.surat_jalan_id || ''));
+        if (!h) continue;
+        const st = String(h.sts_post || '').trim().toUpperCase();
+        if (st !== 'POSTING' && st !== 'POSTED') continue;
+        const noSo = String(h.no_so || '').trim().toUpperCase();
+        const kode = String(d.kode || '').trim().toUpperCase();
+        if (!noSo || !kode) continue;
+        const qtyVal = Number(d.terima || 0) > 0 ? Number(d.terima) : Number(d.qty || 0);
+        const key = `${noSo}__${kode}`;
+        kirimBySoKode.set(key, (kirimBySoKode.get(key) || 0) + qtyVal);
+      }
+
+      mapped = details.map((d) => {
+        const parent = orderById.get(String(d.so_id || '')) || {};
+        const tglIso = toIsoDate(parent.tanggal || d.created_at) || '';
+        const noSo = String(parent.no_bukti || d.no_bukti || '').trim().toUpperCase();
+        const kodeBrg = String(d.kode || '').trim().toUpperCase();
+        const pesan = Number(d.qty || 0);
+        const kirimAgg = kirimBySoKode.get(`${noSo}__${kodeBrg}`);
+        const kirim = kirimAgg !== undefined ? kirimAgg : Number(d.terima || 0);
+        const sisa = Math.max(0, pesan - kirim);
+        const harga = Number(d.harga || 0);
+        const totalItem = Number(d.total || pesan * harga);
+        const isClosed = String(parent.so_close || '').toLowerCase() === 'closed' || (pesan > 0 && sisa <= 0);
+        return {
+          id: String(d.id),
+          so_id: d.so_id || parent.id || null,
+          no_so: parent.no_bukti || d.no_bukti || '',
+          tanggal: toDisplayDMyShort(tglIso) || '-',
+          tanggalIso: tglIso,
+          no_po: parent.po_no || '',
+          no_sq: parent.no_sq || '',
+          customer: parent.nama_customer || '',
+          sales: parent.sales || '',
+          kode_barang: kodeBrg,
+          nama_barang: d.nama_barang || '',
+          merk_barang: merkByKode.get(kodeBrg) || '',
+          unit: d.unit || 'PCS',
+          pesan,
+          kirim,
+          sisa,
+          persen: pesan > 0 ? Math.min(100, Math.round((kirim / pesan) * 100)) : 0,
+          harga,
+          total_item: totalItem,
+          nilai_so: Number(parent.nilai_so || 0),
+          lokasi_stock: parent.lokasi_stock || '01 - OFFICE',
+          so_close: isClosed ? 'Closed' : 'Not Yet',
+        };
+      });
+    }
 
     setTableRows(mapped);
     if (mapped.length > 0 && !mapped.some((m) => m.id === selectedId)) {
@@ -276,32 +244,55 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     (async () => {
       try {
         setIsBusy(true);
-        const [lokasis, barangs, customers] = await Promise.all([
+        const [lokasis, barangs, merks, customers] = await Promise.all([
           erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true }).catch(() => []),
           erpList<any>('master_barangs', { orderBy: 'kode', asc: true }).catch(() => []),
+          erpList<any>('master_merks', { orderBy: 'merk', asc: true }).catch(() => []),
           erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true }).catch(() => []),
         ]);
         if (!active) return;
-        setLokasiOptions(lokasis.map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim()));
-        setBarangCatalog(
-          barangs.map((b) => ({
-            kode: b.kode || '',
-            nama: b.nama_barang || '',
-            unit: b.unit || 'PCS',
-          }))
+
+        setLokasiOptions(
+          lokasis
+            .filter((l) => l.is_active !== false)
+            .map((l) => `${l.kode} - ${l.nama_lokasi || ''}`.trim())
         );
-        setCustomerCatalog(customers.map((c) => c.nama_customer || '').filter(Boolean));
+
+        const catalog = barangs
+          .filter((b) => b.is_active !== false)
+          .map((b) => ({
+            kode: String(b.kode || ''),
+            nama: String(b.nama_barang || ''),
+            unit: String(b.unit || 'PCS'),
+            merk: String(b.merk || ''),
+          }));
+        setBarangCatalog(catalog);
+
+        const merkList = Array.from(
+          new Set([
+            ...merks.filter((m) => m.is_active !== false).map((m) => String(m.merk || m.nama_merk || '').trim()),
+            ...catalog.map((b) => b.merk.trim()),
+          ])
+        ).filter(Boolean);
+        setMerkOptions(merkList);
+
+        setCustomerCatalog(
+          customers
+            .filter((c) => c.is_active !== false)
+            .map((c) => String(c.nama_customer || ''))
+            .filter(Boolean)
+        );
+
         const rawPreset = localStorage.getItem('withcoder_preset_so_detail');
         if (rawPreset) {
           const v = JSON.parse(rawPreset);
-          if (v.tglStart) setTglStart(v.tglStart);
-          if (v.tglEnd) setTglEnd(v.tglEnd);
           if (v.lokasiStock) setLokasiStock(v.lokasiStock);
           if (v.bentukLaporan) setBentukLaporan(v.bentukLaporan);
         }
-        await loadLiveRows();
+
+        await loadLiveRows(catalog);
       } catch {
-        // Ignore non-critical load error
+        // ignore non-critical load error
       } finally {
         if (active) setIsBusy(false);
       }
@@ -322,8 +313,17 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
 
   if (!isOpen) return null;
 
-  const filteredTableRows = tableRows.filter((r) => {
+  const startIso = toIsoDate(tglStart);
+  const endIso = toIsoDate(tglEnd);
+
+  const filteredDetailRows = tableRows.filter((r) => {
+    if (startIso && r.tanggalIso && r.tanggalIso < startIso) return false;
+    if (endIso && r.tanggalIso && r.tanggalIso > endIso) return false;
     if (lokasiStock !== 'ALL' && r.lokasi_stock && r.lokasi_stock !== lokasiStock) return false;
+
+    if (filterType === 'merk' && merkFilter.trim()) {
+      if (!r.merk_barang.toLowerCase().includes(merkFilter.trim().toLowerCase())) return false;
+    }
     if (filterType === 'batasan_kode' && kodeBarang.trim()) {
       const k = kodeBarang.trim().toLowerCase();
       if (
@@ -336,6 +336,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     if (filterType === 'customer' && customerFilter.trim()) {
       if (!r.customer.toLowerCase().includes(customerFilter.trim().toLowerCase())) return false;
     }
+
     if (searchTerm.trim()) {
       if (searchField === 'Kode') return matchesMultiKeyword([r.no_so, r.kode_barang], searchTerm);
       if (searchField === 'No.SO') return matchesMultiKeyword([r.no_so], searchTerm);
@@ -344,178 +345,138 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
       if (searchField === 'Nama Barang') return matchesMultiKeyword([r.nama_barang], searchTerm);
       if (searchField === 'No.PO') return matchesMultiKeyword([r.no_po], searchTerm);
       return matchesMultiKeyword(
-        [r.no_so, r.tanggal, r.customer, r.no_po, r.kode_barang, r.nama_barang, r.unit, r.lokasi_stock, r.so_close],
+        [
+          r.no_so,
+          r.tanggal,
+          r.customer,
+          r.no_po,
+          r.kode_barang,
+          r.nama_barang,
+          r.merk_barang,
+          r.unit,
+          r.lokasi_stock,
+          r.so_close,
+        ],
         searchTerm
       );
     }
     return true;
   });
 
+  const buildReportRowsForMode = (rows: SoDetailGridRow[], mode: string): any[] => {
+    if (mode.startsWith('01')) {
+      return rows;
+    }
+
+    if (mode.startsWith('02')) {
+      // 02 - Sales Order Rekap (grouped per No.SO)
+      const grouped = new Map<string, any>();
+      for (const r of rows) {
+        const key = r.no_so || r.id;
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            id: key,
+            no_so: r.no_so,
+            tanggal: r.tanggal,
+            customer: r.customer,
+            sales: r.sales || '-',
+            no_po: r.no_po || '-',
+            jml_item: 0,
+            pesan: 0,
+            kirim: 0,
+            sisa: 0,
+            nilai: r.nilai_so || 0,
+            calc_total: 0,
+            so_close: r.so_close,
+          });
+        }
+        const g = grouped.get(key);
+        g.jml_item += 1;
+        g.pesan += r.pesan;
+        g.kirim += r.kirim;
+        g.sisa += r.sisa;
+        g.calc_total += r.total_item;
+        if (r.so_close !== 'Closed') g.so_close = 'Not Yet';
+      }
+      return Array.from(grouped.values()).map((g) => ({
+        ...g,
+        nilai: g.nilai > 0 ? g.nilai : g.calc_total,
+        persen: g.pesan > 0 ? Math.min(100, Math.round((g.kirim / g.pesan) * 100)) : 0,
+        so_close: g.sisa === 0 && g.pesan > 0 ? 'Closed' : g.so_close,
+      }));
+    }
+
+    // 03 - Sales Order by Customer
+    const byCust = new Map<string, any>();
+    for (const r of rows) {
+      const cust = r.customer || '(TANPA CUSTOMER)';
+      if (!byCust.has(cust)) {
+        byCust.set(cust, {
+          id: cust,
+          customer: cust,
+          soSet: new Set<string>(),
+          soNilaiMap: new Map<string, number>(),
+          jml_item: 0,
+          pesan: 0,
+          kirim: 0,
+          sisa: 0,
+          calc_total: 0,
+        });
+      }
+      const g = byCust.get(cust);
+      if (r.no_so) {
+        g.soSet.add(r.no_so);
+        if (r.nilai_so > 0) g.soNilaiMap.set(r.no_so, r.nilai_so);
+      }
+      g.jml_item += 1;
+      g.pesan += r.pesan;
+      g.kirim += r.kirim;
+      g.sisa += r.sisa;
+      g.calc_total += r.total_item;
+    }
+    return Array.from(byCust.values())
+      .map((g) => {
+        const nilaiValues = Array.from(g.soNilaiMap.values()) as number[];
+        const nilaiFromHeaders = nilaiValues.reduce(
+          (a: number, b: number) => a + Number(b || 0),
+          0
+        );
+        return {
+          id: g.id,
+          customer: g.customer,
+          jml_so: g.soSet.size,
+          jml_item: g.jml_item,
+          pesan: g.pesan,
+          kirim: g.kirim,
+          sisa: g.sisa,
+          persen: g.pesan > 0 ? Math.min(100, Math.round((g.kirim / g.pesan) * 100)) : 0,
+          nilai: nilaiFromHeaders > 0 ? nilaiFromHeaders : g.calc_total,
+        };
+      })
+      .sort((a, b) => b.nilai - a.nilai);
+  };
+
+  const activeModeRows = buildReportRowsForMode(filteredDetailRows, bentukLaporan);
   const selectedTableRow =
-    filteredTableRows.find((r) => r.id === selectedId) ||
+    filteredDetailRows.find((r) => r.id === selectedId) ||
     tableRows.find((r) => r.id === selectedId) ||
     null;
 
-  const handleBaru = () => {
-    setEditingId(null);
-    setModalError(null);
-    setFormNoSo(nextUniqueCode(tableRows.map((r) => r.no_so), '2608-SO-', 3));
-    setFormTanggal(toDisplayDMyShort(todayIso()));
-    setFormNoPo('');
-    setFormCustomer(customerFilter || '');
-    setFormKodeBarang(kodeBarang || '');
-    setFormNamaBarang(namaBarangDesc || '');
-    setFormUnit('PCS');
-    setFormPesan('10');
-    setFormKirim('0');
-    setFormLokasiStock(lokasiStock !== 'ALL' ? lokasiStock : lokasiOptions[0] || '01 - OFFICE');
-    setFormSoClose('Not Yet');
-    setIsCrudOpen(true);
-  };
-
-  const handleKoreksi = () => {
-    const current =
-      filteredTableRows.find((r) => r.id === selectedId) ||
-      tableRows.find((r) => r.id === selectedId) ||
-      filteredTableRows[0];
-    if (!current) {
-      showFeedback('Pilih baris item SO terlebih dahulu (atau klik Baru)');
-      return;
-    }
-    setSelectedId(current.id);
-    setEditingId(current.id);
-    setModalError(null);
-    setFormNoSo(current.no_so);
-    setFormTanggal(current.tanggal !== '-' ? current.tanggal : toDisplayDMyShort(todayIso()));
-    setFormNoPo(current.no_po);
-    setFormCustomer(current.customer);
-    setFormKodeBarang(current.kode_barang);
-    setFormNamaBarang(current.nama_barang);
-    setFormUnit(current.unit || 'PCS');
-    setFormPesan(String(current.pesan));
-    setFormKirim(String(current.kirim));
-    setFormLokasiStock(current.lokasi_stock || '01 - OFFICE');
-    setFormSoClose(current.so_close || (current.sisa === 0 ? 'Closed' : 'Not Yet'));
-    setIsCrudOpen(true);
-  };
-
-  const handleSaveCrud = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setModalError(null);
-    if (!formNoSo.trim() || !formCustomer.trim() || !formKodeBarang.trim()) {
-      setModalError('No. SO, Customer, dan Kode Barang wajib diisi.');
-      return;
-    }
-    const pesanNum = parseNum(formPesan);
-    const kirimNum = parseNum(formKirim);
-    const sisaNum = Math.max(0, pesanNum - kirimNum);
-
+  const handleSimpanFilter = async () => {
     try {
       setIsBusy(true);
-      const tglIso = toIsoDate(formTanggal) || todayIso();
-      const parentSo = await erpUpsert<any>(
-        'sales_orders',
-        {
-          no_bukti: formNoSo.trim().toUpperCase(),
-          tanggal: tglIso,
-          nama_customer: formCustomer.trim().toUpperCase(),
-          po_no: formNoPo.trim().toUpperCase(),
-          lokasi_stock: formLokasiStock.trim() || '01 - OFFICE',
-          so_close: formSoClose || (sisaNum === 0 ? 'Closed' : 'Not Yet'),
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: tglIso,
-        },
-        'no_bukti'
-      );
-
-      const itemPayload = {
-        so_id: parentSo?.id || null,
-        no_so: formNoSo.trim().toUpperCase(),
-        kode_barang: formKodeBarang.trim().toUpperCase(),
-        nama_barang: formNamaBarang.trim().toUpperCase() || formKodeBarang.trim().toUpperCase(),
-        unit: formUnit.trim().toUpperCase() || 'PCS',
-        pesan: pesanNum,
-        kirim: kirimNum,
-      };
-
-      if (editingId) {
-        await erpUpdate('sales_order_items', editingId, itemPayload);
-        showFeedback('Item Sales Order diperbarui di Supabase');
-      } else {
-        const created = await erpCreate<any>('sales_order_items', itemPayload);
-        if (created?.id) setSelectedId(String(created.id));
-        showFeedback('Item Sales Order tersimpan ke Supabase');
-      }
-
-      setIsCrudOpen(false);
-      setEditingId(null);
-      await loadLiveRows();
-    } catch (err: any) {
-      const msg = err?.message || 'Gagal menyimpan item SO';
-      setModalError(msg);
-      showFeedback(`Gagal simpan: ${msg}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleRequestHapus = () => {
-    const current =
-      filteredTableRows.find((r) => r.id === selectedId) ||
-      tableRows.find((r) => r.id === selectedId);
-    if (!current) {
-      showFeedback('Pilih baris data yang akan dihapus');
-      return;
-    }
-    setConfirmDeleteRow(current);
-  };
-
-  const handleConfirmHapus = async () => {
-    if (!confirmDeleteRow) return;
-    try {
-      setIsBusy(true);
-      await erpDelete('sales_order_items', confirmDeleteRow.id);
-      if (confirmDeleteRow.id === selectedId) setSelectedId('');
-      setConfirmDeleteRow(null);
-      await loadLiveRows();
-      showFeedback('Baris Sales Order dihapus dari Supabase');
-    } catch (err: any) {
-      showFeedback(`Gagal hapus: ${err.message}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleSimpan = async () => {
-    const selected = selectedTableRow;
-    if (!selected) {
-      showFeedback('Pilih baris item Sales Order terlebih dahulu untuk disimpan');
-      return;
-    }
-    try {
-      setIsBusy(true);
-      await erpUpdate('sales_order_items', selected.id, {
-        so_id: selected.so_id,
-        no_so: selected.no_so,
-        kode_barang: selected.kode_barang,
-        nama_barang: selected.nama_barang,
-        unit: selected.unit || 'PCS',
-        pesan: Number(selected.pesan || 0),
-        kirim: Number(selected.kirim || 0),
-      });
       localStorage.setItem(
         'withcoder_preset_so_detail',
-        JSON.stringify({ tglStart, tglEnd, lokasiStock, bentukLaporan })
+        JSON.stringify({ lokasiStock, bentukLaporan })
       );
       await syncAppSettings({
         periode_start: toIsoDate(tglStart),
         periode_end: toIsoDate(tglEnd),
         lokasi_aktif: lokasiStock !== 'ALL' ? lokasiStock : undefined,
       });
-      await loadLiveRows();
-      showFeedback(`Data Sales Order Detail [${selected.no_so} - ${selected.kode_barang}] tersimpan ke Supabase`);
+      showFeedback('Preset filter Laporan Sales Order tersimpan');
     } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
+      showFeedback(`Gagal menyimpan preset: ${err.message}`);
     } finally {
       setIsBusy(false);
     }
@@ -525,7 +486,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     setIsFindOpen(true);
     try {
       setIsBusy(true);
-      await loadLiveRows({ skipSearch: true });
+      await loadLiveRows();
     } catch (err: any) {
       showFeedback(`Gagal muat: ${err.message}`);
     } finally {
@@ -536,12 +497,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const handleToolbarCari = async () => {
     try {
       setIsBusy(true);
-      const res = await loadLiveRows({ field: searchField, term: searchTerm });
-      showFeedback(
-        searchTerm.trim()
-          ? `Hasil cari Supabase: ${res.length} baris ditemukan`
-          : `Data dimuat ulang (${res.length} baris)`
-      );
+      await loadLiveRows();
+      showFeedback(`Data dimuat (${filteredDetailRows.length} baris sesuai filter)`);
     } catch (err: any) {
       showFeedback(`Gagal mencari: ${err.message}`);
     } finally {
@@ -552,9 +509,17 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
   const handleToolbarReset = async () => {
     setSearchField('Semua');
     setSearchTerm('');
+    setFilterType('all_periode');
+    setMerkFilter('');
+    setKodeBarang('');
+    setNamaBarangDesc('');
+    setCustomerFilter('');
+    setLokasiStock('ALL');
+    setTglStart(defaultRange.start);
+    setTglEnd(defaultRange.end);
     try {
       setIsBusy(true);
-      await loadLiveRows({ field: 'Semua', term: '' });
+      await loadLiveRows();
       showFeedback('Filter pencarian direset');
     } catch (err: any) {
       showFeedback(`Gagal reset: ${err.message}`);
@@ -563,62 +528,12 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     }
   };
 
-  const fetchReportData = async (): Promise<any[]> => {
-    const startIso = toIsoDate(tglStart);
-    const endIso = toIsoDate(tglEnd);
-    const isDetailMode = bentukLaporan.startsWith('01');
-
-    if (isDetailMode) {
-      const fresh = await loadLiveRows({ skipSearch: true });
-      return fresh.filter((r) => {
-        if (startIso && r.tanggalIso && r.tanggalIso < startIso) return false;
-        if (endIso && r.tanggalIso && r.tanggalIso > endIso) return false;
-        if (lokasiStock !== 'ALL' && r.lokasi_stock !== lokasiStock) return false;
-        if (filterType === 'batasan_kode' && kodeBarang.trim()) {
-          const k = kodeBarang.trim().toLowerCase();
-          return (
-            r.kode_barang.toLowerCase().includes(k) ||
-            r.nama_barang.toLowerCase().includes((namaBarangDesc || k).toLowerCase())
-          );
-        }
-        if (filterType === 'customer' && customerFilter.trim()) {
-          return r.customer.toLowerCase().includes(customerFilter.trim().toLowerCase());
-        }
-        return true;
-      });
-    }
-
-    const orders = await erpList<any>('sales_orders', {
-      gte: startIso ? { tanggal: startIso } : undefined,
-      lte: endIso ? { tanggal: endIso } : undefined,
-      orderBy: 'tanggal',
-      asc: false,
-    });
-    return orders
-      .filter((o) => {
-        if (lokasiStock !== 'ALL' && o.lokasi_stock && o.lokasi_stock !== lokasiStock) return false;
-        if (filterType === 'customer' && customerFilter.trim()) {
-          return (o.nama_customer || '').toLowerCase().includes(customerFilter.trim().toLowerCase());
-        }
-        return true;
-      })
-      .map((o) => ({
-        no_so: o.no_bukti || '',
-        tanggal: toDisplayDMyShort(o.tanggal),
-        customer: o.nama_customer || '',
-        sales: o.sales || '',
-        no_po: o.po_no || '',
-        nilai: Number(o.nilai_so || 0),
-        so_close: o.so_close || 'Not Yet',
-      }));
-  };
-
   const handlePreview = async () => {
     try {
       setIsBusy(true);
+      await loadLiveRows();
       setPrintScopeOnOpen('all');
-      const data = await fetchReportData();
-      setPreviewRows(data);
+      setPreviewRows(activeModeRows);
       setIsPrintOpen(true);
     } catch (err: any) {
       showFeedback(`Gagal memuat laporan: ${err.message}`);
@@ -629,57 +544,80 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
 
   const handlePrintSelected = async () => {
     if (!selectedTableRow) {
-      showFeedback('Pilih baris Sales Order Detail yang akan dicetak terlebih dahulu');
+      showFeedback('Pilih baris item Sales Order yang akan dicetak terlebih dahulu');
       return;
     }
-    try {
-      setIsBusy(true);
-      setPrintScopeOnOpen('selected');
-      const data = await fetchReportData().catch(() => filteredTableRows);
-      setPreviewRows(data.length > 0 ? data : filteredTableRows);
-      setIsPrintOpen(true);
-    } catch {
-      setPreviewRows(filteredTableRows);
-      setIsPrintOpen(true);
-    } finally {
-      setIsBusy(false);
+    setPrintScopeOnOpen('selected');
+    setPreviewRows(activeModeRows);
+    setIsPrintOpen(true);
+  };
+
+  const getColumnsForMode = (mode: string): PrintColumn<any>[] => {
+    if (mode.startsWith('01')) {
+      return [
+        { header: 'No.SO', accessor: 'no_so', width: '90px' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '72px' },
+        { header: 'Customer', accessor: 'customer' },
+        { header: 'Kode Brg', accessor: 'kode_barang', width: '75px' },
+        { header: 'Nama Barang', accessor: 'nama_barang' },
+        { header: 'Merk', accessor: 'merk_barang', width: '65px' },
+        { header: 'Unit', accessor: 'unit', align: 'center', width: '42px' },
+        { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '48px' },
+        { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '48px' },
+        { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', width: '48px' },
+        { header: 'Total', accessor: (r) => formatMoney(r.total_item), align: 'right', width: '85px' },
+        { header: 'Status', accessor: 'so_close', align: 'center', width: '55px' },
+      ];
     }
+    if (mode.startsWith('02')) {
+      return [
+        { header: 'No.SO', accessor: 'no_so', width: '100px' },
+        { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '78px' },
+        { header: 'Customer', accessor: 'customer' },
+        { header: 'Sales', accessor: 'sales', align: 'center', width: '70px' },
+        { header: 'No.PO', accessor: 'no_po', width: '85px' },
+        { header: 'Item', accessor: 'jml_item', align: 'right', width: '42px' },
+        { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '55px' },
+        { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '55px' },
+        { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', width: '55px' },
+        { header: '% Kirim', accessor: (r) => `${r.persen}%`, align: 'right', width: '55px' },
+        { header: 'Nilai SO', accessor: (r) => formatMoney(r.nilai), align: 'right', width: '95px' },
+        { header: 'Status', accessor: 'so_close', align: 'center', width: '62px' },
+      ];
+    }
+    return [
+      { header: 'Nama Customer', accessor: 'customer' },
+      { header: 'Jml SO', accessor: 'jml_so', align: 'right', width: '65px' },
+      { header: 'Jml Item', accessor: 'jml_item', align: 'right', width: '65px' },
+      { header: 'Total Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '80px' },
+      { header: 'Total Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '80px' },
+      { header: 'Total Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', width: '80px' },
+      { header: '% Terpenuhi', accessor: (r) => `${r.persen}%`, align: 'right', width: '80px' },
+      { header: 'Total Nilai SO', accessor: (r) => formatMoney(r.nilai), align: 'right', width: '115px' },
+    ];
   };
 
   const handleExportExcel = async () => {
     try {
       setIsBusy(true);
-      const [data, company] = await Promise.all([fetchReportData(), fetchActiveCompanyProfile()]);
-      const isDetail = bentukLaporan.startsWith('01');
+      const company = await fetchActiveCompanyProfile();
+      const cols = getColumnsForMode(bentukLaporan);
       exportToExcel({
-        fileName: 'Sales_Order_Detail',
+        fileName: 'Laporan_Sales_Order',
         sheetTitle: bentukLaporan.toUpperCase(),
         subtitle: `Periode: ${tglStart} s/d ${tglEnd} | Lokasi: ${lokasiStock}`,
         companyProfile: company,
-        columns: isDetail
-          ? [
-              { header: 'No.SO', accessor: 'no_so' },
-              { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
-              { header: 'Customer', accessor: 'customer' },
-              { header: 'Kode Barang', accessor: 'kode_barang' },
-              { header: 'Nama Barang', accessor: 'nama_barang' },
-              { header: 'Unit', accessor: 'unit', align: 'center' },
-              { header: 'Pesan', accessor: 'pesan', align: 'right' },
-              { header: 'Kirim', accessor: 'kirim', align: 'right' },
-              { header: 'Sisa', accessor: 'sisa', align: 'right' },
-            ]
-          : [
-              { header: 'No.SO', accessor: 'no_so' },
-              { header: 'Tanggal', accessor: 'tanggal', align: 'center' },
-              { header: 'Customer', accessor: 'customer' },
-              { header: 'Sales', accessor: 'sales', align: 'center' },
-              { header: 'PO.No', accessor: 'no_po' },
-              { header: 'Nilai SO', accessor: 'nilai', align: 'right' },
-              { header: 'Status', accessor: 'so_close', align: 'center' },
-            ],
-        rows: data,
+        columns: cols.map((c) => ({
+          header: c.header,
+          accessor:
+            typeof c.accessor === 'function'
+              ? (r: any) => (c.accessor as (row: any) => string)(r)
+              : (c.accessor as string),
+          align: c.align,
+        })),
+        rows: activeModeRows,
       });
-      showFeedback('Export Excel selesai');
+      showFeedback('Export Excel Laporan SO selesai');
     } catch (err: any) {
       showFeedback(`Gagal export: ${err.message}`);
     } finally {
@@ -687,32 +625,24 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
     }
   };
 
-  const isDetailMode = bentukLaporan.startsWith('01');
-  const printColumns: PrintColumn<any>[] = isDetailMode
-    ? [
-        { header: 'No.SO', accessor: 'no_so', width: '95px' },
-        { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '75px' },
-        { header: 'Customer', accessor: 'customer' },
-        { header: 'Kode Brg', accessor: 'kode_barang', width: '80px' },
-        { header: 'Nama Barang', accessor: 'nama_barang' },
-        { header: 'Unit', accessor: 'unit', align: 'center', width: '45px' },
-        { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '55px' },
-        { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '55px' },
-        { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', width: '55px' },
-      ]
-    : [
-        { header: 'No.SO', accessor: 'no_so', width: '105px' },
-        { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '80px' },
-        { header: 'Customer', accessor: 'customer' },
-        { header: 'Sales', accessor: 'sales', align: 'center', width: '60px' },
-        { header: 'No.PO', accessor: 'no_po', width: '95px' },
-        { header: 'Nilai SO', accessor: (r) => formatMoney(r.nilai), align: 'right', width: '105px' },
-        { header: 'Status', accessor: 'so_close', align: 'center', width: '70px' },
-      ];
+  const printColumns = getColumnsForMode(bentukLaporan);
+  const rowsToSummarize = previewRows.length > 0 ? previewRows : activeModeRows;
+  const totalPesan = rowsToSummarize.reduce((a, r) => a + Number(r.pesan || 0), 0);
+  const totalKirim = rowsToSummarize.reduce((a, r) => a + Number(r.kirim || 0), 0);
+  const totalSisa = rowsToSummarize.reduce((a, r) => a + Number(r.sisa || 0), 0);
+  const totalNilai = rowsToSummarize.reduce(
+    (a, r) => a + Number(r.nilai ?? r.total_item ?? 0),
+    0
+  );
 
-  const totalPesan = previewRows.reduce((a, r) => a + Number(r.pesan || 0), 0);
-  const totalSisa = previewRows.reduce((a, r) => a + Number(r.sisa || 0), 0);
-  const totalNilai = previewRows.reduce((a, r) => a + Number(r.nilai || 0), 0);
+  const filterSummaryText =
+    filterType === 'merk'
+      ? `Merk: ${merkFilter || 'Semua'}`
+      : filterType === 'batasan_kode'
+      ? `Barang: ${kodeBarang || 'Semua'}`
+      : filterType === 'customer'
+      ? `Customer: ${customerFilter || 'Semua'}`
+      : 'ALL Berdasarkan Periode';
 
   return (
     <div
@@ -720,48 +650,74 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
       className="absolute inset-0 z-30 flex flex-col bg-[#ECE9D8] select-none overflow-hidden font-sans text-xs"
     >
       <FormHeaderBanner
-        title="Sales Order Detail"
+        title="Laporan Sales Order"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={handlePrintSelected}
+        onPrint={handlePreview}
         onTableView={() => loadLiveRows()}
         onExportExcel={handleExportExcel}
       />
 
       <div className="flex-1 overflow-auto p-3 space-y-2.5">
-        <div className="max-w-[660px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-2.5 shadow-xs">
+        <div className="max-w-[700px] p-3 bg-[#ECE9D8] border border-[#808080] flex flex-col space-y-2.5 shadow-xs">
           <div className="border border-[#808080] bg-white py-1.5 px-4 text-center shadow-xs">
             <h1 className="font-extrabold text-[15px] tracking-wide text-black font-sans">
-              SALES ORDER DETAIL
+              LAPORAN SALES ORDER (DETAIL / REKAP / CUSTOMER)
             </h1>
           </div>
 
-          <div className="border-b border-[#999999] pb-2">
-            <FormActionButtons
-              compact
-              onSimpan={handleSimpan}
-              onBaru={handleBaru}
-              onKoreksi={handleKoreksi}
-              onHapus={handleRequestHapus}
-              onPrint={handlePrintSelected}
-              onFind={handleFind}
-              isBusy={isBusy}
-              feedback={feedback}
-            />
+          <div className="border-b border-[#999999] pb-2 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handleSimpanFilter}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Simpan Filter
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => loadLiveRows()}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Muat Ulang
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handlePrintSelected}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Cetak Baris Terpilih
+            </button>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={handleFind}
+              className="h-[25px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] text-[11px] font-semibold text-black cursor-pointer disabled:opacity-50"
+            >
+              Find
+            </button>
+            {feedback && (
+              <span className="ml-2 px-2 py-0.5 bg-[#FFFFCC] border border-[#ACA899] text-[10px] font-semibold text-black">
+                {feedback}
+              </span>
+            )}
           </div>
 
           <fieldset className="border border-[#999999] px-2.5 py-2 rounded-none relative">
             <legend className="text-[11px] font-semibold px-1 text-black">Periode</legend>
             <div className="flex items-center space-x-1.5 pt-0.5">
               <label className="font-bold text-black text-[11px] whitespace-nowrap pl-2 pr-1">
-                Tanggal ( dd-mm-yyyy ) :
+                Tanggal ( dd-MMM-yyyy ) :
               </label>
 
               <DatePickerInput
                 value={tglStart}
                 onChange={(formatted) => setTglStart(formatted)}
-                format="dmy"
-                inputClassName="w-[84px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
+                format="dMyShort"
+                inputClassName="w-[96px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
               />
 
               <span className="w-[62px] h-[21px] flex items-center justify-center bg-[#BDF4BA] border border-[#7A7A7A] text-[11px] font-bold text-black">
@@ -771,8 +727,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
               <DatePickerInput
                 value={tglEnd}
                 onChange={(formatted) => setTglEnd(formatted)}
-                format="dmy"
-                inputClassName="w-[84px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
+                format="dMyShort"
+                inputClassName="w-[96px] h-[21px] bg-white border border-[#7A7A7A] px-1.5 text-[11px] font-mono outline-none"
               />
             </div>
           </fieldset>
@@ -783,17 +739,32 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
             </legend>
 
             <div className="space-y-1.5 pt-0.5">
-              <label className="flex items-center space-x-2 text-[11px] text-[#808080] cursor-not-allowed">
+              <div className="flex items-center space-x-2">
+                <label className="flex items-center space-x-2 text-[11px] text-black font-bold cursor-pointer w-[148px] shrink-0">
+                  <input
+                    type="radio"
+                    name="so_detail_filter"
+                    checked={filterType === 'merk'}
+                    onChange={() => setFilterType('merk')}
+                    className="cursor-pointer"
+                  />
+                  <span>Merk Barang</span>
+                </label>
                 <input
-                  type="radio"
-                  name="so_detail_filter"
-                  disabled
-                  checked={filterType === 'merk'}
-                  onChange={() => setFilterType('merk')}
-                  className="cursor-not-allowed"
+                  type="text"
+                  list="so-detail-merk-list"
+                  value={merkFilter}
+                  onChange={(e) => setMerkFilter(e.target.value.toUpperCase())}
+                  disabled={filterType !== 'merk'}
+                  placeholder="Pilih / ketik merk barang..."
+                  className="flex-1 h-[21px] bg-white border border-[#7A7A7A] px-2 text-[11px] uppercase outline-none disabled:bg-[#ECE9D8]"
                 />
-                <span>Merk Barang</span>
-              </label>
+                <datalist id="so-detail-merk-list">
+                  {merkOptions.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </div>
 
               <div className="flex items-center space-x-2">
                 <label className="flex items-center space-x-2 text-[11px] text-black font-bold cursor-pointer w-[148px] shrink-0">
@@ -844,23 +815,20 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                   />
                   <span>Customer</span>
                 </label>
-                {filterType === 'customer' && (
-                  <>
-                    <input
-                      type="text"
-                      list="so-detail-customer-list"
-                      value={customerFilter}
-                      onChange={(e) => setCustomerFilter(e.target.value)}
-                      placeholder="Pilih / ketik nama customer..."
-                      className="flex-1 h-[21px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none"
-                    />
-                    <datalist id="so-detail-customer-list">
-                      {customerCatalog.map((c) => (
-                        <option key={c} value={c} />
-                      ))}
-                    </datalist>
-                  </>
-                )}
+                <input
+                  type="text"
+                  list="so-detail-customer-list"
+                  value={customerFilter}
+                  onChange={(e) => setCustomerFilter(e.target.value)}
+                  disabled={filterType !== 'customer'}
+                  placeholder="Pilih / ketik nama customer..."
+                  className="flex-1 h-[21px] bg-white border border-[#7A7A7A] px-2 text-[11px] outline-none disabled:bg-[#ECE9D8]"
+                />
+                <datalist id="so-detail-customer-list">
+                  {customerCatalog.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </div>
 
               <label className="flex items-center space-x-2 text-[11px] text-black font-bold cursor-pointer">
@@ -889,19 +857,11 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                     className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer"
                   >
                     <option value="ALL">ALL</option>
-                    {lokasiOptions.length > 0 ? (
-                      lokasiOptions.map((loc) => (
-                        <option key={loc} value={loc}>
-                          {loc}
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="01 - OFFICE">01 - OFFICE</option>
-                        <option value="02 - GUDANG JAKARTA">02 - GUDANG JAKARTA</option>
-                        <option value="03 - CABANG SURABAYA">03 - CABANG SURABAYA</option>
-                      </>
-                    )}
+                    {lokasiOptions.map((loc) => (
+                      <option key={loc} value={loc}>
+                        {loc}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </fieldset>
@@ -914,7 +874,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                   <select
                     value={bentukLaporan}
                     onChange={(e) => setBentukLaporan(e.target.value)}
-                    className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer"
+                    className="w-full px-1.5 py-0.5 text-[11px] bg-white outline-none cursor-pointer font-bold"
                   >
                     <option value="01 - Sales Order Detail">01 - Sales Order Detail</option>
                     <option value="02 - Sales Order Rekap">02 - Sales Order Rekap</option>
@@ -929,7 +889,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                 type="button"
                 disabled={isBusy}
                 onClick={handlePreview}
-                className="w-[82px] h-full bg-[#FFE4C4] hover:bg-[#FFECD6] border-2 border-t-white border-l-white border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-white active:border-b-white font-extrabold text-[11px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
+                className="w-[82px] h-full bg-[#FFE4C4] hover:bg-[#FFECD6] border-2 border-t-white border-l-white border-r-[#808080] border-b-[#808080] font-extrabold text-[11px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center"
               >
                 <span>
                   <span className="underline">P</span>REVIEW
@@ -939,7 +899,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="w-[82px] h-full bg-[#FFE4C4] hover:bg-[#FFECD6] border-2 border-t-white border-l-white border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-white active:border-b-white font-extrabold text-[11px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center p-1"
+                className="w-[82px] h-full bg-[#FFE4C4] hover:bg-[#FFECD6] border-2 border-t-white border-l-white border-r-[#808080] border-b-[#808080] font-extrabold text-[11px] text-black shadow-xs cursor-pointer flex items-center justify-center text-center p-1"
               >
                 <span className="border border-dotted border-black/60 w-full h-full flex items-center justify-center">
                   <span className="underline">C</span>LOSE
@@ -949,8 +909,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           </div>
         </div>
 
-        {/* Live Supabase Search & Data Grid Panel */}
-        <div className="max-w-[980px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
+        {/* Live Data Grid Panel (adapts to Bentuk Laporan 01 / 02 / 03) */}
+        <div className="max-w-[1060px] bg-[#ECE9D8] border border-[#808080] flex flex-col shadow-xs">
           <div className="bg-[#D4D0C8] border-b border-[#808080] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center">
               <ToolbarSearchControl
@@ -975,58 +935,79 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                 placeholder="Cari No.SO, Kode/Nama Barang, Customer..."
               />
             </div>
-            <span className="text-[11px] text-black">
-              Data Supabase (<b>sales_order_items</b>): <b>{filteredTableRows.length}</b> baris
-            </span>
+            <div className="flex items-center space-x-3 text-[11px] text-black">
+              <span>
+                Mode: <b>{bentukLaporan}</b> ({activeModeRows.length} baris)
+              </span>
+              <span>
+                Pesan: <b>{formatMoney(totalPesan)}</b> | Kirim: <b>{formatMoney(totalKirim)}</b> | Sisa:{' '}
+                <b>{formatMoney(totalSisa)}</b>
+              </span>
+            </div>
           </div>
 
-          <div className="max-h-[220px] overflow-auto bg-white">
+          <div className="max-h-[260px] overflow-auto bg-white">
             <table className="w-full border-collapse text-[11px]">
               <thead className="sticky top-0 bg-[#ECE9D8] border-b border-[#808080]">
-                <tr>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Customer</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.PO</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Kode Brg</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Barang</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-center">Unit</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">Pesan</th>
-                  <th className="border-r border-[#ACA899] px-2 py-1 text-right">Kirim</th>
-                  <th className="px-2 py-1 text-right">Sisa</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTableRows.length === 0 ? (
+                {bentukLaporan.startsWith('01') ? (
                   <tr>
-                    <td colSpan={10} className="text-center py-5 text-gray-500 italic">
-                      Belum ada data Sales Order Detail. Klik "Baru" untuk menambah item SO ke Supabase.
-                    </td>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Customer</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.PO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Kode Brg</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Barang</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Merk</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Unit</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Pesan</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Kirim</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Sisa</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total</th>
+                    <th className="px-2 py-1 text-center">Status</th>
+                  </tr>
+                ) : bentukLaporan.startsWith('02') ? (
+                  <tr>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.SO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Tanggal</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Customer</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-center">Sales</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">No.PO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Item</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Pesan</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Kirim</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Sisa</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">% Kirim</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Nilai SO</th>
+                    <th className="px-2 py-1 text-center">Status</th>
                   </tr>
                 ) : (
-                  filteredTableRows.map((r) => {
+                  <tr>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-left">Nama Customer</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Jml SO</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Jml Item</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total Pesan</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total Kirim</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">Total Sisa</th>
+                    <th className="border-r border-[#ACA899] px-2 py-1 text-right">% Terpenuhi</th>
+                    <th className="px-2 py-1 text-right">Total Nilai SO</th>
+                  </tr>
+                )}
+              </thead>
+              <tbody>
+                {activeModeRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={13} className="text-center py-6 text-gray-500 italic">
+                      Tidak ada data Sales Order sesuai filter yang dipilih.
+                    </td>
+                  </tr>
+                ) : bentukLaporan.startsWith('01') ? (
+                  activeModeRows.map((r: SoDetailGridRow) => {
                     const isSel = r.id === selectedId;
                     return (
                       <tr
                         key={r.id}
                         onClick={() => setSelectedId(r.id)}
-                        onDoubleClick={() => {
-                          setSelectedId(r.id);
-                          setEditingId(r.id);
-                          setModalError(null);
-                          setFormNoSo(r.no_so);
-                          setFormTanggal(r.tanggal !== '-' ? r.tanggal : toDisplayDMyShort(todayIso()));
-                          setFormNoPo(r.no_po);
-                          setFormCustomer(r.customer);
-                          setFormKodeBarang(r.kode_barang);
-                          setFormNamaBarang(r.nama_barang);
-                          setFormUnit(r.unit || 'PCS');
-                          setFormPesan(String(r.pesan));
-                          setFormKirim(String(r.kirim));
-                          setFormLokasiStock(r.lokasi_stock || '01 - OFFICE');
-                          setFormSoClose(r.so_close || (r.sisa === 0 ? 'Closed' : 'Not Yet'));
-                          setIsCrudOpen(true);
-                        }}
+                        onDoubleClick={handlePrintSelected}
                         className={`cursor-pointer border-b border-[#E0E0E0] ${
                           isSel ? 'bg-[#316AC5] text-white' : 'hover:bg-[#EAF2FC]'
                         }`}
@@ -1037,13 +1018,46 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_po || '-'}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.kode_barang}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1">{r.nama_barang}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.merk_barang || '-'}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.unit}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.pesan)}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.kirim)}</td>
-                        <td className="px-2 py-1 text-right font-mono font-bold">{formatMoney(r.sisa)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">{formatMoney(r.sisa)}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.total_item)}</td>
+                        <td className="px-2 py-1 text-center">{r.so_close}</td>
                       </tr>
                     );
                   })
+                ) : bentukLaporan.startsWith('02') ? (
+                  activeModeRows.map((r: any) => (
+                    <tr key={r.id} className="border-b border-[#E0E0E0] hover:bg-[#EAF2FC]">
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono font-bold">{r.no_so}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.tanggal}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1">{r.customer}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.sales}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono">{r.no_po}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.jml_item}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.pesan)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.kirim)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">{formatMoney(r.sisa)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.persen}%</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">{formatMoney(r.nilai)}</td>
+                      <td className="px-2 py-1 text-center">{r.so_close}</td>
+                    </tr>
+                  ))
+                ) : (
+                  activeModeRows.map((r: any) => (
+                    <tr key={r.id} className="border-b border-[#E0E0E0] hover:bg-[#EAF2FC]">
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 font-semibold">{r.customer}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.jml_so}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.jml_item}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.pesan)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{formatMoney(r.kirim)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">{formatMoney(r.sisa)}</td>
+                      <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono">{r.persen}%</td>
+                      <td className="px-2 py-1 text-right font-mono font-bold">{formatMoney(r.nilai)}</td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -1051,235 +1065,10 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
         </div>
       </div>
 
-      {/* Add / Edit Item Sales Order Modal */}
-      {isCrudOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-2xl w-[480px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden text-xs">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 flex justify-between items-center font-bold shrink-0">
-              <span>{editingId ? 'Koreksi Item Sales Order' : 'Tambah Sales Order Detail Baru'}</span>
-              <button
-                type="button"
-                onClick={() => setIsCrudOpen(false)}
-                className="w-5 h-5 bg-[#C00000] text-white font-bold flex items-center justify-center cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <form noValidate onSubmit={handleSaveCrud} className="p-3 space-y-2 text-[11px] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">No. SO *</label>
-                  <input
-                    type="text"
-                    value={formNoSo}
-                    onChange={(e) => setFormNoSo(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Tanggal</label>
-                  <DatePickerInput
-                    value={formTanggal}
-                    onChange={(fmt) => setFormTanggal(fmt)}
-                    format="dmy"
-                    inputClassName="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">Customer *</label>
-                  <input
-                    type="text"
-                    list="so-modal-cust"
-                    value={formCustomer}
-                    onChange={(e) => setFormCustomer(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
-                  />
-                  <datalist id="so-modal-cust">
-                    {customerCatalog.map((c) => (
-                      <option key={c} value={c} />
-                    ))}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">No. PO</label>
-                  <input
-                    type="text"
-                    value={formNoPo}
-                    onChange={(e) => setFormNoPo(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">Kode Barang *</label>
-                  <input
-                    type="text"
-                    list="so-modal-brg"
-                    value={formKodeBarang}
-                    onChange={(e) => {
-                      const val = e.target.value.toUpperCase();
-                      setFormKodeBarang(val);
-                      const found = barangCatalog.find((b) => b.kode.toUpperCase() === val);
-                      if (found) {
-                        setFormNamaBarang(found.nama);
-                        setFormUnit(found.unit || 'PCS');
-                      }
-                    }}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] font-mono uppercase"
-                  />
-                  <datalist id="so-modal-brg">
-                    {barangCatalog.map((b) => (
-                      <option key={b.kode} value={b.kode}>
-                        {b.nama}
-                      </option>
-                    ))}
-                  </datalist>
-                </div>
-                <div className="col-span-2">
-                  <label className="block font-bold mb-0.5">Nama Barang</label>
-                  <input
-                    type="text"
-                    value={formNamaBarang}
-                    onChange={(e) => setFormNamaBarang(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">Unit</label>
-                  <input
-                    type="text"
-                    value={formUnit}
-                    onChange={(e) => setFormUnit(e.target.value.toUpperCase())}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Qty Pesan</label>
-                  <input
-                    type="number"
-                    value={formPesan}
-                    onChange={(e) => setFormPesan(e.target.value)}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Qty Kirim</label>
-                  <input
-                    type="number"
-                    value={formKirim}
-                    onChange={(e) => setFormKirim(e.target.value)}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A] text-right font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Sisa (Auto)</label>
-                  <input
-                    type="number"
-                    readOnly
-                    value={Math.max(0, parseNum(formPesan) - parseNum(formKirim))}
-                    className="w-full h-[24px] px-2 bg-[#ECE9D8] border border-[#7A7A7A] text-right font-mono font-bold text-[#0A246A]"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-bold mb-0.5">Lokasi Stock</label>
-                  <input
-                    type="text"
-                    list="so-detail-lokasi-list"
-                    value={formLokasiStock}
-                    onChange={(e) => setFormLokasiStock(e.target.value)}
-                    className="w-full h-[24px] px-2 bg-white border border-[#7A7A7A]"
-                  />
-                  <datalist id="so-detail-lokasi-list">
-                    {lokasiOptions.map((loc) => (
-                      <option key={loc} value={loc} />
-                    ))}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="block font-bold mb-0.5">Status SO (so_close)</label>
-                  <select
-                    value={formSoClose}
-                    onChange={(e) => setFormSoClose(e.target.value)}
-                    className="w-full h-[24px] px-1 bg-white border border-[#7A7A7A]"
-                  >
-                    <option value="Not Yet">Not Yet</option>
-                    <option value="Closed">Closed</option>
-                  </select>
-                </div>
-              </div>
-
-              {modalError && (
-                <div className="p-2 bg-[#FDE8E8] border border-[#C00000] text-[#900000] font-semibold">
-                  {modalError}
-                </div>
-              )}
-
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
-                <button
-                  type="button"
-                  onClick={() => setIsCrudOpen(false)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isBusy}
-                  className="px-4 py-1 bg-[#0A246A] text-white border border-black font-bold cursor-pointer"
-                >
-                  Simpan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {confirmDeleteRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
-              Konfirmasi Hapus Item Sales Order
-            </div>
-            <div className="p-4 text-xs text-black space-y-3">
-              <p>
-                Yakin ingin menghapus item [{confirmDeleteRow.no_so} - {confirmDeleteRow.kode_barang}]
-                dari database Supabase?
-              </p>
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteRow(null)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={handleConfirmHapus}
-                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
-                >
-                  Ya, Hapus
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <SupabaseFindModal<SoDetailGridRow>
         isOpen={isFindOpen}
         onClose={() => setIsFindOpen(false)}
-        tableLabel="Sales Order Detail"
+        tableLabel="Laporan Sales Order"
         rows={tableRows}
         columns={[
           { header: 'No.SO', accessor: (r) => r.no_so, mono: true, bold: true },
@@ -1288,7 +1077,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           { header: 'No.PO', accessor: (r) => r.no_po || '-', mono: true },
           { header: 'Kode Brg', accessor: (r) => r.kode_barang, mono: true },
           { header: 'Nama Barang', accessor: (r) => r.nama_barang },
-          { header: 'Unit', accessor: (r) => r.unit, align: 'center' },
+          { header: 'Merk', accessor: (r) => r.merk_barang || '-' },
           { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', mono: true },
           { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', mono: true, bold: true },
         ]}
@@ -1300,6 +1089,7 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           r.no_po,
           r.kode_barang,
           r.nama_barang,
+          r.merk_barang,
           r.unit,
           r.lokasi_stock,
           r.so_close,
@@ -1309,8 +1099,8 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           setSelectedId(r.id);
           showFeedback(`Sales Order Detail [${r.no_so} - ${r.kode_barang}] dipilih`);
         }}
-        onSearchSupabase={(q) => loadLiveRows({ field: 'Semua', term: q })}
-        onRefreshSupabase={() => loadLiveRows({ field: 'Semua', term: '' })}
+        onSearchSupabase={() => loadLiveRows()}
+        onRefreshSupabase={() => loadLiveRows()}
         isBusy={isBusy}
       />
 
@@ -1343,9 +1133,9 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
           { header: 'No.SO', accessor: 'no_so', width: '95px' },
           { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '75px' },
           { header: 'Customer', accessor: 'customer' },
-          { header: 'No.PO', accessor: 'no_po', width: '85px' },
           { header: 'Kode Brg', accessor: 'kode_barang', width: '80px' },
           { header: 'Nama Barang', accessor: 'nama_barang' },
+          { header: 'Merk', accessor: 'merk_barang', width: '70px' },
           { header: 'Unit', accessor: 'unit', align: 'center', width: '45px' },
           { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '55px' },
           { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '55px' },
@@ -1363,31 +1153,18 @@ export const SalesOrderDetailForm: React.FC<SalesOrderDetailFormProps> = ({
         metaLines={[
           { label: 'Periode Tanggal', value: `${tglStart} s/d ${tglEnd}` },
           { label: 'Lokasi Stock', value: lokasiStock },
-          {
-            label: 'Filter Laporan',
-            value:
-              filterType === 'batasan_kode'
-                ? kodeBarang || 'Semua Barang'
-                : filterType === 'customer'
-                ? customerFilter || 'Semua Customer'
-                : 'ALL Berdasarkan Periode',
-          },
+          { label: 'Filter Laporan', value: filterSummaryText },
           { label: 'Bentuk Laporan', value: bentukLaporan },
         ]}
         columns={printColumns}
-        rows={previewRows}
-        summaryItems={
-          isDetailMode
-            ? [
-                { label: 'Total Item', value: `${previewRows.length} Baris` },
-                { label: 'Total Qty Pesan', value: formatMoney(totalPesan) },
-                { label: 'Total Qty Sisa', value: formatMoney(totalSisa) },
-              ]
-            : [
-                { label: 'Total Dokumen SO', value: `${previewRows.length} SO` },
-                { label: 'Total Nilai SO', value: formatRupiah(totalNilai) },
-              ]
-        }
+        rows={activeModeRows}
+        summaryItems={[
+          { label: 'Total Baris', value: `${activeModeRows.length} Baris` },
+          { label: 'Total Qty Pesan', value: formatMoney(totalPesan) },
+          { label: 'Total Qty Kirim', value: formatMoney(totalKirim) },
+          { label: 'Total Qty Sisa', value: formatMoney(totalSisa) },
+          { label: 'Total Nilai', value: formatRupiah(totalNilai) },
+        ]}
       />
     </div>
   );

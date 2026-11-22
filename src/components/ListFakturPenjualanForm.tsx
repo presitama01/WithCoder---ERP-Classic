@@ -3,6 +3,7 @@ import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
   addDaysToIsoDate,
   erpCompositeSave,
@@ -37,7 +38,15 @@ export interface FakturPenjualanItem {
   sales: string;
   jthTmp: string;
   keterangan: string;
+  subtotal: number;
+  discPct: number;
+  nilaiDisc: number;
+  dpp: number;
   ppn: string;
+  ppnPct: number;
+  nilaiPpn: number;
+  noDp: string;
+  totalDp: number;
   nilaiPenjualan: string;
   nilaiPenjualanNum: number;
   lokasiStock: string;
@@ -74,12 +83,14 @@ interface SalesOrderRef {
   sales: string;
   poNo: string;
   nilaiSo: number;
+  discPct: number;
   ppn: number;
   lokasiStock: string;
   keterangan: string;
 }
 
 interface SuratJalanRef {
+  id: string;
   noBukti: string;
   noSo: string;
   poNo: string;
@@ -87,6 +98,24 @@ interface SuratJalanRef {
   sales: string;
   lokasiStock: string;
   noFaktur: string;
+  stsPost: string;
+  keterangan: string;
+}
+
+interface FakturDpRef {
+  id: string;
+  noBukti: string;
+  namaCustomer: string;
+  noSo: string;
+  nilaiPenjualan: number;
+  dpUsedOnFaktur: string;
+}
+
+interface BankRef {
+  namaBank: string;
+  accNumber: string;
+  accName: string;
+  cabang: string;
 }
 
 interface MasterBarangOption {
@@ -101,6 +130,9 @@ interface MasterCustomerMeta {
   namaCustomer: string;
   sales: string;
   ppn: boolean;
+  npwp: string;
+  alamatNpwp: string;
+  invAlamat: string;
   tmpPembayaran: number;
   limitKredit: number;
   piutang: number;
@@ -111,8 +143,80 @@ interface ListFakturPenjualanFormProps {
   onClose: () => void;
 }
 
+const TERBILANG_SATUAN = [
+  '',
+  'Satu',
+  'Dua',
+  'Tiga',
+  'Empat',
+  'Lima',
+  'Enam',
+  'Tujuh',
+  'Delapan',
+  'Sembilan',
+  'Sepuluh',
+  'Sebelas',
+];
+
+function terbilangAngka(n: number): string {
+  const num = Math.floor(Math.abs(n));
+  if (num === 0) return '';
+  if (num < 12) return TERBILANG_SATUAN[num];
+  if (num < 20) return `${terbilangAngka(num - 10)} Belas`;
+  if (num < 100) return `${terbilangAngka(Math.floor(num / 10))} Puluh ${terbilangAngka(num % 10)}`.trim();
+  if (num < 200) return `Seratus ${terbilangAngka(num - 100)}`.trim();
+  if (num < 1000) return `${terbilangAngka(Math.floor(num / 100))} Ratus ${terbilangAngka(num % 100)}`.trim();
+  if (num < 2000) return `Seribu ${terbilangAngka(num - 1000)}`.trim();
+  if (num < 1_000_000) return `${terbilangAngka(Math.floor(num / 1000))} Ribu ${terbilangAngka(num % 1000)}`.trim();
+  if (num < 1_000_000_000) return `${terbilangAngka(Math.floor(num / 1_000_000))} Juta ${terbilangAngka(num % 1_000_000)}`.trim();
+  if (num < 1_000_000_000_000) return `${terbilangAngka(Math.floor(num / 1_000_000_000))} Miliar ${terbilangAngka(num % 1_000_000_000)}`.trim();
+  return `${terbilangAngka(Math.floor(num / 1_000_000_000_000))} Triliun ${terbilangAngka(num % 1_000_000_000_000)}`.trim();
+}
+
+function terbilangRupiah(val: number): string {
+  const rounded = Math.round(Math.abs(val || 0));
+  if (rounded === 0) return 'Nol Rupiah';
+  return `${terbilangAngka(rounded)} Rupiah`;
+}
+
+function calcFakturTotals(
+  grossSubtotal: number,
+  discPct: number,
+  ppnPct: number,
+  dpAmount: number
+) {
+  const subtotal = Math.max(0, Math.round(grossSubtotal || 0));
+  const safeDisc = Math.max(0, Math.min(100, Number(discPct || 0)));
+  const safePpn = Math.max(0, Number(ppnPct || 0));
+  const nilaiDisc = Math.round((subtotal * safeDisc) / 100);
+  const dpp = Math.max(0, subtotal - nilaiDisc);
+  const nilaiPpn = Math.round((dpp * safePpn) / 100);
+  const totalDp = Math.max(0, Math.round(dpAmount || 0));
+  const grandTotal = Math.max(0, dpp + nilaiPpn - totalDp);
+  return { subtotal, nilaiDisc, dpp, nilaiPpn, totalDp, grandTotal };
+}
+
 function mapDbToFaktur(r: any): FakturPenjualanItem {
   const nilaiNum = Number(r.nilai_penjualan || 0);
+  const ppnPct = Number(r.ppn ?? 11);
+  const discPct = Number(r.disc_pct || 0);
+  const totalDp = Number(r.total_dp || 0);
+  const nilaiPpn =
+    r.nilai_ppn !== undefined && r.nilai_ppn !== null
+      ? Number(r.nilai_ppn || 0)
+      : ppnPct > 0
+      ? Math.round((nilaiNum + totalDp) - (nilaiNum + totalDp) / (1 + ppnPct / 100))
+      : 0;
+  const dpp =
+    r.dpp !== undefined && r.dpp !== null && Number(r.dpp) > 0
+      ? Number(r.dpp)
+      : Math.max(0, nilaiNum + totalDp - nilaiPpn);
+  const nilaiDisc = Number(r.nilai_disc || 0);
+  const subtotal =
+    r.subtotal !== undefined && r.subtotal !== null && Number(r.subtotal) > 0
+      ? Number(r.subtotal)
+      : dpp + nilaiDisc;
+
   return {
     id: r.id,
     noBukti: r.no_bukti || '',
@@ -126,7 +230,15 @@ function mapDbToFaktur(r: any): FakturPenjualanItem {
     sales: r.sales || '',
     jthTmp: toDisplayDMyShort(r.jth_tmp),
     keterangan: r.keterangan || '',
-    ppn: `${Number(r.ppn ?? 11)}%`,
+    subtotal,
+    discPct,
+    nilaiDisc,
+    dpp,
+    ppn: `${ppnPct}%`,
+    ppnPct,
+    nilaiPpn,
+    noDp: r.no_dp || '',
+    totalDp,
     nilaiPenjualan: formatMoney(nilaiNum, true),
     nilaiPenjualanNum: nilaiNum,
     lokasiStock: r.lokasi_stock || '01 - OFFICE',
@@ -185,13 +297,13 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const [fakturList, setFakturList] = useState<FakturPenjualanItem[]>([]);
   const [fakturDetailsMap, setFakturDetailsMap] = useState<Record<string, FakturDetailItem[]>>({});
   const [soDetailsByNoSoMap, setSoDetailsByNoSoMap] = useState<Record<string, FakturDetailItem[]>>({});
+  const [sjDetailsByIdMap, setSjDetailsByIdMap] = useState<Record<string, FakturDetailItem[]>>({});
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
-
   const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -204,6 +316,8 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   // Reference catalogs from Supabase
   const [soOptions, setSoOptions] = useState<SalesOrderRef[]>([]);
   const [sjOptions, setSjOptions] = useState<SuratJalanRef[]>([]);
+  const [dpOptions, setDpOptions] = useState<FakturDpRef[]>([]);
+  const [bankOptions, setBankOptions] = useState<BankRef[]>([]);
   const [customerOptions, setCustomerOptions] = useState<string[]>([]);
   const [customerMetaMap, setCustomerMetaMap] = useState<Record<string, MasterCustomerMeta>>({});
   const [salesOptions, setSalesOptions] = useState<string[]>([]);
@@ -213,6 +327,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const [showCreditOverrideBox, setShowCreditOverrideBox] = useState<boolean>(false);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
+  const [barangPriceMap, setBarangPriceMap] = useState<Record<string, number>>({});
 
   // Modal fields
   const [newNoBukti, setNewNoBukti] = useState<string>('');
@@ -225,14 +340,17 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const [newSales, setNewSales] = useState<string>('');
   const [newJthTmp, setNewJthTmp] = useState<string>('');
   const [newKeterangan, setNewKeterangan] = useState<string>('');
+  const [newDiscPct, setNewDiscPct] = useState<string>('0');
   const [newPpn, setNewPpn] = useState<string>('11');
+  const [newNoDp, setNewNoDp] = useState<string>('');
+  const [newTotalDp, setNewTotalDp] = useState<string>('0');
   const [newNilaiPenjualan, setNewNilaiPenjualan] = useState<string>('0');
   const [newLokasiStock, setNewLokasiStock] = useState<string>('01 - OFFICE');
   const [newStsLunas, setNewStsLunas] = useState<string>('Not Yet');
   const [newTglLunas, setNewTglLunas] = useState<string>('');
   const [newStsPrint, setNewStsPrint] = useState<string>('Not Yet');
   const [newTglPrint, setNewTglPrint] = useState<string>('');
-  const [newStsPost, setNewStsPost] = useState<string>('Not Yet');
+  const [newStsPost, setNewStsPost] = useState<string>('Posting');
   const [newTglPost, setNewTglPost] = useState<string>('');
   const [newDibuatOleh, setNewDibuatOleh] = useState<string>('');
   const [newTglCreated, setNewTglCreated] = useState<string>('');
@@ -244,20 +362,43 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2800);
+    setTimeout(() => setFeedback(null), 3000);
   };
 
   const loadMasterReferences = async () => {
-    const [soRes, soDetRes, sjRes, custRes, salesRes, lokasiRes, barangRes] =
+    const [soRes, soDetRes, sjRes, sjDetRes, custRes, salesRes, lokasiRes, barangRes, bankRes] =
       await Promise.allSettled([
         erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false, limit: 1000 }),
         erpList<any>('sales_order_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
         erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+        erpList<any>('surat_jalan_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
         erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true, limit: 1000 }),
         erpList<any>('master_sales', { orderBy: 'nama_sales', asc: true, limit: 1000 }),
         erpList<any>('master_lokasi_gudangs', { orderBy: 'kode', asc: true, limit: 1000 }),
         erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
+        erpList<any>('master_banks', { orderBy: 'nama_bank', asc: true, limit: 200 }),
       ]);
+
+    const priceByKode: Record<string, number> = {};
+    if (barangRes.status === 'fulfilled') {
+      const mappedBarangs: MasterBarangOption[] = barangRes.value
+        .filter((b: any) => b.is_active !== false)
+        .map((b: any) => {
+          const kd = String(b.kode || '').trim().toUpperCase();
+          const pr = Number(b.price || 0);
+          if (kd) priceByKode[kd] = pr;
+          return {
+            kode: kd,
+            namaBarang: String(b.nama_barang || '').trim(),
+            unit: String(b.unit || 'PCS').trim().toUpperCase(),
+            price: pr,
+            cost: Number(b.cost || 0),
+          };
+        })
+        .filter((b: MasterBarangOption) => b.kode);
+      setBarangOptions(mappedBarangs);
+      setBarangPriceMap(priceByKode);
+    }
 
     const soListMapped: SalesOrderRef[] = [];
     const soIdToNoBukti = new Map<string, string>();
@@ -273,6 +414,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
           sales: String(s.sales || '').trim().toUpperCase(),
           poNo: String(s.po_no || '').trim().toUpperCase(),
           nilaiSo: Number(s.nilai_so || 0),
+          discPct: Number(s.disc_pct || 0),
           ppn: Number(s.ppn ?? 11),
           lokasiStock: String(s.lokasi_stock || '01 - OFFICE').trim().toUpperCase(),
           keterangan: String(s.keterangan || '').trim(),
@@ -304,16 +446,50 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     if (sjRes.status === 'fulfilled') {
       const sjs: SuratJalanRef[] = sjRes.value
         .map((r: any) => ({
+          id: String(r.id),
           noBukti: String(r.no_bukti || '').trim().toUpperCase(),
           noSo: String(r.no_so || '').trim().toUpperCase(),
           poNo: String(r.po_no || '').trim().toUpperCase(),
           namaCustomer: String(r.nama_customer || '').trim().toUpperCase(),
           sales: String(r.sales || '').trim().toUpperCase(),
-          lokasiStock: String(r.lokasi_stock || '').trim().toUpperCase(),
+          lokasiStock: String(r.lokasi_stock || '01 - OFFICE').trim().toUpperCase(),
           noFaktur: String(r.no_faktur || '').trim().toUpperCase(),
+          stsPost: String(r.sts_post || '').trim(),
+          keterangan: String(r.keterangan || '').trim(),
         }))
-        .filter((s: SuratJalanRef) => s.noBukti);
+        .filter((s: SuratJalanRef) => s.noBukti)
+        .sort((a: SuratJalanRef, b: SuratJalanRef) => {
+          const aReady = !a.noFaktur && a.stsPost.toUpperCase().startsWith('POST') ? 1 : 0;
+          const bReady = !b.noFaktur && b.stsPost.toUpperCase().startsWith('POST') ? 1 : 0;
+          return bReady - aReady;
+        });
       setSjOptions(sjs);
+    }
+
+    if (sjDetRes.status === 'fulfilled') {
+      const groupedSj: Record<string, FakturDetailItem[]> = {};
+      for (const raw of sjDetRes.value) {
+        const sid = String(raw.surat_jalan_id || '');
+        if (!sid) continue;
+        if (!groupedSj[sid]) groupedSj[sid] = [];
+        const qtyVal = Number(raw.terima || 0) > 0 ? Number(raw.terima) : Number(raw.qty || 0);
+        const kode = String(raw.kode || '').trim().toUpperCase();
+        const hargaVal = Number(raw.harga || 0) > 0 ? Number(raw.harga) : priceByKode[kode] || 0;
+        const totalVal = qtyVal * hargaVal;
+        groupedSj[sid].push({
+          id: String(raw.id || `sjdet-${sid}-${groupedSj[sid].length}`),
+          noUrut: groupedSj[sid].length + 1,
+          kode,
+          namaBarang: String(raw.nama_barang || '').trim(),
+          unit: String(raw.unit || 'PCS').trim().toUpperCase(),
+          terima: qtyVal,
+          qty: qtyVal,
+          harga: hargaVal,
+          jumlah: totalVal,
+          total: totalVal,
+        });
+      }
+      setSjDetailsByIdMap(groupedSj);
     }
 
     if (custRes.status === 'fulfilled') {
@@ -327,8 +503,11 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
               if (nm) {
                 cMetaMap[nm] = {
                   namaCustomer: nm,
-                  sales: String(c.sales || '').trim().toUpperCase(),
+                  sales: String(c.sales || c.nama_sales || '').trim().toUpperCase(),
                   ppn: c.ppn !== false,
+                  npwp: String(c.npwp || '').trim(),
+                  alamatNpwp: String(c.alamat_npwp || '').trim(),
+                  invAlamat: String(c.inv_alamat || c.alamat || '').trim(),
                   tmpPembayaran: Math.max(0, Number(c.tmp_pembayaran || 0)),
                   limitKredit: Math.max(0, Number(c.limit_kredit || 0)),
                   piutang: Math.max(0, Number(c.piutang || 0)),
@@ -361,6 +540,19 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       setSalesOptions(salesList);
     }
 
+    if (bankRes.status === 'fulfilled') {
+      setBankOptions(
+        bankRes.value
+          .filter((b: any) => b.is_active !== false)
+          .map((b: any) => ({
+            namaBank: String(b.nama_bank || '').trim(),
+            accNumber: String(b.acc_number || '').trim(),
+            accName: String(b.acc_name || '').trim(),
+            cabang: String(b.cabang || '').trim(),
+          }))
+      );
+    }
+
     if (lokasiRes.status === 'fulfilled') {
       const sortedLok = [...lokasiRes.value]
         .filter((l: any) => l.is_active !== false)
@@ -381,19 +573,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       return { defaultLokasi: lokasis[0] || '01 - OFFICE' };
     }
 
-    if (barangRes.status === 'fulfilled') {
-      const mappedBarangs: MasterBarangOption[] = barangRes.value
-        .filter((b: any) => b.is_active !== false)
-        .map((b: any) => ({
-          kode: String(b.kode || '').trim().toUpperCase(),
-          namaBarang: String(b.nama_barang || '').trim(),
-          unit: String(b.unit || 'PCS').trim().toUpperCase(),
-          price: Number(b.price || 0),
-          cost: Number(b.cost || 0),
-        }))
-        .filter((b: MasterBarangOption) => b.kode);
-      setBarangOptions(mappedBarangs);
-    }
     return { defaultLokasi: lokasiOptions[0] || '01 - OFFICE' };
   };
 
@@ -443,11 +622,25 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         }
       }
 
-      const [rows, details] = await Promise.all([
+      const [rows, details, ppnRate] = await Promise.all([
         erpList<any>('faktur_penjualans', queryOpts),
         erpList<any>('faktur_penjualan_details', { orderBy: 'no_urut', asc: true }).catch(() => []),
+        fetchDefaultPpnRate(),
         loadMasterReferences(),
       ]);
+      setDefaultCompanyPpn(ppnRate);
+
+      const dpRefs: FakturDpRef[] = rows
+        .filter((r: any) => String(r.jenis_faktur || '').trim().toUpperCase() === 'DP')
+        .map((r: any) => ({
+          id: String(r.id),
+          noBukti: String(r.no_bukti || '').trim().toUpperCase(),
+          namaCustomer: String(r.nama_customer || '').trim().toUpperCase(),
+          noSo: String(r.no_so || '').trim().toUpperCase(),
+          nilaiPenjualan: Number(r.nilai_penjualan || 0),
+          dpUsedOnFaktur: String(r.dp_used_on_faktur || '').trim().toUpperCase(),
+        }));
+      setDpOptions(dpRefs);
 
       const regularRows = rows.filter((r: any) => {
         const jenis = String(r.jenis_faktur || 'REGULAR').trim().toUpperCase();
@@ -491,11 +684,18 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
       const tglIso = selected.tanggalIso || toIsoDate(selected.tanggal) || todayIso();
       const existingDetails = fakturDetailsMap[selected.id] || [];
-      const totalFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
-      const finalNilaiPenjualan =
-        existingDetails.length > 0 && totalFromDetails > 0
-          ? totalFromDetails
-          : Number(selected.nilaiPenjualanNum || 0);
+      const grossFromDetails = existingDetails.reduce((acc, d) => acc + d.total, 0);
+      const calc =
+        existingDetails.length > 0 && grossFromDetails > 0
+          ? calcFakturTotals(grossFromDetails, selected.discPct, selected.ppnPct, selected.totalDp)
+          : {
+              subtotal: selected.subtotal,
+              nilaiDisc: selected.nilaiDisc,
+              dpp: selected.dpp,
+              nilaiPpn: selected.nilaiPpn,
+              totalDp: selected.totalDp,
+              grandTotal: Number(selected.nilaiPenjualanNum || 0),
+            };
 
       const headerPayload: Record<string, any> = {
         id: selected.id,
@@ -510,8 +710,15 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         sales: selected.sales.trim().toUpperCase(),
         jth_tmp: toIsoDate(selected.jthTmp) || tglIso,
         keterangan: selected.keterangan.trim(),
-        ppn: parseNum(selected.ppn),
-        nilai_penjualan: finalNilaiPenjualan,
+        ppn: selected.ppnPct,
+        subtotal: calc.subtotal,
+        disc_pct: selected.discPct,
+        nilai_disc: calc.nilaiDisc,
+        dpp: calc.dpp,
+        nilai_ppn: calc.nilaiPpn,
+        no_dp: selected.noDp.trim().toUpperCase(),
+        total_dp: calc.totalDp,
+        nilai_penjualan: calc.grandTotal,
         lokasi_stock: selected.lokasiStock.trim().toUpperCase() || '01 - OFFICE',
         sts_lunas: selected.stsLunas || 'Not Yet',
         tgl_lunas: selected.tglLunas ? toIsoDate(selected.tglLunas) : null,
@@ -566,7 +773,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     [fakturList, selectedId]
   );
 
-  // Saved details on faktur, or fallback to sales_order_details matching No. SO
   const selectedFakturDetails = useMemo(() => {
     if (!selectedFaktur) return [];
     const saved = fakturDetailsMap[selectedFaktur.id];
@@ -593,18 +799,46 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     [detailRows]
   );
 
+  const modalBillingBreakdown = useMemo(
+    () => calcFakturTotals(modalDetailTotal, parseNum(newDiscPct), parseNum(newPpn), parseNum(newTotalDp)),
+    [modalDetailTotal, newDiscPct, newPpn, newTotalDp]
+  );
+
+  const availableDpChoices = useMemo(() => {
+    const cleanCust = newCustomer.trim().toUpperCase();
+    const cleanSo = newNoSo.trim().toUpperCase();
+    const currentFakturNo = newNoBukti.trim().toUpperCase();
+    return dpOptions.filter((d) => {
+      const notUsedElsewhere = !d.dpUsedOnFaktur || d.dpUsedOnFaktur === currentFakturNo;
+      if (!notUsedElsewhere) return false;
+      if (cleanSo && d.noSo) return d.noSo === cleanSo;
+      if (cleanCust && d.namaCustomer) return d.namaCustomer === cleanCust;
+      return true;
+    });
+  }, [dpOptions, newCustomer, newNoSo, newNoBukti]);
+
   if (!isOpen) return null;
+
+  const syncModalGrandTotal = (
+    rows: FakturDetailItem[],
+    discStr = newDiscPct,
+    ppnStr = newPpn,
+    dpStr = newTotalDp
+  ) => {
+    const hasFilled = rows.some((r) => r.kode.trim() || r.namaBarang.trim());
+    if (hasFilled) {
+      const gross = rows.reduce((acc, r) => acc + r.total, 0);
+      const calc = calcFakturTotals(gross, parseNum(discStr), parseNum(ppnStr), parseNum(dpStr));
+      setNewNilaiPenjualan(String(calc.grandTotal));
+    }
+  };
 
   const updateDetailRowsWithSync = (
     updater: (prev: FakturDetailItem[]) => FakturDetailItem[]
   ) => {
     setDetailRows((prev) => {
       const next = updater(prev);
-      const hasFilledRow = next.some((r) => r.kode.trim() || r.namaBarang.trim());
-      if (hasFilledRow) {
-        const sum = next.reduce((acc, r) => acc + r.total, 0);
-        setNewNilaiPenjualan(String(sum));
-      }
+      syncModalGrandTotal(next);
       return next;
     });
   };
@@ -615,9 +849,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
   const handleRemoveDetailRow = (rowId: string) => {
     updateDetailRowsWithSync((prev) =>
-      prev
-        .filter((r) => r.id !== rowId)
-        .map((r, idx) => ({ ...r, noUrut: idx + 1 }))
+      prev.filter((r) => r.id !== rowId).map((r, idx) => ({ ...r, noUrut: idx + 1 }))
     );
   };
 
@@ -680,7 +912,85 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     );
   };
 
-  // Core requirement: Selecting No. SO auto-fills PO.No, No. SJ, Nama Customer, Nilai Penjualan, Lokasi Stock, Sales, PPN, and Detail Barang!
+  // Primary Flow: Select Surat Jalan (posted & un-invoiced) -> auto-fill SJ items, match prices from SO/MasterBarang
+  const applySuratJalanAutoFill = (rawNoSj: string) => {
+    const cleanSj = rawNoSj.trim().toUpperCase();
+    setNewNoSj(cleanSj);
+    if (!cleanSj) return;
+
+    const matchedSj = sjOptions.find((sj) => sj.noBukti === cleanSj);
+    if (!matchedSj) return;
+
+    const cleanNoSo = matchedSj.noSo.trim().toUpperCase();
+    const matchedSo = cleanNoSo ? soOptions.find((s) => s.noBukti === cleanNoSo) : undefined;
+
+    if (cleanNoSo) setNewNoSo(cleanNoSo);
+    setNewPoNo(matchedSj.poNo || matchedSo?.poNo || '');
+    const custName = matchedSj.namaCustomer || matchedSo?.namaCustomer || '';
+    setNewCustomer(custName);
+    if (matchedSj.sales || matchedSo?.sales) setNewSales(matchedSj.sales || matchedSo?.sales || '');
+    if (matchedSj.lokasiStock || matchedSo?.lokasiStock) {
+      setNewLokasiStock(matchedSj.lokasiStock || matchedSo?.lokasiStock || '01 - OFFICE');
+    }
+
+    const nextDisc = matchedSo ? String(matchedSo.discPct || 0) : newDiscPct;
+    const custMeta = custName ? customerMetaMap[custName.trim().toUpperCase()] : undefined;
+    const nextPpn = matchedSo
+      ? String(matchedSo.ppn ?? defaultCompanyPpn)
+      : custMeta
+      ? String(custMeta.ppn ? defaultCompanyPpn : 0)
+      : newPpn;
+
+    setNewDiscPct(nextDisc);
+    setNewPpn(nextPpn);
+
+    if (custMeta && custMeta.tmpPembayaran > 0) {
+      const baseDateIso = toIsoDate(newTanggal) || todayIso();
+      setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran)));
+    }
+    if (!newKeterangan.trim() && (matchedSj.keterangan || matchedSo?.keterangan)) {
+      setNewKeterangan(matchedSj.keterangan || matchedSo?.keterangan || '');
+    }
+
+    const soPriceByKode = new Map<string, number>();
+    if (cleanNoSo && soDetailsByNoSoMap[cleanNoSo]) {
+      for (const sd of soDetailsByNoSoMap[cleanNoSo]) {
+        if (sd.kode && sd.harga > 0) soPriceByKode.set(sd.kode, sd.harga);
+      }
+    }
+
+    const rawSjItems = sjDetailsByIdMap[matchedSj.id] || [];
+    const hydratedItems: FakturDetailItem[] =
+      rawSjItems.length > 0
+        ? rawSjItems.map((d, idx) => {
+            const qty = d.terima > 0 ? d.terima : d.qty;
+            const harga = soPriceByKode.get(d.kode) ?? (d.harga > 0 ? d.harga : barangPriceMap[d.kode] || 0);
+            const jumlah = qty * harga;
+            return {
+              ...d,
+              id: `sj-fill-${Date.now()}-${idx}`,
+              noUrut: idx + 1,
+              qty,
+              harga,
+              jumlah,
+              total: jumlah,
+            };
+          })
+        : (soDetailsByNoSoMap[cleanNoSo] || []).map((d, idx) => ({
+            ...d,
+            id: `sj-so-fill-${Date.now()}-${idx}`,
+            noUrut: idx + 1,
+          }));
+
+    if (hydratedItems.length > 0) {
+      setDetailRows(hydratedItems);
+      syncModalGrandTotal(hydratedItems, nextDisc, nextPpn, newTotalDp);
+    } else {
+      setDetailRows([createBlankDetailRow(1)]);
+    }
+  };
+
+  // Fallback Flow: Select No. SO directly
   const applySalesOrderAutoFill = (rawNoSo: string) => {
     const cleanNoSo = rawNoSo.trim().toUpperCase();
     setNewNoSo(cleanNoSo);
@@ -688,19 +998,27 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
     const matchedSo = soOptions.find((s) => s.noBukti === cleanNoSo);
     const matchedSj =
+      sjOptions.find((sj) => sj.noSo === cleanNoSo && !sj.noFaktur) ||
       sjOptions.find((sj) => sj.noSo === cleanNoSo) ||
       sjOptions.find((sj) => matchedSo?.poNo && sj.poNo === matchedSo.poNo);
 
+    if (matchedSj) {
+      applySuratJalanAutoFill(matchedSj.noBukti);
+      return;
+    }
+
+    let nextDisc = newDiscPct;
+    let nextPpn = newPpn;
     if (matchedSo) {
-      setNewPoNo(matchedSo.poNo || matchedSj?.poNo || '');
-      const custName = matchedSo.namaCustomer || matchedSj?.namaCustomer || '';
+      setNewPoNo(matchedSo.poNo || '');
+      const custName = matchedSo.namaCustomer || '';
       setNewCustomer(custName);
       if (matchedSo.sales) setNewSales(matchedSo.sales);
-      else if (matchedSj?.sales) setNewSales(matchedSj.sales);
-      setNewLokasiStock(
-        matchedSo.lokasiStock || matchedSj?.lokasiStock || lokasiOptions[0] || '01 - OFFICE'
-      );
-      setNewPpn(String(matchedSo.ppn ?? defaultCompanyPpn));
+      setNewLokasiStock(matchedSo.lokasiStock || lokasiOptions[0] || '01 - OFFICE');
+      nextDisc = String(matchedSo.discPct || 0);
+      nextPpn = String(matchedSo.ppn ?? defaultCompanyPpn);
+      setNewDiscPct(nextDisc);
+      setNewPpn(nextPpn);
       if (custName) {
         const custMeta = customerMetaMap[custName.trim().toUpperCase()];
         if (custMeta && custMeta.tmpPembayaran > 0) {
@@ -711,22 +1029,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       if (!newKeterangan.trim() && matchedSo.keterangan) {
         setNewKeterangan(matchedSo.keterangan);
       }
-    } else if (matchedSj) {
-      if (matchedSj.poNo) setNewPoNo(matchedSj.poNo);
-      if (matchedSj.namaCustomer) {
-        setNewCustomer(matchedSj.namaCustomer);
-        const custMeta = customerMetaMap[matchedSj.namaCustomer.trim().toUpperCase()];
-        if (custMeta && custMeta.tmpPembayaran > 0) {
-          const baseDateIso = toIsoDate(newTanggal) || todayIso();
-          setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran)));
-        }
-      }
-      if (matchedSj.sales) setNewSales(matchedSj.sales);
-      if (matchedSj.lokasiStock) setNewLokasiStock(matchedSj.lokasiStock);
-    }
-
-    if (matchedSj) {
-      setNewNoSj(matchedSj.noBukti);
     }
 
     const soItems = (soDetailsByNoSoMap[cleanNoSo] || []).map((d, idx) => ({
@@ -737,14 +1039,23 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
     if (soItems.length > 0) {
       setDetailRows(soItems);
-      const detailSum = soItems.reduce((acc, item) => acc + item.total, 0);
-      setNewNilaiPenjualan(String(detailSum > 0 ? detailSum : matchedSo?.nilaiSo || 0));
+      syncModalGrandTotal(soItems, nextDisc, nextPpn, newTotalDp);
     } else {
       setDetailRows([createBlankDetailRow(1)]);
       if (matchedSo) {
-        setNewNilaiPenjualan(String(matchedSo.nilaiSo || 0));
+        setNewNilaiPenjualan(String(Math.max(0, matchedSo.nilaiSo - parseNum(newTotalDp))));
       }
     }
+  };
+
+  const applyFakturDpSelection = (rawNoDp: string) => {
+    const clean = rawNoDp.trim().toUpperCase();
+    setNewNoDp(clean);
+    const dp = dpOptions.find((d) => d.noBukti === clean);
+    const nextDpAmt = dp ? dp.nilaiPenjualan : 0;
+    const nextDpStr = String(nextDpAmt);
+    setNewTotalDp(nextDpStr);
+    syncModalGrandTotal(detailRows, newDiscPct, newPpn, nextDpStr);
   };
 
   const handleSelectCustomer = (customerName: string, overrideDateStr?: string) => {
@@ -754,9 +1065,11 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     const custMeta = customerMetaMap[customerName.trim().toUpperCase()];
     if (custMeta) {
       if (custMeta.sales) setNewSales(custMeta.sales);
-      setNewPpn(String(custMeta.ppn ? defaultCompanyPpn : 0));
+      const nextPpnStr = String(custMeta.ppn ? defaultCompanyPpn : 0);
+      setNewPpn(nextPpnStr);
       const baseDateIso = toIsoDate(overrideDateStr ?? newTanggal) || todayIso();
       setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran)));
+      syncModalGrandTotal(detailRows, newDiscPct, nextPpnStr, newTotalDp);
     }
   };
 
@@ -777,15 +1090,18 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     setNewSales('');
     setNewJthTmp(todayDisp);
     setNewKeterangan('');
+    setNewDiscPct('0');
     setNewPpn(String(defaultCompanyPpn));
+    setNewNoDp('');
+    setNewTotalDp('0');
     setNewNilaiPenjualan('0');
     setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setNewStsLunas('Not Yet');
     setNewTglLunas('');
     setNewStsPrint('Not Yet');
     setNewTglPrint('');
-    setNewStsPost('Not Yet');
-    setNewTglPost('');
+    setNewStsPost('Posting');
+    setNewTglPost(todayDisp);
     setNewDibuatOleh(currentUser);
     setNewTglCreated(todayDisp);
     setNewDiupdateOleh('-');
@@ -823,7 +1139,10 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     setNewSales(item.sales);
     setNewJthTmp(item.jthTmp || todayDisp);
     setNewKeterangan(item.keterangan);
-    setNewPpn(String(parseNum(item.ppn)));
+    setNewDiscPct(String(item.discPct));
+    setNewPpn(String(item.ppnPct));
+    setNewNoDp(item.noDp);
+    setNewTotalDp(String(item.totalDp));
     setNewNilaiPenjualan(String(item.nilaiPenjualanNum));
     setNewLokasiStock(item.lokasiStock || lokasiOptions[0] || '01 - OFFICE');
     setNewStsLunas(item.stsLunas || 'Not Yet');
@@ -867,23 +1186,39 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     const activeDetails = detailRows.filter(
       (d) => d.kode.trim() !== '' || d.namaBarang.trim() !== ''
     );
-    const totalFromDetails = activeDetails.reduce((acc, d) => acc + d.total, 0);
-    const finalNilaiPenjualan =
-      activeDetails.length > 0 && totalFromDetails > 0
-        ? totalFromDetails
-        : parseNum(newNilaiPenjualan);
+    const grossFromDetails = activeDetails.reduce((acc, d) => acc + d.total, 0);
+    const discPct = parseNum(newDiscPct);
+    const ppnPct = parseNum(newPpn);
+    const dpAmt = parseNum(newTotalDp);
+
+    const calc =
+      activeDetails.length > 0 && grossFromDetails > 0
+        ? calcFakturTotals(grossFromDetails, discPct, ppnPct, dpAmt)
+        : {
+            subtotal: parseNum(newNilaiPenjualan) + dpAmt,
+            nilaiDisc: 0,
+            dpp: parseNum(newNilaiPenjualan) + dpAmt,
+            nilaiPpn: 0,
+            totalDp: dpAmt,
+            grandTotal: parseNum(newNilaiPenjualan),
+          };
+    const finalNilaiPenjualan = calc.grandTotal;
 
     if (!overrideCreditLimit) {
       const custMeta = customerMetaMap[newCustomer.trim().toUpperCase()];
+      const oldEditedVal = editingId
+        ? fakturList.find((f) => f.id === editingId)?.nilaiPenjualanNum || 0
+        : 0;
+      const projectedPiutang = Math.max(0, (custMeta?.piutang || 0) - oldEditedVal) + finalNilaiPenjualan;
       if (
         custMeta &&
         custMeta.limitKredit > 0 &&
-        custMeta.piutang + finalNilaiPenjualan > custMeta.limitKredit
+        projectedPiutang > custMeta.limitKredit
       ) {
         setShowCreditOverrideBox(true);
         setModalError(
-          `Peringatan Limit Kredit Customer: Piutang (${formatRupiah(custMeta.piutang)}) + Faktur (${formatRupiah(
-            finalNilaiPenjualan
+          `Peringatan Limit Kredit Customer: Proyeksi Piutang (${formatRupiah(
+            projectedPiutang
           )}) melebihi Limit Kredit (${formatRupiah(custMeta.limitKredit)}). Centang "Abaikan batas limit kredit" untuk melanjutkan.`
         );
         return;
@@ -915,7 +1250,14 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         sales: newSales.trim().toUpperCase(),
         jth_tmp: toIsoDate(newJthTmp) || toIsoDate(newTanggal) || todayIso(),
         keterangan: newKeterangan.trim(),
-        ppn: parseNum(newPpn),
+        ppn: ppnPct,
+        subtotal: calc.subtotal,
+        disc_pct: discPct,
+        nilai_disc: calc.nilaiDisc,
+        dpp: calc.dpp,
+        nilai_ppn: calc.nilaiPpn,
+        no_dp: newNoDp.trim().toUpperCase(),
+        total_dp: calc.totalDp,
         nilai_penjualan: finalNilaiPenjualan,
         lokasi_stock: newLokasiStock.trim().toUpperCase() || '01 - OFFICE',
         sts_lunas: newStsLunas || 'Not Yet',
@@ -984,6 +1326,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         ...prev,
         [savedHeader.id]: savedDetails,
       }));
+      await loadMasterReferences();
 
       setIsAddOpen(false);
       setEditingId(null);
@@ -991,6 +1334,46 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       const msg = err?.message || 'Gagal menyimpan Faktur Penjualan';
       setModalError(msg);
       showFeedback(`Gagal simpan: ${msg}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRequestDelete = async () => {
+    const target = fakturList.find((f) => f.id === selectedId);
+    if (!target) {
+      showFeedback('Pilih data yang akan dihapus');
+      return;
+    }
+    if (target.stsLunas.toUpperCase() === 'LUNAS') {
+      showFeedback(`Faktur [${target.noBukti}] sudah LUNAS dan tidak boleh dihapus.`);
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const [returs, giros] = await Promise.all([
+        erpList<any>('retur_penjualans', { eq: { no_faktur: target.noBukti }, limit: 5 }).catch(() => []),
+        erpList<any>('giro_penjualan_details', { limit: 1000 }).catch(() => []),
+      ]);
+      if (returs.length > 0) {
+        showFeedback(
+          `Faktur [${target.noBukti}] sudah memiliki Retur Penjualan (${returs[0].no_bukti}) dan tidak boleh dihapus.`
+        );
+        return;
+      }
+      const linkedCairGiro = giros.find((g: any) => {
+        const refMatch =
+          String(g.no_faktur || g.no_ref || '').trim().toUpperCase() === target.noBukti.toUpperCase();
+        const isCair = String(g.sts_cair || '').trim().toUpperCase() === 'CAIR';
+        return refMatch && isCair;
+      });
+      if (linkedCairGiro) {
+        showFeedback(
+          `Faktur [${target.noBukti}] sudah dibayar dengan Giro Cair (${linkedCairGiro.no_cek_giro || ''}) dan tidak boleh dihapus.`
+        );
+        return;
+      }
+      setConfirmDeleteRow(target);
     } finally {
       setIsBusy(false);
     }
@@ -1091,8 +1474,33 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   };
 
   const handleOpenPrint = (mode?: 'list' | 'detail') => {
-    setPrintMode(mode ?? (selectedFaktur ? 'detail' : 'list'));
+    const targetMode = mode ?? (selectedFaktur ? 'detail' : 'list');
+    setPrintMode(targetMode);
     setIsPrintOpen(true);
+
+    if (targetMode === 'detail' && selectedFaktur && selectedFaktur.stsPrint !== 'Printed') {
+      const todayStr = todayIso();
+      const dispToday = toDisplayDMyShort(todayStr);
+      erpCompositeSave<{ header: any }>(
+        'faktur-penjualan',
+        {
+          id: selectedFaktur.id,
+          jenis_faktur: 'REGULAR',
+          no_bukti: selectedFaktur.noBukti,
+          sts_print: 'Printed',
+          tgl_print: todayStr,
+        },
+        undefined
+      )
+        .then(() => {
+          setFakturList((prev) =>
+            prev.map((f) =>
+              f.id === selectedFaktur.id ? { ...f, stsPrint: 'Printed', tglPrint: dispToday } : f
+            )
+          );
+        })
+        .catch(() => {});
+    }
   };
 
   const handleExportExcel = async () => {
@@ -1113,17 +1521,20 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         { header: 'Sales', accessor: 'sales', align: 'center' },
         { header: 'Lokasi Stock', accessor: 'lokasiStock' },
         { header: 'Jth.Tmp', accessor: 'jthTmp', align: 'center' },
+        { header: 'DPP', accessor: 'dpp', align: 'right' },
+        { header: 'Nilai PPN', accessor: 'nilaiPpn', align: 'right' },
+        { header: 'Potongan DP', accessor: 'totalDp', align: 'right' },
         { header: 'Nilai Penjualan', accessor: 'nilaiPenjualanNum', align: 'right' },
         { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center' },
-        { header: 'Dibuat Oleh', accessor: 'dibuatOleh' },
-        { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center' },
-        { header: 'Diupdate Oleh', accessor: 'diupdateOleh' },
-        { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center' },
       ],
       rows: filteredList,
     });
     showFeedback('Export Excel selesai');
   };
+
+  const sjDropdownChoices = Array.from(
+    new Set([...sjOptions.map((s) => s.noBukti), newNoSj.trim().toUpperCase()].filter(Boolean))
+  );
 
   const soDropdownChoices = Array.from(
     new Set([...soOptions.map((s) => s.noBukti), newNoSo.trim().toUpperCase()].filter(Boolean))
@@ -1141,6 +1552,11 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     new Set(['01 - OFFICE', ...lokasiOptions, newLokasiStock.trim().toUpperCase()].filter(Boolean))
   );
 
+  const selectedCustMeta = selectedFaktur
+    ? customerMetaMap[selectedFaktur.namaCustomer.trim().toUpperCase()]
+    : undefined;
+  const primaryBank = bankOptions[0];
+
   const listPrintColumns: PrintColumn<FakturPenjualanItem>[] = [
     { header: 'No.Bukti', accessor: 'noBukti', width: '88px' },
     { header: 'Tanggal', accessor: 'tanggal', align: 'center', width: '62px' },
@@ -1155,44 +1571,16 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     { header: 'Sts.Lunas', accessor: 'stsLunas', align: 'center', width: '54px' },
     { header: 'Dibuat Oleh', accessor: 'dibuatOleh', width: '60px' },
     { header: 'Tgl.Created', accessor: 'tglCreated', align: 'center', width: '60px' },
-    { header: 'Diupdate Oleh', accessor: 'diupdateOleh', width: '64px' },
-    { header: 'Tgl.Update', accessor: 'tglUpdate', align: 'center', width: '60px' },
   ];
 
   const detailPrintColumns: PrintColumn<FakturDetailItem>[] = [
     { header: 'Kode', accessor: 'kode', width: '92px' },
     { header: 'Nama Barang', accessor: 'namaBarang' },
     { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
-    {
-      header: 'Terima',
-      accessor: (r) => formatMoney(r.terima),
-      align: 'right',
-      width: '68px',
-    },
-    {
-      header: 'QTY',
-      accessor: (r) => formatMoney(r.qty),
-      align: 'right',
-      width: '68px',
-    },
-    {
-      header: 'Harga',
-      accessor: (r) => formatMoney(r.harga),
-      align: 'right',
-      width: '96px',
-    },
-    {
-      header: 'Jumlah',
-      accessor: (r) => formatMoney(r.jumlah),
-      align: 'right',
-      width: '104px',
-    },
-    {
-      header: 'Total',
-      accessor: (r) => formatMoney(r.total),
-      align: 'right',
-      width: '104px',
-    },
+    { header: 'QTY', accessor: (r) => formatMoney(r.qty), align: 'right', width: '68px' },
+    { header: 'Harga', accessor: (r) => formatMoney(r.harga), align: 'right', width: '96px' },
+    { header: 'Jumlah', accessor: (r) => formatMoney(r.jumlah), align: 'right', width: '104px' },
+    { header: 'Total', accessor: (r) => formatMoney(r.total), align: 'right', width: '104px' },
   ];
 
   return (
@@ -1215,14 +1603,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={() => {
-              const target = fakturList.find((f) => f.id === selectedId);
-              if (!target) {
-                showFeedback('Pilih data yang akan dihapus');
-                return;
-              }
-              setConfirmDeleteRow(target);
-            }}
+            onHapus={handleRequestDelete}
             onPrint={() => handleOpenPrint()}
             onFind={handleFind}
             isBusy={isBusy}
@@ -1255,22 +1636,23 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
       {/* Upper Table: List Faktur Penjualan */}
       <div className="flex-[1.35] min-h-[160px] overflow-auto bg-white border border-[#7A7A7A] mx-2 mt-2 relative">
-        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[2020px]">
+        <table className="w-full border-collapse text-left whitespace-nowrap min-w-[2150px]">
           <thead>
             <tr className="bg-[#ECE9D8] text-black border-b border-[#919191] text-[11px] font-semibold sticky top-0 z-10">
               <th className="border-r border-[#919191] px-2 py-1.5 w-8 text-center">▶</th>
               <th className="border-r border-[#919191] px-3 py-1.5">No.Bukti</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tanggal</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Nama Customer</th>
+              <th className="border-r border-[#919191] px-3 py-1.5">No.SJ</th>
               <th className="border-r border-[#919191] px-3 py-1.5">No.SO</th>
               <th className="border-r border-[#919191] px-3 py-1.5">PO.No</th>
-              <th className="border-r border-[#919191] px-3 py-1.5">No.SJ</th>
               <th className="border-r border-[#919191] px-3 py-1.5">No.Faktur Pajak</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Sales</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Lokasi Stock</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Jth.Tmp</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Keterangan</th>
               <th className="border-r border-[#919191] px-3 py-1.5 text-center">PPN</th>
+              <th className="border-r border-[#919191] px-3 py-1.5 text-right">Potongan DP</th>
               <th className="border-r border-[#919191] px-3 py-1.5 text-right">Nilai Penjualan</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Sts.Lunas</th>
               <th className="border-r border-[#919191] px-3 py-1.5">Tgl.Lunas</th>
@@ -1292,13 +1674,9 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   key={item.id}
                   onClick={() => setSelectedId(item.id)}
                   onDoubleClick={handleEdit}
-                  className={`border-b border-[#00C000] cursor-pointer text-xs font-mono ${
-                    isSelected ? 'font-semibold' : ''
+                  className={`border-b border-[#00C000] cursor-pointer text-xs font-mono text-black ${
+                    isSelected ? 'bg-[#00FF00] font-semibold' : 'bg-[#00E800] hover:bg-[#33FF33]'
                   }`}
-                  style={{
-                    backgroundColor: isSelected ? '#00FF00' : '#00E800',
-                    color: '#000',
-                  }}
                 >
                   <td className="border-r border-[#00B000] px-2 py-1 text-center font-bold">
                     {isSelected ? '▶' : ''}
@@ -1306,15 +1684,18 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   <td className="border-r border-[#00B000] px-3 py-1 font-mono">{item.noBukti}</td>
                   <td className="border-r border-[#00B000] px-3 py-1">{item.tanggal}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-medium font-sans">{item.namaCustomer}</td>
+                  <td className="border-r border-[#00B000] px-3 py-1 text-center font-mono">{item.noSj}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-mono">{item.noSo}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-mono">{item.poNo}</td>
-                  <td className="border-r border-[#00B000] px-3 py-1 text-center font-mono">{item.noSj}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-mono">{item.noFakturPajak}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-center font-sans">{item.sales}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-sans">{item.lokasiStock}</td>
                   <td className="border-r border-[#00B000] px-3 py-1">{item.jthTmp}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-sans">{item.keterangan || '-'}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-center">{item.ppn}</td>
+                  <td className="border-r border-[#00B000] px-3 py-1 text-right">
+                    {item.totalDp > 0 ? formatMoney(item.totalDp) : '-'}
+                  </td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-right font-semibold">{item.nilaiPenjualan}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-center font-sans">{item.stsLunas}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-center">{item.tglLunas || '-'}</td>
@@ -1331,7 +1712,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             })}
             {filteredList.length === 0 && (
               <tr>
-                <td colSpan={24} className="text-center py-6 text-gray-500">
+                <td colSpan={25} className="text-center py-6 text-gray-500">
                   Tidak ada data faktur penjualan
                 </td>
               </tr>
@@ -1340,19 +1721,24 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         </table>
       </div>
 
-      {/* Lower Panel: Detail Barang yang Di-Order Berdasarkan No. SO */}
+      {/* Lower Panel: Detail Barang */}
       <div className="flex-1 min-h-[145px] flex flex-col mx-2 mt-1.5 mb-1 border border-[#7A7A7A] bg-white shadow-inner overflow-hidden">
         <div className="shrink-0 bg-[#E6E3D5] border-b border-[#ACA899] px-2.5 py-1 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-bold text-[#003C74] whitespace-nowrap">
-              Detail Barang Faktur (Order No. SO)
+              Detail Barang Faktur (SJ / SO)
             </span>
             {selectedFaktur ? (
               <span className="text-[11px] text-gray-800 truncate">
-                No. Bukti: <b className="font-mono">{selectedFaktur.noBukti}</b> | No. SO:{' '}
-                <b className="font-mono text-[#000084]">{selectedFaktur.noSo || '-'}</b> | Customer:{' '}
-                <b>{selectedFaktur.namaCustomer}</b> | Lokasi:{' '}
-                <b className="text-[#0055EA]">{selectedFaktur.lokasiStock}</b>
+                No. Bukti: <b className="font-mono">{selectedFaktur.noBukti}</b> | No. SJ:{' '}
+                <b className="font-mono text-[#000084]">{selectedFaktur.noSj || '-'}</b> | No. SO:{' '}
+                <b className="font-mono">{selectedFaktur.noSo || '-'}</b> | Customer:{' '}
+                <b>{selectedFaktur.namaCustomer}</b>
+                {selectedFaktur.noDp && (
+                  <span className="ml-2 px-1.5 py-0.5 bg-[#E0F2FE] border border-[#7DD3FC] text-[10px] text-[#0369A1] rounded-xs">
+                    DP: {selectedFaktur.noDp} (-{formatRupiah(selectedFaktur.totalDp)})
+                  </span>
+                )}
                 {isSelectedDetailFromSoFallback && (
                   <span className="ml-2 px-1.5 py-0.5 bg-[#FFF7D6] border border-[#D4B040] text-[10px] text-[#7A5900] rounded-xs">
                     Sumber: S.O. Detail
@@ -1361,13 +1747,13 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
               </span>
             ) : (
               <span className="text-[11px] text-gray-500 italic">
-                Pilih Faktur Penjualan di atas untuk melihat detail barang dari No. SO
+                Pilih Faktur Penjualan di atas untuk melihat detail barang
               </span>
             )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[11px] font-bold text-gray-900 font-mono">
-              Total Detail: {formatRupiah(selectedDetailTotal)}
+              Subtotal: {formatRupiah(selectedDetailTotal)}
             </span>
             {selectedFaktur && (
               <button
@@ -1400,7 +1786,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
               {selectedFakturDetails.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="text-center py-5 text-gray-500 italic">
-                    Belum ada detail barang untuk faktur ini. Pilih No. SO saat Baru / Koreksi untuk memuat detail barang dari Sales Order.
+                    Belum ada detail barang untuk faktur ini. Pilih No. SJ atau No. SO saat Baru / Koreksi.
                   </td>
                 </tr>
               ) : (
@@ -1445,9 +1831,9 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             { value: 'Kode', label: 'Kode (No.Bukti)' },
             { value: 'Nama Pelanggan', label: 'Nama Pelanggan' },
             { value: 'No.Bukti', label: 'No.Bukti' },
+            { value: 'No.SJ', label: 'No.SJ' },
             { value: 'No.SO', label: 'No.SO' },
             { value: 'PO.No', label: 'PO.No' },
-            { value: 'No.SJ', label: 'No.SJ' },
             { value: 'No.Faktur Pajak', label: 'No.Faktur Pajak' },
             { value: 'Sales', label: 'Sales' },
             { value: 'Lokasi Stock', label: 'Lokasi Stock' },
@@ -1468,7 +1854,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       {/* Add / Koreksi Faktur Penjualan Modal */}
       {isAddOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-3">
-          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[960px] max-w-[97vw] max-h-[94vh] flex flex-col overflow-hidden">
+          <div className="bg-[#ECE9D8] border-2 border-[#000084] rounded shadow-2xl w-[980px] max-w-[97vw] max-h-[94vh] flex flex-col overflow-hidden">
             <div className="bg-[#000084] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
               <span>{editingId ? 'Koreksi Faktur Penjualan' : 'Tambah Faktur Penjualan Baru'}</span>
               <button
@@ -1484,7 +1870,6 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             </div>
 
             <form noValidate onSubmit={handleSaveNew} className="p-4 space-y-3 text-xs overflow-y-auto">
-              {/* Header Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0">No. Bukti:</label>
@@ -1518,10 +1903,49 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   </div>
                 </div>
 
-                {/* No. SO Dropdown with Auto-Fill */}
+                {/* Primary Flow: No. SJ Dropdown */}
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold shrink-0 text-[#003C74]">
+                    No. SJ (Surat Jalan):
+                  </label>
+                  <div className="w-64 flex gap-1">
+                    <select
+                      value={newNoSj}
+                      onChange={(e) => applySuratJalanAutoFill(e.target.value)}
+                      className="flex-1 min-w-0 px-2 py-1 bg-[#E0F2FE] border border-[#0369A1] font-mono font-semibold uppercase cursor-pointer"
+                    >
+                      <option value="">-- Pilih No. SJ (Utama) --</option>
+                      {sjDropdownChoices.map((sjNo) => {
+                        const info = sjOptions.find((s) => s.noBukti === sjNo);
+                        const tag = info?.noFaktur
+                          ? `[Faktur: ${info.noFaktur}]`
+                          : info?.stsPost.toUpperCase().startsWith('POST')
+                          ? '[Siap Tagih]'
+                          : '[Draft]';
+                        return (
+                          <option key={sjNo} value={sjNo}>
+                            {info ? `${sjNo} ${tag} - ${info.namaCustomer}` : sjNo}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {newNoSj && (
+                      <button
+                        type="button"
+                        onClick={() => applySuratJalanAutoFill(newNoSj)}
+                        title="Muat ulang item dari Surat Jalan"
+                        className="px-2 py-1 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] text-[10px] font-bold cursor-pointer shrink-0"
+                      >
+                        Sync
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Fallback: No. SO Dropdown */}
                 <div className="flex items-center justify-between gap-2">
                   <label className="font-semibold shrink-0 text-[#000084]">
-                    No. SO (Auto-Fill):
+                    No. SO (Fallback):
                   </label>
                   <div className="w-64 flex gap-1">
                     <select
@@ -1575,29 +1999,37 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                     type="text"
                     value={newPoNo}
                     onChange={(e) => setNewPoNo(e.target.value)}
-                    placeholder="Otomatis dari No. SO"
+                    placeholder="Otomatis dari SJ / SO"
                     className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
                   />
                 </div>
 
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">No. SJ:</label>
-                  <div className="w-64">
-                    <input
-                      type="text"
-                      list="faktur-sj-list"
-                      value={newNoSj}
-                      onChange={(e) => setNewNoSj(e.target.value)}
-                      placeholder="Otomatis dari Surat Jalan / SO"
-                      className="w-full px-2 py-1 bg-white border border-[#7A7A7A] uppercase font-mono"
-                    />
-                    <datalist id="faktur-sj-list">
-                      {sjOptions.map((sj) => (
-                        <option key={sj.noBukti} value={sj.noBukti}>
-                          {sj.noSo ? `${sj.noBukti} (SO: ${sj.noSo})` : sj.noBukti}
+                  <label className="font-semibold shrink-0">Faktur DP (Potongan):</label>
+                  <div className="w-64 flex gap-1.5">
+                    <select
+                      value={newNoDp}
+                      onChange={(e) => applyFakturDpSelection(e.target.value)}
+                      className="w-3/5 px-1.5 py-1 bg-white border border-[#7A7A7A] font-mono uppercase cursor-pointer"
+                    >
+                      <option value="">-- Tanpa Potongan DP --</option>
+                      {availableDpChoices.map((d) => (
+                        <option key={d.id} value={d.noBukti}>
+                          {d.noBukti} ({formatRupiah(d.nilaiPenjualan)})
                         </option>
                       ))}
-                    </datalist>
+                    </select>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newTotalDp}
+                      onChange={(e) => {
+                        setNewTotalDp(e.target.value);
+                        syncModalGrandTotal(detailRows, newDiscPct, newPpn, e.target.value);
+                      }}
+                      placeholder="Rp DP"
+                      className="w-2/5 px-1.5 py-1 bg-white border border-[#7A7A7A] font-mono text-right"
+                    />
                   </div>
                 </div>
 
@@ -1617,12 +2049,12 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 </div>
 
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Sales / PPN (%):</label>
-                  <div className="w-64 flex gap-2">
+                  <label className="font-semibold shrink-0">Sales / Disc (%) / PPN (%):</label>
+                  <div className="w-64 flex gap-1.5">
                     <select
                       value={newSales}
                       onChange={(e) => setNewSales(e.target.value)}
-                      className="w-2/3 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
+                      className="w-1/2 px-1.5 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
                     >
                       <option value="">-- Sales --</option>
                       {salesDropdownChoices.map((sl) => (
@@ -1633,10 +2065,28 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                     </select>
                     <input
                       type="number"
+                      min="0"
+                      max="100"
+                      value={newDiscPct}
+                      onChange={(e) => {
+                        setNewDiscPct(e.target.value);
+                        syncModalGrandTotal(detailRows, e.target.value, newPpn, newTotalDp);
+                      }}
+                      title="Diskon %"
+                      placeholder="Disc%"
+                      className="w-1/4 px-1 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
+                    />
+                    <input
+                      type="number"
+                      min="0"
                       value={newPpn}
-                      onChange={(e) => setNewPpn(e.target.value)}
-                      className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
-                      placeholder="PPN"
+                      onChange={(e) => {
+                        setNewPpn(e.target.value);
+                        syncModalGrandTotal(detailRows, newDiscPct, e.target.value, newTotalDp);
+                      }}
+                      title="PPN %"
+                      placeholder="PPN%"
+                      className="w-1/4 px-1 py-1 bg-white border border-[#7A7A7A] font-mono text-center"
                     />
                   </div>
                 </div>
@@ -1663,12 +2113,13 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 </div>
 
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Nilai Penjualan (Rp):</label>
+                  <label className="font-semibold shrink-0">Net Nilai Tagihan (Rp):</label>
                   <input
                     type="number"
+                    min="0"
                     value={newNilaiPenjualan}
                     onChange={(e) => setNewNilaiPenjualan(e.target.value)}
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] font-mono text-right font-bold"
+                    className="w-64 px-2 py-1 bg-[#FFFF99] border border-[#7A7A7A] font-mono text-right font-bold"
                   />
                 </div>
 
@@ -1743,17 +2194,19 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 </div>
               </div>
 
-              {/* Detail Barang yang di-Order berdasarkan No. SO */}
+              {/* Detail Barang */}
               <div className="border border-[#999999] bg-white rounded-xs overflow-hidden">
                 <div className="bg-[#E6E3D5] border-b border-[#C0C0C0] px-2.5 py-1.5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-xs text-[#003C74]">
-                      Detail Barang yang Di-Order (Berdasarkan No. SO)
+                      Detail Barang Penjualan
                     </span>
                     <span className="text-[11px] text-gray-600">
-                      {newNoSo
-                        ? `(Terhubung ke Sales Order: ${newNoSo})`
-                        : '(Pilih No. SO di atas untuk mengisi detail barang otomatis)'}
+                      {newNoSj
+                        ? `(Dari Surat Jalan: ${newNoSj})`
+                        : newNoSo
+                        ? `(Dari Sales Order: ${newNoSo})`
+                        : '(Pilih No. SJ / No. SO di atas untuk mengisi detail otomatis)'}
                     </span>
                   </div>
                   <button
@@ -1784,7 +2237,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                       {detailRows.length === 0 ? (
                         <tr>
                           <td colSpan={10} className="text-center py-4 text-gray-500 italic text-[11px]">
-                            Belum ada detail barang. Pilih No. SO atau klik "+ Tambah Baris".
+                            Belum ada detail barang. Pilih No. SJ / No. SO atau klik "+ Tambah Baris".
                           </td>
                         </tr>
                       ) : (
@@ -1886,12 +2339,16 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                     </tbody>
                   </table>
                 </div>
-                <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1 flex items-center justify-between text-[11px] font-bold">
+                <div className="bg-[#F5F4EE] border-t border-[#C0C0C0] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
                   <span>
-                    Jumlah Item: {detailRows.filter((d) => d.kode.trim() || d.namaBarang.trim()).length}
+                    Subtotal: <b>{formatRupiah(modalBillingBreakdown.subtotal)}</b> | Disc ({parseNum(newDiscPct)}%):{' '}
+                    <b>{formatRupiah(modalBillingBreakdown.nilaiDisc)}</b> | DPP:{' '}
+                    <b>{formatRupiah(modalBillingBreakdown.dpp)}</b> | PPN ({parseNum(newPpn)}%):{' '}
+                    <b>{formatRupiah(modalBillingBreakdown.nilaiPpn)}</b> | DP:{' '}
+                    <b>{formatRupiah(modalBillingBreakdown.totalDp)}</b>
                   </span>
-                  <span className="font-mono text-[#003C74]">
-                    Total Detail Barang: {formatRupiah(modalDetailTotal)}
+                  <span className="font-bold text-[#003C74]">
+                    Net Tagihan: {formatRupiah(parseNum(newNilaiPenjualan))}
                   </span>
                 </div>
               </div>
@@ -1995,7 +2452,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         ]}
         initialQuery={searchTerm}
         isBusy={isBusy}
-        placeholder="Cari Kode (No.Bukti), Customer, No.SO, PO.No, No.SJ, Sales..."
+        placeholder="Cari Kode (No.Bukti), Customer, No.SJ, No.SO, PO.No, Sales..."
         onSearchSupabase={(q) => {
           setSearchField('Semua');
           setSearchTerm(q);
@@ -2015,82 +2472,61 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
           { header: 'Kode / No.Bukti', accessor: (f) => f.noBukti, widthClass: 'w-28', mono: true, bold: true },
           { header: 'Tanggal', accessor: (f) => f.tanggal, widthClass: 'w-22' },
           { header: 'Nama Customer', accessor: (f) => f.namaCustomer, bold: true },
+          { header: 'No.SJ', accessor: (f) => f.noSj || '-', widthClass: 'w-24', mono: true },
           { header: 'No.SO', accessor: (f) => f.noSo || '-', widthClass: 'w-28', mono: true },
           { header: 'PO.No', accessor: (f) => f.poNo || '-', widthClass: 'w-24', mono: true },
-          { header: 'No.SJ', accessor: (f) => f.noSj || '-', widthClass: 'w-24', mono: true },
-          { header: 'Lokasi Stock', accessor: (f) => f.lokasiStock || '-', widthClass: 'w-28' },
           { header: 'Nilai Penjualan', accessor: (f) => f.nilaiPenjualan, widthClass: 'w-28', align: 'right', mono: true },
         ]}
       />
 
-      {/* Konfirmasi Hapus */}
-      {confirmDeleteRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
-              Konfirmasi Hapus Faktur Penjualan
-            </div>
-            <div className="p-4 text-xs text-black space-y-3">
-              <p>
-                Yakin ingin menghapus Faktur Penjualan{' '}
-                <b>{confirmDeleteRow.noBukti}</b> ({confirmDeleteRow.namaCustomer})?
-              </p>
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteRow(null)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => handleDelete(confirmDeleteRow.id)}
-                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
-                >
-                  Ya, Hapus
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={Boolean(confirmDeleteRow)}
+        title="Konfirmasi Hapus Faktur Penjualan"
+        message={`Yakin ingin menghapus Faktur Penjualan ${confirmDeleteRow?.noBukti || ''}?`}
+        detail={
+          confirmDeleteRow
+            ? `Customer: ${confirmDeleteRow.namaCustomer}\nNo. SJ / No. SO: ${confirmDeleteRow.noSj || '-'} / ${confirmDeleteRow.noSo || '-'}\nNilai Tagihan: ${formatRupiah(confirmDeleteRow.nilaiPenjualanNum)}`
+            : undefined
+        }
+        confirmLabel="Ya, Hapus"
+        cancelLabel="Batal"
+        isBusy={isBusy}
+        danger
+        onConfirm={() => confirmDeleteRow && handleDelete(confirmDeleteRow.id)}
+        onCancel={() => setConfirmDeleteRow(null)}
+      />
 
-      {/* Dual-mode Print Preview: List Faktur Penjualan & Detail Barang Faktur */}
+      {/* Dual-mode Print Preview: List & Invoice Detail w/ NPWP, Bank, Terbilang */}
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={
           printMode === 'detail'
-            ? 'FAKTUR PENJUALAN (DETAIL BARANG)'
+            ? 'INVOICE / FAKTUR PENJUALAN'
             : 'LAPORAN LIST FAKTUR PENJUALAN'
         }
         subtitle={
           printMode === 'detail'
-            ? `No. Bukti: ${selectedFaktur?.noBukti || '-'} | Customer: ${selectedFaktur?.namaCustomer || '-'}`
+            ? `No. Faktur: ${selectedFaktur?.noBukti || '-'} | Pelanggan: ${selectedFaktur?.namaCustomer || '-'}`
             : `Filter Tanggal: ${tanggalFilter}`
         }
         metaLines={
           printMode === 'detail' && selectedFaktur
             ? [
-                { label: 'No. Bukti', value: selectedFaktur.noBukti },
-                { label: 'Tanggal', value: selectedFaktur.tanggal },
+                { label: 'No. Faktur', value: selectedFaktur.noBukti },
+                { label: 'Tanggal / Jth.Tmp', value: `${selectedFaktur.tanggal} / ${selectedFaktur.jthTmp || '-'}` },
                 { label: 'Nama Customer', value: selectedFaktur.namaCustomer },
-                { label: 'No. SO', value: selectedFaktur.noSo || '-' },
-                { label: 'PO.No', value: selectedFaktur.poNo || '-' },
-                { label: 'No. SJ', value: selectedFaktur.noSj || '-' },
-                { label: 'No. Faktur Pajak', value: selectedFaktur.noFakturPajak || '-' },
-                { label: 'Sales', value: selectedFaktur.sales || '-' },
-                { label: 'Lokasi Stock', value: selectedFaktur.lokasiStock || '-' },
-                { label: 'Jth.Tmp', value: selectedFaktur.jthTmp || '-' },
-                { label: 'PPN / Status Lunas', value: `${selectedFaktur.ppn} / ${selectedFaktur.stsLunas}` },
-                { label: 'Nilai Penjualan', value: formatRupiah(selectedFaktur.nilaiPenjualanNum) },
-                { label: 'Keterangan', value: selectedFaktur.keterangan || '-' },
-                { label: 'Dibuat Oleh', value: selectedFaktur.dibuatOleh },
-                { label: 'Tgl. Created', value: selectedFaktur.tglCreated || '-' },
-                { label: 'Diupdate Oleh', value: selectedFaktur.diupdateOleh || '-' },
-                { label: 'Tgl.Update', value: selectedFaktur.tglUpdate || '-' },
+                { label: 'NPWP Customer', value: selectedCustMeta?.npwp || '-' },
+                { label: 'Alamat Customer', value: selectedCustMeta?.invAlamat || selectedCustMeta?.alamatNpwp || '-' },
+                { label: 'No. SJ / No. SO', value: `${selectedFaktur.noSj || '-'} / ${selectedFaktur.noSo || '-'}` },
+                { label: 'PO Customer / Pajak', value: `${selectedFaktur.poNo || '-'} / ${selectedFaktur.noFakturPajak || '-'}` },
+                {
+                  label: 'Rekening Transfer',
+                  value: primaryBank
+                    ? `${primaryBank.namaBank} ${primaryBank.accNumber} a/n ${primaryBank.accName}`
+                    : '-',
+                },
+                { label: 'Terbilang', value: terbilangRupiah(selectedFaktur.nilaiPenjualanNum) },
               ]
             : []
         }
@@ -2112,14 +2548,16 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             : filteredList
         }
         summaryItems={
-          printMode === 'detail'
+          printMode === 'detail' && selectedFaktur
             ? [
-                { label: 'Total Item', value: `${selectedFakturDetails.length} Item` },
-                { label: 'Total Nilai Detail', value: formatRupiah(selectedDetailTotal) },
-                {
-                  label: 'Nilai Penjualan',
-                  value: formatRupiah(selectedFaktur?.nilaiPenjualanNum || 0),
-                },
+                { label: 'Subtotal', value: formatRupiah(selectedFaktur.subtotal || selectedDetailTotal) },
+                { label: `Diskon (${selectedFaktur.discPct}%)`, value: formatRupiah(selectedFaktur.nilaiDisc) },
+                { label: 'DPP', value: formatRupiah(selectedFaktur.dpp) },
+                { label: `PPN (${selectedFaktur.ppn})`, value: formatRupiah(selectedFaktur.nilaiPpn) },
+                ...(selectedFaktur.totalDp > 0
+                  ? [{ label: `Potongan DP (${selectedFaktur.noDp})`, value: `- ${formatRupiah(selectedFaktur.totalDp)}` }]
+                  : []),
+                { label: 'NET TAGIHAN', value: formatRupiah(selectedFaktur.nilaiPenjualanNum) },
               ]
             : [
                 { label: 'Total Faktur Penjualan', value: `${filteredList.length} Dokumen` },
@@ -2139,9 +2577,9 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                 { label: 'No. Bukti', value: selectedFaktur.noBukti },
                 { label: 'Tanggal', value: selectedFaktur.tanggal },
                 { label: 'Customer', value: selectedFaktur.namaCustomer },
-                { label: 'No. SO', value: selectedFaktur.noSo || '-' },
-                { label: 'No. SJ', value: selectedFaktur.noSj || '-' },
-                { label: 'Nilai Penjualan', value: formatRupiah(selectedFaktur.nilaiPenjualanNum) },
+                { label: 'No. SJ / No. SO', value: `${selectedFaktur.noSj || '-'} / ${selectedFaktur.noSo || '-'}` },
+                { label: 'Terbilang', value: terbilangRupiah(selectedFaktur.nilaiPenjualanNum) },
+                { label: 'Net Tagihan', value: formatRupiah(selectedFaktur.nilaiPenjualanNum) },
               ]
             : undefined
         }
@@ -2150,7 +2588,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
             <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
               <button
                 type="button"
-                onClick={() => setPrintMode('detail')}
+                onClick={() => handleOpenPrint('detail')}
                 className={`px-2 py-0.5 rounded-[2px] cursor-pointer font-semibold ${
                   printMode === 'detail' ? 'bg-[#0055EA] text-white' : 'text-gray-300 hover:text-white'
                 }`}

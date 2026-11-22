@@ -1,22 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { FormActionButtons } from './FormActionButtons';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
 import {
-  erpCreate,
-  erpDelete,
   erpList,
-  erpUpdate,
-  erpUpsert,
   fetchActiveCompanyProfile,
-  nextUniqueCode,
+  formatMoney,
   toDisplayDmy,
   todayIso,
   toIsoDate,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
-import { getCurrentUser } from '../lib/authService';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
@@ -26,23 +20,34 @@ export interface MutasiSoItem {
   soId: string | null;
   noSo: string;
   noPo: string;
+  noSq: string;
   customer: string;
+  sales: string;
+  lokasiStock: string;
   tanggalIso: string;
+  tanggalDisplay: string;
+  soClose: string;
   kodeBarang: string;
   namaBarang: string;
   unit: string;
   pesan: number;
   kirim: number;
   sisa: number;
+  persenTerpenuhi: number;
+  statusMutasi: 'Closed' | 'Parsial' | 'Open';
 }
 
 export interface SjDetailItem {
   id: string;
-  soItemId: string | null;
   noSj: string;
+  noSo: string;
   kodeBarang: string;
+  namaBarang: string;
+  tanggalIso: string;
   tanggal: string;
   qty: number;
+  stsPost: string;
+  lokasiStock: string;
 }
 
 interface MutasiSalesOrderFormProps {
@@ -54,130 +59,179 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [periodeStart, setPeriodeStart] = useState<string>('01-01-2018');
-  const [periodeEnd, setPeriodeEnd] = useState<string>(() => toDisplayDmy(todayIso()));
+  const defaultRange = useMemo(() => {
+    const now = todayIso();
+    const monthStart = `${now.slice(0, 8)}01`;
+    return {
+      start: toDisplayDmy(monthStart),
+      end: toDisplayDmy(now),
+    };
+  }, []);
+
+  const [periodeStart, setPeriodeStart] = useState<string>(defaultRange.start);
+  const [periodeEnd, setPeriodeEnd] = useState<string>(defaultRange.end);
+  const [customerFilter, setCustomerFilter] = useState<string>('ALL');
   const [jenisTransaksi, setJenisTransaksi] = useState<string>('Semua Berdasarkan Periode');
   const [searchField, setSearchField] = useState<string>('Semua');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isFindOpen, setIsFindOpen] = useState<boolean>(false);
   const [selectedId, setSelectedId] = useState<string>('');
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
+  const [printScopeOnOpen, setPrintScopeOnOpen] = useState<'selected' | 'all'>('all');
   const searchInputRef = useRef<HTMLInputElement>(null);
-
-  const [isAddOpen, setIsAddOpen] = useState<boolean>(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-
-  const [formNoSo, setFormNoSo] = useState<string>('');
-  const [formNoPo, setFormNoPo] = useState<string>('');
-  const [formCustomer, setFormCustomer] = useState<string>('');
-  const [formKodeBarang, setFormKodeBarang] = useState<string>('');
-  const [formNamaBarang, setFormNamaBarang] = useState<string>('');
-  const [formUnit, setFormUnit] = useState<string>('PCS');
-  const [formPesan, setFormPesan] = useState<string>('10');
-  const [formKirim, setFormKirim] = useState<string>('0');
 
   const [soList, setSoList] = useState<MutasiSoItem[]>([]);
   const [sjList, setSjList] = useState<SjDetailItem[]>([]);
+  const [customerOptions, setCustomerOptions] = useState<string[]>([]);
 
   const showFeedback = (msg: string) => {
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 2500);
+    setTimeout(() => setFeedback(null), 2800);
   };
 
-  const loadData = async (opts?: {
-    field?: string;
-    term?: string;
-  }): Promise<MutasiSoItem[] | null> => {
+  const mapRawMutasiRow = (row: any): MutasiSoItem => {
+    const pesan = Number(row.pesan || 0);
+    const kirim = Number(row.kirim || 0);
+    const sisa = row.sisa !== undefined && row.sisa !== null ? Number(row.sisa) : Math.max(0, pesan - kirim);
+    const persenTerpenuhi =
+      pesan > 0 ? Math.min(100, Math.round((kirim / pesan) * 100)) : row.so_close === 'Closed' ? 100 : 0;
+    const isClosed = String(row.so_close || '').toLowerCase() === 'closed' || (pesan > 0 && sisa <= 0);
+    const statusMutasi: 'Closed' | 'Parsial' | 'Open' = isClosed
+      ? 'Closed'
+      : kirim > 0
+      ? 'Parsial'
+      : 'Open';
+    const tglIso = toIsoDate(row.tanggal) || '';
+    return {
+      id: String(row.id || `${row.so_id || row.no_so}-${row.kode_barang}`),
+      soId: row.so_id || null,
+      noSo: String(row.no_so || '').trim(),
+      noPo: String(row.no_po || '-').trim() || '-',
+      noSq: String(row.no_sq || '').trim(),
+      customer: String(row.customer || '-').trim() || '-',
+      sales: String(row.sales || '').trim(),
+      lokasiStock: String(row.lokasi_stock || '').trim(),
+      tanggalIso: tglIso,
+      tanggalDisplay: toDisplayDmy(tglIso) || '-',
+      soClose: isClosed ? 'Closed' : 'Not Yet',
+      kodeBarang: String(row.kode_barang || '').trim(),
+      namaBarang: String(row.nama_barang || '').trim(),
+      unit: String(row.unit || 'PCS').trim() || 'PCS',
+      pesan,
+      kirim,
+      sisa,
+      persenTerpenuhi,
+      statusMutasi,
+    };
+  };
+
+  const loadData = async (opts?: { term?: string }): Promise<MutasiSoItem[] | null> => {
     try {
       setIsBusy(true);
-      const activeField = opts?.field ?? searchField;
       const activeTerm = (opts?.term ?? '').trim();
 
-      const itemQuery: Record<string, any> = { orderBy: 'created_at', asc: false, limit: 1000 };
-      const orderQuery: Record<string, any> = { orderBy: 'tanggal', asc: false, limit: 1000 };
-
-      if (activeTerm) {
-        if (activeField === 'Kode') {
-          itemQuery.orSearch = 'no_so,kode_barang';
-          itemQuery.searchVal = activeTerm;
-        } else if (activeField === 'No.SO') {
-          itemQuery.searchCol = 'no_so';
-          itemQuery.searchVal = activeTerm;
-        } else if (activeField === 'Nama Barang') {
-          itemQuery.searchCol = 'nama_barang';
-          itemQuery.searchVal = activeTerm;
-        } else if (activeField === 'Nama Pelanggan' || activeField === 'Customer') {
-          orderQuery.searchCol = 'nama_customer';
-          orderQuery.searchVal = activeTerm;
-        } else if (activeField === 'No.PO') {
-          orderQuery.searchCol = 'po_no';
-          orderQuery.searchVal = activeTerm;
-        }
-      }
-
-      const [items, orders, sjItems] = await Promise.all([
-        erpList<any>('sales_order_items', itemQuery),
-        erpList<any>('sales_orders', orderQuery),
-        erpList<any>('surat_jalan_items', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      const [viewRows, customers, sjHeaders, sjDetails] = await Promise.all([
+        erpList<any>('v_mutasi_sales_order', { orderBy: 'tanggal', asc: false, limit: 2000 }).catch(
+          () => null
+        ),
+        erpList<any>('master_customers', { orderBy: 'nama_customer', asc: true }).catch(() => []),
+        erpList<any>('surat_jalans', { orderBy: 'tanggal', asc: false, limit: 2000 }).catch(() => []),
+        erpList<any>('surat_jalan_details', { limit: 4000 }).catch(() => []),
       ]);
 
-      const orderById = new Map<string, any>();
-      const orderByNo = new Map<string, any>();
-      for (const o of orders) {
-        if (o.id) orderById.set(o.id, o);
-        if (o.no_bukti) orderByNo.set(String(o.no_bukti).toUpperCase(), o);
+      setCustomerOptions(
+        customers
+          .filter((c) => c.is_active !== false)
+          .map((c) => String(c.nama_customer || '').trim())
+          .filter(Boolean)
+      );
+
+      const sjHeaderById = new Map<string, any>();
+      for (const h of sjHeaders) {
+        if (h.id) sjHeaderById.set(String(h.id), h);
       }
 
-      let mappedSo: MutasiSoItem[] = items.map((it) => {
-        const parent =
-          (it.so_id && orderById.get(it.so_id)) ||
-          orderByNo.get(String(it.no_so || '').toUpperCase());
-        const pesan = Number(it.pesan || 0);
-        const kirim = Number(it.kirim || 0);
-        const sisa = it.sisa !== undefined && it.sisa !== null ? Number(it.sisa) : Math.max(0, pesan - kirim);
+      const mappedSj: SjDetailItem[] = sjDetails.map((d) => {
+        const hdr = sjHeaderById.get(String(d.surat_jalan_id || '')) || {};
+        const tglIso = toIsoDate(hdr.tanggal) || '';
+        const qtyVal = Number(d.terima || 0) > 0 ? Number(d.terima) : Number(d.qty || 0);
         return {
-          id: it.id,
-          soId: it.so_id || parent?.id || null,
-          noSo: it.no_so || parent?.no_bukti || '',
-          noPo: parent?.po_no || '-',
-          customer: parent?.nama_customer || '-',
-          tanggalIso: toIsoDate(parent?.tanggal) || toIsoDate(it.created_at) || '',
-          kodeBarang: it.kode_barang || '',
-          namaBarang: it.nama_barang || '',
-          unit: it.unit || 'PCS',
-          pesan,
-          kirim,
-          sisa,
+          id: String(d.id),
+          noSj: String(hdr.no_bukti || d.no_bukti || '').trim(),
+          noSo: String(hdr.no_so || '').trim().toUpperCase(),
+          kodeBarang: String(d.kode || '').trim().toUpperCase(),
+          namaBarang: String(d.nama_barang || '').trim(),
+          tanggalIso: tglIso,
+          tanggal: toDisplayDmy(tglIso) || '-',
+          qty: qtyVal,
+          stsPost: String(hdr.sts_post || 'Not Yet'),
+          lokasiStock: String(hdr.lokasi_stock || ''),
         };
       });
 
-      if (activeTerm) {
-        if (activeField === 'Nama Pelanggan' || activeField === 'Customer' || activeField === 'No.PO') {
-          mappedSo = mappedSo.filter((it) =>
-            (it.soId && orderById.has(it.soId)) ||
-            orderByNo.has(String(it.noSo || '').toUpperCase())
-          );
-        } else if (activeField === 'Semua') {
-          mappedSo = mappedSo.filter((it) =>
-            matchesMultiKeyword(
-              [it.noSo, it.noPo, it.customer, it.kodeBarang, it.namaBarang, it.unit],
-              activeTerm
-            )
-          );
+      let mappedSo: MutasiSoItem[] = [];
+
+      if (Array.isArray(viewRows)) {
+        mappedSo = viewRows.map(mapRawMutasiRow);
+      } else {
+        // Fallback join from sales_orders + sales_order_details + posted surat_jalans
+        const [orders, details] = await Promise.all([
+          erpList<any>('sales_orders', { orderBy: 'tanggal', asc: false, limit: 1500 }),
+          erpList<any>('sales_order_details', { limit: 4000 }),
+        ]);
+
+        const orderById = new Map<string, any>();
+        for (const o of orders) {
+          if (o.id) orderById.set(String(o.id), o);
         }
+
+        const kirimBySoKode = new Map<string, number>();
+        for (const sj of mappedSj) {
+          const st = sj.stsPost.trim().toUpperCase();
+          if (st !== 'POSTING' && st !== 'POSTED') continue;
+          if (!sj.noSo || !sj.kodeBarang) continue;
+          const key = `${sj.noSo}__${sj.kodeBarang}`;
+          kirimBySoKode.set(key, (kirimBySoKode.get(key) || 0) + sj.qty);
+        }
+
+        mappedSo = details.map((d) => {
+          const parent = orderById.get(String(d.so_id || '')) || {};
+          const noSo = String(parent.no_bukti || d.no_bukti || '').trim().toUpperCase();
+          const kode = String(d.kode || '').trim().toUpperCase();
+          const pesan = Number(d.qty || 0);
+          const kirimAgg = kirimBySoKode.get(`${noSo}__${kode}`);
+          const kirim = kirimAgg !== undefined ? kirimAgg : Number(d.terima || 0);
+          return mapRawMutasiRow({
+            id: d.id,
+            so_id: d.so_id || parent.id || null,
+            no_so: parent.no_bukti || d.no_bukti || '',
+            no_po: parent.po_no || '-',
+            no_sq: parent.no_sq || '',
+            customer: parent.nama_customer || '-',
+            sales: parent.sales || '',
+            lokasi_stock: parent.lokasi_stock || '',
+            tanggal: parent.tanggal || d.created_at,
+            so_close: parent.so_close || 'Not Yet',
+            kode_barang: d.kode || '',
+            nama_barang: d.nama_barang || '',
+            unit: d.unit || 'PCS',
+            pesan,
+            kirim,
+            sisa: Math.max(0, pesan - kirim),
+          });
+        });
       }
 
-      const mappedSj: SjDetailItem[] = sjItems.map((sj) => ({
-        id: sj.id,
-        soItemId: sj.so_item_id || null,
-        noSj: sj.no_sj || '',
-        kodeBarang: sj.kode_barang || '',
-        tanggal: toDisplayDmy(sj.tanggal),
-        qty: Number(sj.qty || 0),
-      }));
+      if (activeTerm) {
+        mappedSo = mappedSo.filter((it) =>
+          matchesMultiKeyword(
+            [it.noSo, it.noPo, it.customer, it.kodeBarang, it.namaBarang, it.unit, it.sales],
+            activeTerm
+          )
+        );
+      }
 
       setSoList(mappedSo);
       setSjList(mappedSj);
@@ -188,155 +242,20 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
       }
       return mappedSo;
     } catch (err: any) {
-      showFeedback(`Gagal load: ${err.message}`);
+      showFeedback(`Gagal memuat Mutasi SO: ${err.message}`);
       return null;
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleToolbarSimpan = async () => {
-    const selected = soList.find((s) => s.id === selectedId);
-    if (!selected) {
-      showFeedback('Pilih baris Mutasi SO yang akan disimpan');
-      return;
-    }
-    try {
-      setIsBusy(true);
-      await erpUpdate('sales_order_items', selected.id, {
-        so_id: selected.soId,
-        no_so: selected.noSo.trim().toUpperCase(),
-        kode_barang: selected.kodeBarang.trim().toUpperCase(),
-        nama_barang: selected.namaBarang.trim().toUpperCase(),
-        unit: selected.unit.trim().toUpperCase() || 'PCS',
-        pesan: Number(selected.pesan || 0),
-        kirim: Number(selected.kirim || 0),
-      });
-      await loadData({ field: searchField, term: searchTerm });
-      showFeedback(`Mutasi SO [${selected.noSo} - ${selected.kodeBarang}] berhasil disimpan`);
-    } catch (err: any) {
-      showFeedback(`Gagal simpan: ${err.message}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
   useEffect(() => {
-    if (isOpen) loadData();
+    if (isOpen) {
+      loadData();
+    }
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const handleAddNew = () => {
-    setEditingId(null);
-    setModalError(null);
-    setFormNoSo(nextUniqueCode(soList.map((s) => s.noSo), '2608-SO-', 3));
-    setFormNoPo('');
-    setFormCustomer('');
-    setFormKodeBarang('');
-    setFormNamaBarang('');
-    setFormUnit('PCS');
-    setFormPesan('10');
-    setFormKirim('0');
-    setIsAddOpen(true);
-  };
-
-  const handleEdit = () => {
-    const item = soList.find((s) => s.id === selectedId);
-    if (!item) {
-      showFeedback('Pilih baris data terlebih dahulu');
-      return;
-    }
-    setEditingId(item.id);
-    setModalError(null);
-    setFormNoSo(item.noSo);
-    setFormNoPo(item.noPo === '-' ? '' : item.noPo);
-    setFormCustomer(item.customer === '-' ? '' : item.customer);
-    setFormKodeBarang(item.kodeBarang);
-    setFormNamaBarang(item.namaBarang);
-    setFormUnit(item.unit);
-    setFormPesan(item.pesan.toString());
-    setFormKirim(item.kirim.toString());
-    setIsAddOpen(true);
-  };
-
-  const handleDelete = async () => {
-    if (!selectedId) {
-      showFeedback('Pilih baris yang akan dihapus');
-      return;
-    }
-    try {
-      setIsBusy(true);
-      await erpDelete('sales_order_items', selectedId);
-      const updated = soList.filter((item) => item.id !== selectedId);
-      setSoList(updated);
-      setSelectedId(updated[0]?.id || '');
-      showFeedback('Data Mutasi SO dihapus');
-    } catch (err: any) {
-      showFeedback(`Gagal hapus: ${err.message}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleSaveForm = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setModalError(null);
-    if (!formNoSo.trim() || !formCustomer.trim()) {
-      setModalError('No. SO dan Customer wajib diisi.');
-      return;
-    }
-    const pesanNum = parseInt(formPesan || '0', 10) || 0;
-    const kirimNum = parseInt(formKirim || '0', 10) || 0;
-    const sisaNum = Math.max(0, pesanNum - kirimNum);
-
-    try {
-      setIsBusy(true);
-      // Ensure parent Sales Order header exists so Customer & PO.No persist cleanly
-      const parentSo = await erpUpsert<any>(
-        'sales_orders',
-        {
-          no_bukti: formNoSo.trim().toUpperCase(),
-          tanggal: todayIso(),
-          nama_customer: formCustomer.trim().toUpperCase(),
-          po_no: formNoPo.trim().toUpperCase(),
-          so_close: sisaNum === 0 ? 'Closed' : 'Not Yet',
-          dibuat_oleh: (getCurrentUser().username || 'ADMIN'),
-          tgl_created: todayIso(),
-        },
-        'no_bukti'
-      );
-
-      const itemPayload = {
-        so_id: parentSo?.id || null,
-        no_so: formNoSo.trim().toUpperCase(),
-        kode_barang: formKodeBarang.trim().toUpperCase(),
-        nama_barang: formNamaBarang.trim().toUpperCase(),
-        unit: formUnit.trim().toUpperCase(),
-        pesan: pesanNum,
-        kirim: kirimNum,
-      };
-
-      if (editingId) {
-        await erpUpdate('sales_order_items', editingId, itemPayload);
-        showFeedback('Mutasi SO diperbarui');
-      } else {
-        const created = await erpCreate<any>('sales_order_items', itemPayload);
-        if (created?.id) setSelectedId(created.id);
-        showFeedback('Mutasi SO tersimpan');
-      }
-
-      setIsAddOpen(false);
-      setEditingId(null);
-      await loadData();
-    } catch (err: any) {
-      const msg = err?.message || 'Gagal menyimpan Mutasi SO';
-      setModalError(msg);
-      showFeedback(`Gagal simpan: ${msg}`);
-    } finally {
-      setIsBusy(false);
-    }
-  };
 
   const startIso = toIsoDate(periodeStart);
   const endIso = toIsoDate(periodeEnd);
@@ -344,57 +263,94 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
   const filteredList = soList.filter((item) => {
     if (startIso && item.tanggalIso && item.tanggalIso < startIso) return false;
     if (endIso && item.tanggalIso && item.tanggalIso > endIso) return false;
+    if (customerFilter !== 'ALL' && item.customer.toUpperCase() !== customerFilter.toUpperCase()) {
+      return false;
+    }
     if (jenisTransaksi === 'Outstanding SO (Belum Lunas Kirim)' && item.sisa <= 0) {
       return false;
     }
-    if (jenisTransaksi === 'Closed SO' && item.sisa > 0) {
+    if (jenisTransaksi === 'Closed SO' && item.statusMutasi !== 'Closed') {
       return false;
     }
-    if (searchField === 'Kode') return matchesMultiKeyword([item.noSo, item.kodeBarang], searchTerm);
-    if (searchField === 'Nama Pelanggan' || searchField === 'Customer') {
-      return matchesMultiKeyword([item.customer], searchTerm);
+    if (searchTerm.trim()) {
+      if (searchField === 'Kode') return matchesMultiKeyword([item.noSo, item.kodeBarang], searchTerm);
+      if (searchField === 'Nama Pelanggan' || searchField === 'Customer') {
+        return matchesMultiKeyword([item.customer], searchTerm);
+      }
+      if (searchField === 'No.SO') return matchesMultiKeyword([item.noSo], searchTerm);
+      if (searchField === 'No.PO') return matchesMultiKeyword([item.noPo], searchTerm);
+      if (searchField === 'Nama Barang') {
+        return matchesMultiKeyword([item.namaBarang, item.kodeBarang], searchTerm);
+      }
+      return matchesMultiKeyword(
+        [item.noSo, item.noPo, item.customer, item.kodeBarang, item.namaBarang, item.unit, item.sales],
+        searchTerm
+      );
     }
-    if (searchField === 'No.SO') return matchesMultiKeyword([item.noSo], searchTerm);
-    if (searchField === 'No.PO') return matchesMultiKeyword([item.noPo], searchTerm);
-    if (searchField === 'Nama Barang') return matchesMultiKeyword([item.namaBarang, item.kodeBarang], searchTerm);
-    return matchesMultiKeyword(
-      [item.noSo, item.noPo, item.customer, item.kodeBarang, item.namaBarang, item.unit],
-      searchTerm
-    );
+    return true;
   });
 
-  const selectedSoRow = filteredList.find((r) => r.id === selectedId);
-  const activeSelectedSo = selectedSoRow || soList.find((r) => r.id === selectedId) || null;
+  const activeSelectedSo =
+    filteredList.find((r) => r.id === selectedId) || soList.find((r) => r.id === selectedId) || null;
+
   const visibleSjList = activeSelectedSo
-    ? sjList.filter(
-        (sj) =>
-          (sj.soItemId && sj.soItemId === activeSelectedSo.id) ||
-          (sj.kodeBarang && sj.kodeBarang === activeSelectedSo.kodeBarang)
-      )
-    : sjList;
+    ? sjList.filter((sj) => {
+        const matchSo =
+          sj.noSo && activeSelectedSo.noSo && sj.noSo === activeSelectedSo.noSo.toUpperCase();
+        const matchKode =
+          sj.kodeBarang &&
+          activeSelectedSo.kodeBarang &&
+          sj.kodeBarang === activeSelectedSo.kodeBarang.toUpperCase();
+        return matchSo && matchKode;
+      })
+    : [];
+
+  const allCustomersInRows = Array.from(
+    new Set([...customerOptions, ...soList.map((s) => s.customer).filter((c) => c && c !== '-')])
+  ).sort();
+
+  const totalPesanAll = filteredList.reduce((acc, r) => acc + r.pesan, 0);
+  const totalKirimAll = filteredList.reduce((acc, r) => acc + r.kirim, 0);
+  const totalSisaAll = filteredList.reduce((acc, r) => acc + r.sisa, 0);
+  const avgTerpenuhi =
+    totalPesanAll > 0 ? Math.min(100, Math.round((totalKirimAll / totalPesanAll) * 100)) : 0;
 
   const handleExecuteCari = async () => {
-    const rows = await loadData({ field: searchField, term: searchTerm });
+    const rows = await loadData({ term: '' });
     if (rows) {
-      showFeedback(
-        rows.length > 0
-          ? `Ditemukan ${rows.length} item Mutasi SO dari Supabase`
-          : 'Data Mutasi SO tidak ditemukan di Supabase'
-      );
+      showFeedback(`Ditemukan ${rows.length} baris Mutasi SO dari server`);
     }
   };
 
   const handleResetCari = async () => {
     setSearchField('Semua');
     setSearchTerm('');
+    setCustomerFilter('ALL');
     setJenisTransaksi('Semua Berdasarkan Periode');
-    const rows = await loadData({ field: 'Semua', term: '' });
-    if (rows) showFeedback(`Filter direset (${rows.length} Mutasi SO)`);
+    const now = todayIso();
+    setPeriodeStart(toDisplayDmy(`${now.slice(0, 8)}01`));
+    setPeriodeEnd(toDisplayDmy(now));
+    const rows = await loadData({ term: '' });
+    if (rows) showFeedback(`Filter direset (${rows.length} baris Mutasi SO)`);
   };
 
   const handleFind = async () => {
     setIsFindOpen(true);
-    await loadData({ field: 'Semua', term: '' });
+    await loadData({ term: '' });
+  };
+
+  const handlePrintAll = () => {
+    setPrintScopeOnOpen('all');
+    setIsPrintOpen(true);
+  };
+
+  const handlePrintSelected = () => {
+    if (!activeSelectedSo) {
+      showFeedback('Pilih baris Mutasi SO yang akan dicetak terlebih dahulu');
+      return;
+    }
+    setPrintScopeOnOpen('selected');
+    setIsPrintOpen(true);
   };
 
   const handleExportExcel = async () => {
@@ -402,10 +358,11 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
     exportToExcel({
       fileName: 'Mutasi_Sales_Order',
       sheetTitle: 'MUTASI SALES ORDER',
-      subtitle: `Periode: ${periodeStart} s/d ${periodeEnd} | ${jenisTransaksi}`,
+      subtitle: `Periode: ${periodeStart} s/d ${periodeEnd} | Customer: ${customerFilter} | Status: ${jenisTransaksi}`,
       companyProfile: company,
       columns: [
         { header: 'No.SO', accessor: 'noSo' },
+        { header: 'Tanggal', accessor: 'tanggalDisplay', align: 'center' },
         { header: 'No.PO', accessor: 'noPo' },
         { header: 'Customer', accessor: 'customer' },
         { header: 'Kode Barang', accessor: 'kodeBarang' },
@@ -414,10 +371,12 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         { header: 'Pesan', accessor: 'pesan', align: 'right' },
         { header: 'Kirim', accessor: 'kirim', align: 'right' },
         { header: 'Sisa', accessor: 'sisa', align: 'right' },
+        { header: '% Kirim', accessor: 'persenTerpenuhi', align: 'right' },
+        { header: 'Status', accessor: 'statusMutasi', align: 'center' },
       ],
       rows: filteredList,
     });
-    showFeedback('Export Excel selesai');
+    showFeedback('Export Excel Mutasi SO selesai');
   };
 
   return (
@@ -429,53 +388,130 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         title="Mutasi Sales Order"
         onClose={onClose}
         onFind={handleFind}
-        onPrint={() => setIsPrintOpen(true)}
-        onTableView={() => loadData({ field: searchField, term: searchTerm })}
+        onPrint={handlePrintAll}
+        onTableView={() => loadData({ term: '' })}
         onExportExcel={handleExportExcel}
       />
 
-      <div className="shrink-0 bg-[#ECE9D8] border-b border-[#C0C0C0] px-3 py-1.5 flex items-center justify-between text-xs overflow-x-auto">
-        <FormActionButtons
-          onSimpan={handleToolbarSimpan}
-          onBaru={handleAddNew}
-          onKoreksi={handleEdit}
-          onHapus={handleDelete}
-          onPrint={() => setIsPrintOpen(true)}
-          onFind={handleFind}
-          isBusy={isBusy}
-          feedback={feedback}
-        />
+      {/* Toolbar Monitoring Mutasi SO */}
+      <div className="shrink-0 bg-[#ECE9D8] border-b border-[#C0C0C0] px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+        <div className="flex items-center space-x-1.5">
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => loadData({ term: '' })}
+            className="h-[26px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-black font-semibold cursor-pointer disabled:opacity-50"
+          >
+            <span>Refresh Data</span>
+          </button>
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={handlePrintSelected}
+            className="h-[26px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-black font-semibold cursor-pointer disabled:opacity-50"
+          >
+            <span>Cetak Terpilih</span>
+          </button>
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={handlePrintAll}
+            className="h-[26px] px-2.5 bg-[#0A246A] hover:bg-[#163994] border border-black rounded-[2px] flex items-center space-x-1 text-white font-bold cursor-pointer disabled:opacity-50"
+          >
+            <span>Preview Laporan A4</span>
+          </button>
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={handleExportExcel}
+            className="h-[26px] px-2.5 bg-[#1E7145] hover:bg-[#155935] border border-black rounded-[2px] flex items-center space-x-1 text-white font-bold cursor-pointer disabled:opacity-50"
+          >
+            <span>Export Excel</span>
+          </button>
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={handleFind}
+            className="h-[26px] px-2.5 bg-[#ECE9D8] hover:bg-[#F5F2E6] border border-[#7A7A7A] shadow-[inset_1px_1px_0_#FFFFFF] rounded-[2px] flex items-center space-x-1 text-black font-semibold cursor-pointer disabled:opacity-50"
+          >
+            <span>Find</span>
+          </button>
+
+          {feedback && (
+            <span className="ml-2 px-2 py-0.5 bg-[#FFFFCC] border border-[#ACA899] text-[10px] font-semibold text-black">
+              {feedback}
+            </span>
+          )}
+        </div>
+
+        {/* Summary Status Metrics */}
+        <div className="flex items-center space-x-3 text-[11px] font-semibold text-black">
+          <span>
+            Baris: <b className="font-mono">{filteredList.length}</b>
+          </span>
+          <span>
+            Pesan: <b className="font-mono text-[#0A246A]">{formatMoney(totalPesanAll)}</b>
+          </span>
+          <span>
+            Kirim: <b className="font-mono text-[#107C10]">{formatMoney(totalKirimAll)}</b>
+          </span>
+          <span>
+            Sisa: <b className="font-mono text-[#C00000]">{formatMoney(totalSisaAll)}</b>
+          </span>
+          <span>
+            Terpenuhi: <b className="font-mono">{avgTerpenuhi}%</b>
+          </span>
+        </div>
       </div>
 
+      {/* Filter Header */}
       <div className="shrink-0 bg-[#ECE9D8] px-3 py-2 flex flex-col gap-1.5 text-[11px]">
-        <div className="flex items-center space-x-2">
-          <span className="font-bold text-black w-[105px] text-right">Periode :</span>
-          <DatePickerInput
-            value={periodeStart}
-            onChange={(formatted) => setPeriodeStart(formatted)}
-            format="dmy"
-          />
-          <span className="font-bold text-black px-1">s/d</span>
-          <DatePickerInput
-            value={periodeEnd}
-            onChange={(formatted) => setPeriodeEnd(formatted)}
-            format="dmy"
-          />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center space-x-2">
+            <span className="font-bold text-black w-[100px] text-right">Periode SO :</span>
+            <DatePickerInput
+              value={periodeStart}
+              onChange={(formatted) => setPeriodeStart(formatted)}
+              format="dmy"
+            />
+            <span className="font-bold text-black px-1">s/d</span>
+            <DatePickerInput
+              value={periodeEnd}
+              onChange={(formatted) => setPeriodeEnd(formatted)}
+              format="dmy"
+            />
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <span className="font-bold text-black">Customer :</span>
+            <select
+              value={customerFilter}
+              onChange={(e) => setCustomerFilter(e.target.value)}
+              className="w-[240px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] text-black outline-none cursor-pointer"
+            >
+              <option value="ALL">-- Semua Customer --</option>
+              {allCustomersInRows.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center space-x-2">
-            <span className="font-bold text-black w-[105px] text-right">Jenis Transaksi :</span>
+            <span className="font-bold text-black w-[100px] text-right">Status SO :</span>
             <select
               value={jenisTransaksi}
               onChange={(e) => setJenisTransaksi(e.target.value)}
-              className="w-[300px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] text-black outline-none cursor-pointer"
+              className="w-[260px] h-[22px] px-1.5 bg-white border border-[#7A7A7A] text-[11px] text-black outline-none cursor-pointer"
             >
               <option value="Semua Berdasarkan Periode">Semua Berdasarkan Periode</option>
               <option value="Outstanding SO (Belum Lunas Kirim)">
                 Outstanding SO (Belum Lunas Kirim)
               </option>
-              <option value="Closed SO">Closed SO</option>
+              <option value="Closed SO">Closed SO (Sudah Lengkap Kirim)</option>
             </select>
           </div>
 
@@ -504,36 +540,40 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         </div>
       </div>
 
+      {/* Main Split Grid: Left = SO Detail, Right = SJ Realization Detail */}
       <div className="flex-1 overflow-hidden px-2 pb-2 flex gap-2">
         <div className="flex-1 overflow-auto bg-[#F0F0F0] border border-[#808080] relative shadow-inner">
           <table className="border-collapse text-left whitespace-nowrap text-[11px] w-full">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
                 <th
-                  className="px-2 py-0.5 text-center font-normal text-[11px] border-r border-[#ACA899]"
-                  colSpan={10}
+                  className="px-2 py-0.5 text-center font-bold text-[11px] border-r border-[#ACA899]"
+                  colSpan={13}
                 >
-                  S.O DETAIL
+                  MUTASI REALISASI SALES ORDER (PESAN vs SURAT JALAN)
                 </th>
               </tr>
               <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899] font-normal">
                 <th className="border-r border-[#ACA899] w-[20px] px-1 py-0.5 text-center font-normal" />
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[92px]">No.SO</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[86px]">No.PO</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[155px]">Customer</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[88px]">Kode Barang</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[180px]">Nama Barang</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[48px]">Unit</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[52px]">Pesan</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[52px]">Kirim</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[52px]">Sisa</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center w-[95px]">No.SO</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center w-[76px]">Tanggal</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center w-[86px]">No.PO</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-left w-[150px]">Customer</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center w-[88px]">Kode Brg</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-left w-[170px]">Nama Barang</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center w-[45px]">Unit</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-right w-[52px]">Pesan</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-right w-[52px]">Kirim</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-right w-[52px]">Sisa</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-right w-[54px]">% Kirim</th>
+                <th className="px-2 py-0.5 font-semibold text-center w-[62px]">Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-gray-500 italic bg-white">
-                    Tidak ada data Mutasi Sales Order
+                  <td colSpan={13} className="text-center py-8 text-gray-500 italic bg-white">
+                    Tidak ada data Mutasi Sales Order pada periode/filter ini.
                   </td>
                 </tr>
               ) : (
@@ -543,7 +583,7 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
-                      onDoubleClick={handleEdit}
+                      onDoubleClick={handlePrintSelected}
                       className={`border-b border-[#D4D0C8] cursor-pointer ${
                         isSelected
                           ? 'bg-[#DCEBFC] text-black font-semibold'
@@ -553,15 +593,46 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
                       <td className="border-r border-[#ACA899] bg-[#ECE9D8] px-1 py-0.5 text-center font-bold text-[10px]">
                         {isSelected ? '▸' : ''}
                       </td>
-                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{item.noSo}</td>
-                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{item.noPo}</td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 font-mono font-semibold">
+                        {item.noSo}
+                      </td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-center">
+                        {item.tanggalDisplay}
+                      </td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 font-mono">{item.noPo}</td>
                       <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{item.customer}</td>
-                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{item.kodeBarang}</td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 font-mono">{item.kodeBarang}</td>
                       <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{item.namaBarang}</td>
                       <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-center">{item.unit}</td>
-                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right">{item.pesan}</td>
-                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right">{item.kirim}</td>
-                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right">{item.sisa}</td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right font-mono">
+                        {formatMoney(item.pesan)}
+                      </td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right font-mono text-[#107C10]">
+                        {formatMoney(item.kirim)}
+                      </td>
+                      <td
+                        className={`border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right font-mono font-bold ${
+                          item.sisa > 0 ? 'text-[#C00000]' : 'text-[#107C10]'
+                        }`}
+                      >
+                        {formatMoney(item.sisa)}
+                      </td>
+                      <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right font-mono">
+                        {item.persenTerpenuhi}%
+                      </td>
+                      <td className="px-2 py-0.5 text-center">
+                        <span
+                          className={`inline-block px-1.5 py-0.2 rounded-[2px] text-[10px] font-bold ${
+                            item.statusMutasi === 'Closed'
+                              ? 'bg-[#DDF5D5] text-[#107C10] border border-[#107C10]/40'
+                              : item.statusMutasi === 'Parsial'
+                              ? 'bg-[#FFF3CD] text-[#856404] border border-[#856404]/40'
+                              : 'bg-[#FDE8E8] text-[#900000] border border-[#900000]/30'
+                          }`}
+                        >
+                          {item.statusMutasi}
+                        </span>
+                      </td>
                     </tr>
                   );
                 })
@@ -570,39 +641,44 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
           </table>
         </div>
 
-        <div className="w-[265px] shrink-0 overflow-auto bg-[#F0F0F0] border border-[#808080] relative shadow-inner">
+        <div className="w-[310px] shrink-0 overflow-auto bg-[#F0F0F0] border border-[#808080] relative shadow-inner">
           <table className="border-collapse text-left whitespace-nowrap text-[11px] w-full">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
                 <th
-                  className="px-2 py-0.5 text-center font-normal text-[11px] border-r border-[#ACA899]"
-                  colSpan={4}
+                  className="px-2 py-0.5 text-center font-bold text-[11px] border-r border-[#ACA899]"
+                  colSpan={5}
                 >
-                  S.J DETAIL
+                  RIWAYAT SURAT JALAN (ITEM TERPILIH)
                 </th>
               </tr>
               <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899] font-normal">
-                <th className="border-r border-[#ACA899] w-[20px] px-1 py-0.5 text-center font-normal" />
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[76px]">No.SJ</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[68px]">Tanggal</th>
-                <th className="border-r border-[#ACA899] px-2 py-0.5 font-normal text-center w-[42px]">Qty</th>
+                <th className="border-r border-[#ACA899] w-[18px] px-1 py-0.5 text-center font-normal" />
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center">No.SJ</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-center">Tanggal</th>
+                <th className="border-r border-[#ACA899] px-2 py-0.5 font-semibold text-right">Qty</th>
+                <th className="px-2 py-0.5 font-semibold text-center">Status</th>
               </tr>
             </thead>
             <tbody>
               {visibleSjList.length === 0 ? (
-                <tr className="bg-white border-b border-[#ACA899] h-[22px]">
-                  <td className="border-r border-[#ACA899] bg-[#ECE9D8] px-1 py-0.5 text-center font-bold text-black">*</td>
-                  <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5" />
-                  <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5" />
-                  <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5" />
+                <tr className="bg-white border-b border-[#ACA899]">
+                  <td colSpan={5} className="px-2 py-4 text-center text-gray-500 italic">
+                    Belum ada Surat Jalan untuk item SO terpilih.
+                  </td>
                 </tr>
               ) : (
                 visibleSjList.map((sj) => (
                   <tr key={sj.id} className="border-b border-[#ACA899] bg-white text-black">
-                    <td className="border-r border-[#ACA899] bg-[#ECE9D8] px-1 py-0.5 text-center font-bold text-black">*</td>
-                    <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{sj.noSj}</td>
-                    <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5">{sj.tanggal}</td>
-                    <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right">{sj.qty}</td>
+                    <td className="border-r border-[#ACA899] bg-[#ECE9D8] px-1 py-0.5 text-center font-bold text-black">
+                      •
+                    </td>
+                    <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 font-mono">{sj.noSj}</td>
+                    <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-center">{sj.tanggal}</td>
+                    <td className="border-r border-[#7A7A7A]/40 px-2 py-0.5 text-right font-mono">
+                      {formatMoney(sj.qty)}
+                    </td>
+                    <td className="px-2 py-0.5 text-center">{sj.stsPost}</td>
                   </tr>
                 ))
               )}
@@ -611,158 +687,38 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         </div>
       </div>
 
-      {isAddOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[#ECE9D8] border-2 border-[#0A246A] shadow-2xl w-[460px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0A246A] to-[#A6CAF0] text-white px-3 py-1.5 flex items-center justify-between font-bold text-xs shrink-0">
-              <span>{editingId ? 'Koreksi Mutasi Sales Order' : 'Tambah Mutasi Sales Order Baru'}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setModalError(null);
-                  setIsAddOpen(false);
-                }}
-                className="w-[16px] h-[16px] bg-[#ECE9D8] border border-black text-black flex items-center justify-center text-[9px] font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <form noValidate onSubmit={handleSaveForm} className="p-4 space-y-2.5 text-xs overflow-y-auto">
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">No. SO:</label>
-                <input
-                  type="text"
-                  value={formNoSo}
-                  onChange={(e) => setFormNoSo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">No. PO:</label>
-                <input
-                  type="text"
-                  value={formNoPo}
-                  onChange={(e) => setFormNoPo(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Customer:</label>
-                <input
-                  type="text"
-                  value={formCustomer}
-                  onChange={(e) => setFormCustomer(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Kode Barang:</label>
-                <input
-                  type="text"
-                  value={formKodeBarang}
-                  onChange={(e) => setFormKodeBarang(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Nama Barang:</label>
-                <input
-                  type="text"
-                  value={formNamaBarang}
-                  onChange={(e) => setFormNamaBarang(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Unit:</label>
-                <input
-                  type="text"
-                  value={formUnit}
-                  onChange={(e) => setFormUnit(e.target.value)}
-                  className="col-span-2 px-2 py-1 bg-white border border-[#7A7A7A] uppercase"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2 items-center">
-                <label className="font-semibold">Pesan / Kirim / Sisa:</label>
-                <div className="col-span-2 flex gap-2">
-                  <input
-                    type="number"
-                    value={formPesan}
-                    onChange={(e) => setFormPesan(e.target.value)}
-                    className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
-                    placeholder="Pesan"
-                  />
-                  <input
-                    type="number"
-                    value={formKirim}
-                    onChange={(e) => setFormKirim(e.target.value)}
-                    className="w-1/3 px-2 py-1 bg-white border border-[#7A7A7A] text-right font-mono"
-                    placeholder="Kirim"
-                  />
-                  <input
-                    type="number"
-                    readOnly
-                    value={Math.max(0, (parseInt(formPesan || '0', 10) || 0) - (parseInt(formKirim || '0', 10) || 0))}
-                    title="Sisa otomatis (Pesan - Kirim)"
-                    className="w-1/3 px-2 py-1 bg-[#EAE6D9] border border-[#7A7A7A] text-right font-mono font-bold"
-                  />
-                </div>
-              </div>
-              {modalError && (
-                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
-                  ⚠ {modalError}
-                </div>
-              )}
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setModalError(null);
-                    setIsAddOpen(false);
-                  }}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs hover:bg-[#F3F2F1] cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isBusy}
-                  className="px-3 py-1 bg-[#0A246A] text-white border border-black text-xs hover:bg-[#163994] cursor-pointer"
-                >
-                  Simpan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title="LAPORAN MUTASI SALES ORDER"
-        subtitle={`Periode: ${periodeStart} s/d ${periodeEnd} | ${jenisTransaksi}`}
+        subtitle={`Periode: ${periodeStart} s/d ${periodeEnd} | Customer: ${customerFilter} | ${jenisTransaksi}`}
         orientation="landscape"
+        defaultPrintScope={printScopeOnOpen}
+        metaLines={[
+          { label: 'Periode Tanggal', value: `${periodeStart} s/d ${periodeEnd}` },
+          { label: 'Filter Customer', value: customerFilter },
+          { label: 'Status SO', value: jenisTransaksi },
+        ]}
         columns={[
           { header: 'No.SO', accessor: 'noSo', width: '95px' },
-          { header: 'No.PO', accessor: 'noPo', width: '90px' },
+          { header: 'Tanggal', accessor: 'tanggalDisplay', align: 'center', width: '75px' },
+          { header: 'No.PO', accessor: 'noPo', width: '85px' },
           { header: 'Customer', accessor: 'customer' },
-          { header: 'Kode Barang', accessor: 'kodeBarang', width: '85px' },
+          { header: 'Kode Brg', accessor: 'kodeBarang', width: '80px' },
           { header: 'Nama Barang', accessor: 'namaBarang' },
-          { header: 'Unit', accessor: 'unit', align: 'center', width: '48px' },
-          { header: 'Pesan', accessor: 'pesan', align: 'right', width: '55px' },
-          { header: 'Kirim', accessor: 'kirim', align: 'right', width: '55px' },
-          { header: 'Sisa', accessor: 'sisa', align: 'right', width: '55px' },
+          { header: 'Unit', accessor: 'unit', align: 'center', width: '44px' },
+          { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), align: 'right', width: '50px' },
+          { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), align: 'right', width: '50px' },
+          { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), align: 'right', width: '50px' },
+          { header: '% Kirim', accessor: (r) => `${r.persenTerpenuhi}%`, align: 'right', width: '50px' },
+          { header: 'Status', accessor: 'statusMutasi', align: 'center', width: '55px' },
         ]}
         rows={filteredList}
         summaryItems={[
           { label: 'Total Item', value: `${filteredList.length} Baris` },
-          {
-            label: 'Total Sisa Kirim',
-            value: String(filteredList.reduce((acc, r) => acc + r.sisa, 0)),
-          },
+          { label: 'Total Pesan', value: formatMoney(totalPesanAll) },
+          { label: 'Total Kirim', value: formatMoney(totalKirimAll) },
+          { label: 'Total Sisa', value: formatMoney(totalSisaAll) },
         ]}
         selectedRow={activeSelectedSo}
         selectedTitle="DETAIL MUTASI SALES ORDER"
@@ -775,20 +731,25 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
           activeSelectedSo
             ? [
                 { label: 'No. SO', value: activeSelectedSo.noSo },
+                { label: 'Tanggal SO', value: activeSelectedSo.tanggalDisplay },
                 { label: 'No. PO', value: activeSelectedSo.noPo || '-' },
                 { label: 'Customer', value: activeSelectedSo.customer || '-' },
                 { label: 'Kode Barang', value: activeSelectedSo.kodeBarang || '-' },
                 { label: 'Nama Barang', value: activeSelectedSo.namaBarang || '-' },
-                { label: 'Pesan / Kirim / Sisa', value: `${activeSelectedSo.pesan} / ${activeSelectedSo.kirim} / ${activeSelectedSo.sisa}` },
+                {
+                  label: 'Realisasi Kirim',
+                  value: `${formatMoney(activeSelectedSo.kirim)} / ${formatMoney(activeSelectedSo.pesan)} ${activeSelectedSo.unit} (${activeSelectedSo.persenTerpenuhi}%)`,
+                },
               ]
             : undefined
         }
         selectedSummaryItems={
           activeSelectedSo
             ? [
-                { label: 'Qty Pesan', value: `${activeSelectedSo.pesan} ${activeSelectedSo.unit}` },
-                { label: 'Qty Kirim', value: `${activeSelectedSo.kirim} ${activeSelectedSo.unit}` },
-                { label: 'Sisa Kirim', value: `${activeSelectedSo.sisa} ${activeSelectedSo.unit}` },
+                { label: 'Qty Pesan', value: `${formatMoney(activeSelectedSo.pesan)} ${activeSelectedSo.unit}` },
+                { label: 'Qty Kirim', value: `${formatMoney(activeSelectedSo.kirim)} ${activeSelectedSo.unit}` },
+                { label: 'Sisa Kirim', value: `${formatMoney(activeSelectedSo.sisa)} ${activeSelectedSo.unit}` },
+                { label: 'Status', value: activeSelectedSo.statusMutasi },
               ]
             : undefined
         }
@@ -801,19 +762,20 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
         rows={soList}
         selectedId={selectedId}
         getRowId={(r) => r.id}
-        getSearchValues={(r) => [r.noSo, r.noPo, r.customer, r.kodeBarang, r.namaBarang, r.unit]}
+        getSearchValues={(r) => [r.noSo, r.noPo, r.customer, r.kodeBarang, r.namaBarang, r.unit, r.statusMutasi]}
         initialQuery={searchTerm}
         isBusy={isBusy}
         onSearchSupabase={(q) => {
           setSearchField('Semua');
           setSearchTerm(q);
-          return loadData({ field: 'Semua', term: q });
+          return loadData({ term: q });
         }}
         onRefreshSupabase={() => {
           setSearchField('Semua');
           setSearchTerm('');
+          setCustomerFilter('ALL');
           setJenisTransaksi('Semua Berdasarkan Periode');
-          return loadData({ field: 'Semua', term: '' });
+          return loadData({ term: '' });
         }}
         onSelectRow={(row, q) => {
           setSelectedId(row.id);
@@ -826,9 +788,9 @@ export const MutasiSalesOrderForm: React.FC<MutasiSalesOrderFormProps> = ({
           { header: 'Customer', accessor: (r) => r.customer, bold: true },
           { header: 'Kode Brg', accessor: (r) => r.kodeBarang, widthClass: 'w-24', mono: true },
           { header: 'Nama Barang', accessor: (r) => r.namaBarang },
-          { header: 'Pesan', accessor: (r) => String(r.pesan), widthClass: 'w-14', align: 'right', mono: true },
-          { header: 'Kirim', accessor: (r) => String(r.kirim), widthClass: 'w-14', align: 'right', mono: true },
-          { header: 'Sisa', accessor: (r) => String(r.sisa), widthClass: 'w-14', align: 'right', mono: true, bold: true },
+          { header: 'Pesan', accessor: (r) => formatMoney(r.pesan), widthClass: 'w-14', align: 'right', mono: true },
+          { header: 'Kirim', accessor: (r) => formatMoney(r.kirim), widthClass: 'w-14', align: 'right', mono: true },
+          { header: 'Sisa', accessor: (r) => formatMoney(r.sisa), widthClass: 'w-14', align: 'right', mono: true, bold: true },
         ]}
       />
     </div>
