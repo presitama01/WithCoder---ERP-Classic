@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS public.pembelian_barangs (
   no_po TEXT DEFAULT '-',
   no_faktur TEXT NOT NULL,
   keterangan TEXT,
+  mata_uang VARCHAR(20) DEFAULT 'IDR',
+  ppn NUMERIC(8,2) DEFAULT 0,
+  nilai_ppn NUMERIC(18,2) DEFAULT 0,
   nilai_pembelian NUMERIC(15,2) DEFAULT 0,
   jth_tmp DATE,
   sts_lunas TEXT DEFAULT 'Belum',
@@ -21,6 +24,15 @@ CREATE TABLE IF NOT EXISTS public.pembelian_barangs (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+ALTER TABLE public.pembelian_barangs
+  ADD COLUMN IF NOT EXISTS no_po TEXT DEFAULT '-',
+  ADD COLUMN IF NOT EXISTS no_faktur TEXT DEFAULT '-',
+  ADD COLUMN IF NOT EXISTS sts_lunas TEXT DEFAULT 'Belum',
+  ADD COLUMN IF NOT EXISTS tgl_lunas DATE,
+  ADD COLUMN IF NOT EXISTS mata_uang VARCHAR(20) DEFAULT 'IDR',
+  ADD COLUMN IF NOT EXISTS ppn NUMERIC(8,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS nilai_ppn NUMERIC(18,2) DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS public.pembelian_barang_details (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

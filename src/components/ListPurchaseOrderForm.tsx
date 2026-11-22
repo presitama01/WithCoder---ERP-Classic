@@ -79,6 +79,15 @@ interface PurchaseRequestOption {
   deliveryTo: string;
   delivery: string;
   noPo: string;
+  keterangan: string;
+}
+
+interface PrDetailRef {
+  kode: string;
+  namaBarang: string;
+  unit: string;
+  qty: number;
+  keterangan: string;
 }
 
 interface ListPurchaseOrderFormProps {
@@ -205,6 +214,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
   const [prOptions, setPrOptions] = useState<PurchaseRequestOption[]>([]);
+  const [prDetailsByNoPrMap, setPrDetailsByNoPrMap] = useState<Record<string, PrDetailRef[]>>({});
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -221,10 +231,11 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   };
 
   const loadMasterReferences = async () => {
-    const [suppRes, barangRes, prRes, lokasiRes] = await Promise.allSettled([
+    const [suppRes, barangRes, prRes, prDetRes, lokasiRes] = await Promise.allSettled([
       erpList<any>('master_suppliers', { orderBy: 'nama_supplier', asc: true, limit: 1000 }),
       erpList<any>('master_barangs', { orderBy: 'kode', asc: true, limit: 2000 }),
       erpList<any>('purchase_requests', { orderBy: 'tanggal', asc: false, limit: 1000 }),
+      erpList<any>('purchase_request_details', { orderBy: 'no_urut', asc: true, limit: 5000 }),
       erpList<any>('master_lokasi_gudangs', { orderBy: 'nama_lokasi', asc: true, limit: 1000 }),
     ]);
 
@@ -251,11 +262,13 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
       setBarangOptions(mapped);
     }
 
+    const prIdToNoPr = new Map<string, string>();
     if (prRes.status === 'fulfilled') {
       const prMap = new Map<string, PurchaseRequestOption>();
       for (const r of prRes.value) {
         const noPr = String(r.no_pr || '').trim().toUpperCase();
         if (!noPr) continue;
+        prIdToNoPr.set(String(r.id), noPr);
         prMap.set(noPr, {
           id: String(r.id),
           noPr,
@@ -263,9 +276,30 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
           deliveryTo: String(r.delivery_to || '').trim().toUpperCase(),
           delivery: String(r.delivery || '').trim(),
           noPo: String(r.no_po || '').trim().toUpperCase(),
+          keterangan: String(r.keterangan || '').trim(),
         });
       }
       setPrOptions(Array.from(prMap.values()));
+    }
+
+    if (prDetRes.status === 'fulfilled') {
+      const groupedPr: Record<string, PrDetailRef[]> = {};
+      for (const raw of prDetRes.value) {
+        const prNo =
+          String(raw.no_pr || '').trim().toUpperCase() ||
+          prIdToNoPr.get(String(raw.pr_id || '')) ||
+          '';
+        if (!prNo) continue;
+        if (!groupedPr[prNo]) groupedPr[prNo] = [];
+        groupedPr[prNo].push({
+          kode: String(raw.kode || '').trim().toUpperCase(),
+          namaBarang: String(raw.nama_barang || '').trim(),
+          unit: String(raw.unit || 'PCS').trim().toUpperCase(),
+          qty: Number(raw.qty || 1),
+          keterangan: String(raw.keterangan || '').trim(),
+        });
+      }
+      setPrDetailsByNoPrMap(groupedPr);
     }
 
     if (lokasiRes.status === 'fulfilled') {
@@ -499,30 +533,64 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     if (!cleanPr) return;
 
     const matchedPr = prOptions.find((p) => p.noPr === cleanPr);
-    if (!matchedPr) return;
-
-    if (matchedPr.deliveryTo) setNewDeliveryTo(matchedPr.deliveryTo);
-    if (matchedPr.delivery) setNewDelivery(matchedPr.delivery);
-    if (
-      !editingId &&
-      matchedPr.noPo &&
-      matchedPr.noPo !== '-' &&
-      !poList.some((po) => po.noBukti.toUpperCase() === matchedPr.noPo)
-    ) {
-      setNewNoBukti(matchedPr.noPo);
+    if (matchedPr) {
+      if (matchedPr.deliveryTo) setNewDeliveryTo(matchedPr.deliveryTo);
+      if (matchedPr.delivery) setNewDelivery(matchedPr.delivery);
+      if (
+        !editingId &&
+        matchedPr.noPo &&
+        matchedPr.noPo !== '-' &&
+        !poList.some((po) => po.noBukti.toUpperCase() === matchedPr.noPo)
+      ) {
+        setNewNoBukti(matchedPr.noPo);
+      }
+      if (!newKeterangan.trim()) {
+        setNewKeterangan(
+          matchedPr.keterangan
+            ? `Ref PR: ${matchedPr.noPr} - ${matchedPr.keterangan}`
+            : `Ref PR: ${matchedPr.noPr}${matchedPr.deliveryTo ? ` | ${matchedPr.deliveryTo}` : ''}${
+                matchedPr.delivery ? ` (${matchedPr.delivery})` : ''
+              }`
+        );
+      }
     }
-    if (!newKeterangan.trim()) {
-      setNewKeterangan(
-        `Ref PR: ${matchedPr.noPr}${matchedPr.deliveryTo ? ` | ${matchedPr.deliveryTo}` : ''}${
-          matchedPr.delivery ? ` (${matchedPr.delivery})` : ''
-        }`
+
+    const prItems = prDetailsByNoPrMap[cleanPr] || [];
+    if (prItems.length > 0) {
+      const mappedDetails: PurchaseOrderDetailItem[] = prItems.map((item, idx) => {
+        const masterItem = barangOptions.find((b) => b.kode === item.kode);
+        const harga = masterItem ? masterItem.cost : 0;
+        const qty = Number(item.qty || 1);
+        const jumlah = qty * harga;
+        return {
+          id: `pr-fill-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+          noUrut: idx + 1,
+          kode: item.kode,
+          namaBarang: item.namaBarang || masterItem?.namaBarang || '',
+          unit: item.unit || masterItem?.unit || 'PCS',
+          terima: 0,
+          qty,
+          harga,
+          jumlah,
+          total: jumlah,
+        };
+      });
+      setDetailRows(mappedDetails);
+      const grossSum = mappedDetails.reduce((acc, r) => acc + r.total, 0);
+      const { nominalPpn, netNilaiPo } = calcPpnDeduction(grossSum, parseNum(newPpn));
+      setPpnManualOverride(false);
+      setNewNilaiPpn(String(nominalPpn));
+      setNewNilaiPo(String(netNilaiPo));
+      showFeedback(
+        `PR [${cleanPr}] dimuat (${mappedDetails.length} item barang otomatis masuk ke P.O. Detail)`
+      );
+    } else if (matchedPr) {
+      showFeedback(
+        `Header otomatis diisi dari PR [${matchedPr.noPr}] (${matchedPr.deliveryTo || '-'} / ${
+          matchedPr.delivery || '-'
+        })`
       );
     }
-    showFeedback(
-      `Field otomatis diisi dari PR [${matchedPr.noPr}] (${matchedPr.deliveryTo || '-'} / ${
-        matchedPr.delivery || '-'
-      })`
-    );
   };
 
   const handleAddDetailRow = () => {
@@ -784,6 +852,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
         [savedHeader.id]: savedDetails,
       }));
 
+      await loadMasterReferences();
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
@@ -945,7 +1014,12 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   );
 
   const prDropdownChoices = Array.from(
-    new Set([...prOptions.map((p) => p.noPr), newNoPr.trim().toUpperCase()].filter(Boolean))
+    new Set([
+      ...prOptions
+        .filter((p) => !p.noPo || p.noPo === '-' || (editingId && p.noPr === newNoPr.trim().toUpperCase()))
+        .map((p) => p.noPr),
+      newNoPr.trim().toUpperCase(),
+    ].filter(Boolean))
   );
 
   const deliveryToChoices = Array.from(
@@ -1335,12 +1409,15 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                       onChange={(e) => handleSelectNoPr(e.target.value)}
                       className="w-64 px-2 py-1 bg-[#FFFBEB] border border-[#7A7A7A] rounded text-xs uppercase font-mono cursor-pointer"
                     >
-                      <option value="">-- Pilih No. PR (Opsional) --</option>
+                      <option value="">-- Pilih No. PR (Belum PO) --</option>
                       {prDropdownChoices.map((prNo) => {
                         const info = prOptions.find((p) => p.noPr === prNo);
+                        const itemCount = (prDetailsByNoPrMap[prNo] || []).length;
                         return (
                           <option key={prNo} value={prNo}>
-                            {info ? `${prNo} (${info.deliveryTo || '-'})` : prNo}
+                            {info
+                              ? `${prNo} (${info.deliveryTo || '-'} | ${itemCount} item)`
+                              : prNo}
                           </option>
                         );
                       })}

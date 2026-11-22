@@ -262,6 +262,7 @@ export async function erpCompositeSave<T = any>(
     | 'giro-pembelian'
     | 'giro-penjualan'
     | 'jurnal-umum'
+    | 'purchase-request'
     | 'purchase-order'
     | 'sales-quotation'
     | 'sales-order'
