@@ -7,6 +7,8 @@ import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import { cascadeMasterRename, checkMasterUsage } from '../lib/masterValidation';
 
 export interface CategoryItem {
   id: string;
@@ -34,6 +36,7 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<CategoryItem | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -138,17 +141,32 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = () => {
+    const item = categories.find((c) => c.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    setConfirmDeleteItem(item);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteItem) return;
     try {
       setIsBusy(true);
-      await erpDelete('master_categories', selectedId);
-      const updated = categories.filter((c) => c.id !== selectedId);
+      const usageMsg = await checkMasterUsage([
+        { table: 'master_barangs', label: 'Master Barang', eq: { category: confirmDeleteItem.namaKategori } },
+      ]);
+      if (usageMsg) {
+        setConfirmDeleteItem(null);
+        showFeedback(usageMsg);
+        return;
+      }
+      await erpDelete('master_categories', confirmDeleteItem.id);
+      const updated = categories.filter((c) => c.id !== confirmDeleteItem.id);
       setCategories(updated);
       setSelectedId(updated[0]?.id || '');
+      setConfirmDeleteItem(null);
       showFeedback('Data dihapus dari Supabase');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
@@ -160,23 +178,38 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode dan Nama Kategori wajib diisi.');
+      return;
+    }
+    const dupKode = categories.find((c) => c.kode.toUpperCase() === cleanKode && c.id !== editingId);
+    if (dupKode) {
+      setModalError(`Kode Kategori [${cleanKode}] sudah digunakan.`);
       return;
     }
 
     try {
       setIsBusy(true);
       const payload = {
-        kode: newKode.trim().toUpperCase(),
-        nama_kategori: newNama.trim().toUpperCase(),
+        kode: cleanKode,
+        nama_kategori: cleanNama,
       };
       if (editingId) {
+        const prevItem = categories.find((c) => c.id === editingId);
         const saved = await erpUpdate<any>('master_categories', editingId, payload);
-        setCategories(
-          categories.map((c) =>
-            c.id === editingId ? { id: saved.id, kode: saved.kode, namaKategori: saved.nama_kategori } : c
-          )
+        if (prevItem && prevItem.namaKategori.toUpperCase() !== cleanNama) {
+          await cascadeMasterRename('master_barangs', 'category', prevItem.namaKategori, {
+            category: cleanNama,
+          });
+        }
+        setCategories((prev) =>
+          prev
+            .map((c) =>
+              c.id === editingId ? { id: saved.id, kode: saved.kode, namaKategori: saved.nama_kategori } : c
+            )
+            .sort((a, b) => a.kode.localeCompare(b.kode))
         );
         showFeedback('Data diperbarui di Supabase');
       } else {
@@ -186,7 +219,7 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
           kode: saved.kode,
           namaKategori: saved.nama_kategori,
         };
-        setCategories([...categories, newItem]);
+        setCategories((prev) => [...prev, newItem].sort((a, b) => a.kode.localeCompare(b.kode)));
         setSelectedId(newItem.id);
         showFeedback('Data tersimpan di Supabase');
       }
@@ -273,7 +306,7 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
           onSimpan={handleToolbarSimpan}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
-          onHapus={handleDelete}
+          onHapus={handleRequestDelete}
           onPrint={() => setIsPrintOpen(true)}
           onFind={handleFind}
           isBusy={isBusy}
@@ -491,6 +524,15 @@ export const CategoryListForm: React.FC<CategoryListFormProps> = ({ isOpen, onCl
               ]
             : undefined
         }
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(confirmDeleteItem)}
+        message={`Hapus Category [${confirmDeleteItem?.kode} - ${confirmDeleteItem?.namaKategori}]?`}
+        detail="Sistem akan memeriksa apakah Category masih dipakai pada Master Barang sebelum menghapus."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteItem(null)}
       />
     </div>
   );

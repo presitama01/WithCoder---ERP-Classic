@@ -2,11 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FormActionButtons } from './FormActionButtons';
 import { FormHeaderBanner } from './FormHeaderBanner';
 import { A4PrintPreviewModal } from './A4PrintPreviewModal';
-import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile } from '../lib/erpApi';
+import { erpCreate, erpDelete, erpList, erpUpdate, fetchActiveCompanyProfile, nextUniqueCode } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import { cascadeMasterRename, checkMasterUsage } from '../lib/masterValidation';
 
 export interface WilayahItem {
   id: string;
@@ -37,6 +39,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -122,7 +125,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
   const handleAddNew = () => {
     setEditingId(null);
     setModalError(null);
-    setNewKode('');
+    setNewKode(nextUniqueCode(wilayahList.map((w) => w.kodeWilayah), 'W', 2));
     setNewWilayah('');
     setIsAddOpen(true);
   };
@@ -140,18 +143,42 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = async () => {
+    const item = wilayahList.find((w) => w.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    try {
+      setIsBusy(true);
+      const formattedLabel = item.kodeWilayah ? `${item.kodeWilayah} - ${item.wilayah}` : item.wilayah;
+      const usageMsg = await checkMasterUsage([
+        { table: 'master_customers', label: 'Master Customer', ilike: { wilayah: item.wilayah } },
+        { table: 'master_customers', label: 'Master Customer', eq: { wilayah: formattedLabel } },
+        { table: 'master_sales', label: 'Master Sales', ilike: { wilayah: item.wilayah } },
+      ]);
+      if (usageMsg) {
+        showFeedback(usageMsg);
+        return;
+      }
+      setConfirmDeleteOpen(true);
+    } catch (err: any) {
+      showFeedback(`Gagal cek referensi: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedId) return;
     try {
       setIsBusy(true);
       await erpDelete('master_wilayahs', selectedId);
       const updated = wilayahList.filter((w) => w.id !== selectedId);
       setWilayahList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback('Data wilayah dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -162,26 +189,45 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newWilayah.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newWilayah.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode Wilayah dan Nama Wilayah wajib diisi.');
+      return;
+    }
+    if (wilayahList.some((w) => w.kodeWilayah.toUpperCase() === cleanKode && w.id !== editingId)) {
+      setModalError(`Kode Wilayah [${cleanKode}] sudah terdaftar.`);
       return;
     }
 
     try {
       setIsBusy(true);
       const dbPayload = {
-        kode_wilayah: newKode.trim().toUpperCase(),
-        wilayah: newWilayah.trim().toUpperCase(),
+        kode_wilayah: cleanKode,
+        wilayah: cleanNama,
       };
       if (editingId) {
+        const prevItem = wilayahList.find((w) => w.id === editingId);
         const saved = await erpUpdate<any>('master_wilayahs', editingId, dbPayload);
-        setWilayahList(
-          wilayahList.map((w) =>
-            w.id === editingId
-              ? { id: saved.id, kodeWilayah: saved.kode_wilayah, wilayah: saved.wilayah }
-              : w
-          )
+        const mapped: WilayahItem = {
+          id: saved.id,
+          kodeWilayah: saved.kode_wilayah,
+          wilayah: saved.wilayah,
+        };
+        setWilayahList((prev) =>
+          prev
+            .map((w) => (w.id === editingId ? mapped : w))
+            .sort((a, b) => a.wilayah.localeCompare(b.wilayah))
         );
+        if (prevItem && (prevItem.kodeWilayah !== mapped.kodeWilayah || prevItem.wilayah !== mapped.wilayah)) {
+          const oldFormatted = `${prevItem.kodeWilayah} - ${prevItem.wilayah}`;
+          const newFormatted = `${mapped.kodeWilayah} - ${mapped.wilayah}`;
+          await Promise.all([
+            cascadeMasterRename('master_customers', 'wilayah', oldFormatted, { wilayah: newFormatted }),
+            cascadeMasterRename('master_customers', 'wilayah', prevItem.wilayah, { wilayah: newFormatted }),
+            cascadeMasterRename('master_sales', 'wilayah', oldFormatted, { wilayah: newFormatted }),
+          ]);
+        }
         showFeedback('Data diperbarui');
       } else {
         const saved = await erpCreate<any>('master_wilayahs', dbPayload);
@@ -190,7 +236,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
           kodeWilayah: saved.kode_wilayah,
           wilayah: saved.wilayah,
         };
-        setWilayahList([newItem, ...wilayahList]);
+        setWilayahList((prev) => [newItem, ...prev].sort((a, b) => a.wilayah.localeCompare(b.wilayah)));
         setSelectedId(newItem.id);
         showFeedback('Data tersimpan');
       }
@@ -278,7 +324,7 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={handleDelete}
+            onHapus={handleRequestDelete}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -461,6 +507,16 @@ export const MasterWilayahListForm: React.FC<MasterWilayahListFormProps> = ({
           { header: 'Kode Wilayah', accessor: (r) => r.kodeWilayah, widthClass: 'w-32', mono: true, bold: true },
           { header: 'Wilayah', accessor: (r) => r.wilayah, bold: true },
         ]}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmDeleteOpen}
+        title="Konfirmasi Hapus Master Wilayah"
+        message={`Yakin ingin menghapus Wilayah [${selectedWilayah?.kodeWilayah || ''} - ${selectedWilayah?.wilayah || ''}]?`}
+        detail="Data yang sudah dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
       />
 
       <A4PrintPreviewModal

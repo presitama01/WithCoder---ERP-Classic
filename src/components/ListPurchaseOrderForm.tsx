@@ -8,6 +8,7 @@ import {
   erpDelete,
   erpList,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -212,6 +213,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   const [detailRows, setDetailRows] = useState<PurchaseOrderDetailItem[]>([]);
 
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  const [supplierCurrencyMap, setSupplierCurrencyMap] = useState<Record<string, string>>({});
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
   const [prOptions, setPrOptions] = useState<PurchaseRequestOption[]>([]);
   const [prDetailsByNoPrMap, setPrDetailsByNoPrMap] = useState<Record<string, PrDetailRef[]>>({});
@@ -240,18 +242,27 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     ]);
 
     if (suppRes.status === 'fulfilled') {
+      const suppCurrMap: Record<string, string> = {};
+      const activeSupps = suppRes.value.filter((r: any) => r.is_active !== false);
       const uniqueNames = Array.from(
         new Set(
-          suppRes.value
-            .map((r: any) => String(r.nama_supplier || '').trim().toUpperCase())
+          activeSupps
+            .map((r: any) => {
+              const nm = String(r.nama_supplier || '').trim().toUpperCase();
+              const mu = String(r.mata_uang || '').trim().toUpperCase();
+              if (nm && mu) suppCurrMap[nm] = mu;
+              return nm;
+            })
             .filter(Boolean)
         )
       );
+      setSupplierCurrencyMap(suppCurrMap);
       setSupplierOptions(uniqueNames);
     }
 
     if (barangRes.status === 'fulfilled') {
       const mapped: MasterBarangOption[] = barangRes.value
+        .filter((r: any) => r.is_active !== false)
         .map((r: any) => ({
           kode: String(r.kode || '').trim().toUpperCase(),
           namaBarang: String(r.nama_barang || '').trim(),
@@ -303,15 +314,20 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     }
 
     if (lokasiRes.status === 'fulfilled') {
+      const sortedLokasi = [...lokasiRes.value]
+        .filter((l: any) => l.is_active !== false)
+        .sort((a: any, b: any) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0));
       const lokasis = Array.from(
         new Set(
-          lokasiRes.value
+          sortedLokasi
             .map((l: any) => String(l.nama_lokasi || '').trim().toUpperCase())
             .filter(Boolean)
         )
       );
       setLokasiOptions(lokasis);
+      return { defaultLokasi: lokasis[0] || '' };
     }
+    return { defaultLokasi: '' };
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
@@ -663,6 +679,14 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     );
   };
 
+  const handleSelectSupplier = (supplierName: string) => {
+    setNewSupplier(supplierName);
+    const defaultCurr = supplierCurrencyMap[supplierName.trim().toUpperCase()];
+    if (defaultCurr) {
+      setNewMataUang(defaultCurr);
+    }
+  };
+
   const handleAddNew = async () => {
     const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
     const todayDisplay = toDisplayDMyShort(todayIso());
@@ -672,7 +696,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewNoPr('');
     setNewTanggal(todayDisplay);
     setNewSupplier('');
-    setNewDeliveryTo('');
+    setNewDeliveryTo(lokasiOptions[0] || '');
     setNewDelivery('Darat');
     setNewMataUang('IDR');
     setNewKeterangan('');
@@ -691,7 +715,14 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    await loadMasterReferences();
+    const [defaultPpn, refInfo] = await Promise.all([
+      fetchDefaultPpnRate(),
+      loadMasterReferences(),
+    ]);
+    setNewPpn(String(defaultPpn));
+    if (refInfo?.defaultLokasi) {
+      setNewDeliveryTo((prev) => prev || refInfo.defaultLokasi);
+    }
   };
 
   const handleEdit = async () => {
@@ -1427,7 +1458,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                     <label className="text-xs font-semibold text-gray-700 shrink-0">Nama Supplier:</label>
                     <select
                       value={newSupplier}
-                      onChange={(e) => setNewSupplier(e.target.value)}
+                      onChange={(e) => handleSelectSupplier(e.target.value)}
                       required
                       className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs uppercase cursor-pointer"
                     >

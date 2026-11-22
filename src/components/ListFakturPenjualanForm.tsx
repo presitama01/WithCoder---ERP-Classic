@@ -4,10 +4,12 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
 import {
+  addDaysToIsoDate,
   erpCompositeSave,
   erpDelete,
   erpList,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -93,6 +95,15 @@ interface MasterBarangOption {
   unit: string;
   price: number;
   cost: number;
+}
+
+interface MasterCustomerMeta {
+  namaCustomer: string;
+  sales: string;
+  ppn: boolean;
+  tmpPembayaran: number;
+  limitKredit: number;
+  piutang: number;
 }
 
 interface ListFakturPenjualanFormProps {
@@ -194,7 +205,12 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   const [soOptions, setSoOptions] = useState<SalesOrderRef[]>([]);
   const [sjOptions, setSjOptions] = useState<SuratJalanRef[]>([]);
   const [customerOptions, setCustomerOptions] = useState<string[]>([]);
+  const [customerMetaMap, setCustomerMetaMap] = useState<Record<string, MasterCustomerMeta>>({});
   const [salesOptions, setSalesOptions] = useState<string[]>([]);
+  const [salesLimitMap, setSalesLimitMap] = useState<Record<string, number>>({});
+  const [defaultCompanyPpn, setDefaultCompanyPpn] = useState<number>(11);
+  const [overrideCreditLimit, setOverrideCreditLimit] = useState<boolean>(false);
+  const [showCreditOverrideBox, setShowCreditOverrideBox] = useState<boolean>(false);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
 
@@ -301,31 +317,57 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     }
 
     if (custRes.status === 'fulfilled') {
+      const cMetaMap: Record<string, MasterCustomerMeta> = {};
       const custs = Array.from(
         new Set(
           custRes.value
-            .map((c: any) => String(c.nama_customer || '').trim().toUpperCase())
+            .filter((c: any) => c.is_active !== false)
+            .map((c: any) => {
+              const nm = String(c.nama_customer || '').trim().toUpperCase();
+              if (nm) {
+                cMetaMap[nm] = {
+                  namaCustomer: nm,
+                  sales: String(c.sales || '').trim().toUpperCase(),
+                  ppn: c.ppn !== false,
+                  tmpPembayaran: Math.max(0, Number(c.tmp_pembayaran || 0)),
+                  limitKredit: Math.max(0, Number(c.limit_kredit || 0)),
+                  piutang: Math.max(0, Number(c.piutang || 0)),
+                };
+              }
+              return nm;
+            })
             .filter(Boolean)
         )
       );
+      setCustomerMetaMap(cMetaMap);
       setCustomerOptions(custs);
     }
 
     if (salesRes.status === 'fulfilled') {
+      const sLimit: Record<string, number> = {};
       const salesList = Array.from(
         new Set(
           salesRes.value
-            .map((sl: any) => String(sl.nama_sales || '').trim().toUpperCase())
+            .filter((sl: any) => sl.is_active !== false)
+            .map((sl: any) => {
+              const nm = String(sl.nama_sales || '').trim().toUpperCase();
+              if (nm) sLimit[nm] = Math.max(0, Number(sl.limit_kredit || 0));
+              return nm;
+            })
             .filter(Boolean)
         )
       );
+      setSalesLimitMap(sLimit);
       setSalesOptions(salesList);
     }
 
     if (lokasiRes.status === 'fulfilled') {
+      const sortedLok = [...lokasiRes.value]
+        .filter((l: any) => l.is_active !== false)
+        .sort((a: any, b: any) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0));
       const lokasis = Array.from(
         new Set(
-          lokasiRes.value
+          sortedLok
             .map((l: any) => {
               const kode = String(l.kode || '').trim().toUpperCase();
               const nama = String(l.nama_lokasi || '').trim().toUpperCase();
@@ -336,10 +378,12 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         )
       );
       setLokasiOptions(lokasis);
+      return { defaultLokasi: lokasis[0] || '01 - OFFICE' };
     }
 
     if (barangRes.status === 'fulfilled') {
       const mappedBarangs: MasterBarangOption[] = barangRes.value
+        .filter((b: any) => b.is_active !== false)
         .map((b: any) => ({
           kode: String(b.kode || '').trim().toUpperCase(),
           namaBarang: String(b.nama_barang || '').trim(),
@@ -350,6 +394,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
         .filter((b: MasterBarangOption) => b.kode);
       setBarangOptions(mappedBarangs);
     }
+    return { defaultLokasi: lokasiOptions[0] || '01 - OFFICE' };
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
@@ -648,19 +693,34 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
 
     if (matchedSo) {
       setNewPoNo(matchedSo.poNo || matchedSj?.poNo || '');
-      setNewCustomer(matchedSo.namaCustomer || matchedSj?.namaCustomer || '');
+      const custName = matchedSo.namaCustomer || matchedSj?.namaCustomer || '';
+      setNewCustomer(custName);
       if (matchedSo.sales) setNewSales(matchedSo.sales);
       else if (matchedSj?.sales) setNewSales(matchedSj.sales);
       setNewLokasiStock(
         matchedSo.lokasiStock || matchedSj?.lokasiStock || lokasiOptions[0] || '01 - OFFICE'
       );
-      setNewPpn(String(matchedSo.ppn ?? 11));
+      setNewPpn(String(matchedSo.ppn ?? defaultCompanyPpn));
+      if (custName) {
+        const custMeta = customerMetaMap[custName.trim().toUpperCase()];
+        if (custMeta && custMeta.tmpPembayaran > 0) {
+          const baseDateIso = toIsoDate(newTanggal) || todayIso();
+          setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran)));
+        }
+      }
       if (!newKeterangan.trim() && matchedSo.keterangan) {
         setNewKeterangan(matchedSo.keterangan);
       }
     } else if (matchedSj) {
       if (matchedSj.poNo) setNewPoNo(matchedSj.poNo);
-      if (matchedSj.namaCustomer) setNewCustomer(matchedSj.namaCustomer);
+      if (matchedSj.namaCustomer) {
+        setNewCustomer(matchedSj.namaCustomer);
+        const custMeta = customerMetaMap[matchedSj.namaCustomer.trim().toUpperCase()];
+        if (custMeta && custMeta.tmpPembayaran > 0) {
+          const baseDateIso = toIsoDate(newTanggal) || todayIso();
+          setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran)));
+        }
+      }
       if (matchedSj.sales) setNewSales(matchedSj.sales);
       if (matchedSj.lokasiStock) setNewLokasiStock(matchedSj.lokasiStock);
     }
@@ -687,11 +747,26 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     }
   };
 
+  const handleSelectCustomer = (customerName: string, overrideDateStr?: string) => {
+    setNewCustomer(customerName);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
+    const custMeta = customerMetaMap[customerName.trim().toUpperCase()];
+    if (custMeta) {
+      if (custMeta.sales) setNewSales(custMeta.sales);
+      setNewPpn(String(custMeta.ppn ? defaultCompanyPpn : 0));
+      const baseDateIso = toIsoDate(overrideDateStr ?? newTanggal) || todayIso();
+      setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran)));
+    }
+  };
+
   const handleAddNew = async () => {
     const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
     const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(null);
     setModalError(null);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     setNewNoBukti(nextUniqueCode(fakturList.map((f) => f.noBukti), 'INJ-2608-', 4));
     setNewTanggal(todayDisp);
     setNewCustomer('');
@@ -702,7 +777,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     setNewSales('');
     setNewJthTmp(todayDisp);
     setNewKeterangan('');
-    setNewPpn('11');
+    setNewPpn(String(defaultCompanyPpn));
     setNewNilaiPenjualan('0');
     setNewLokasiStock(lokasiOptions[0] || '01 - OFFICE');
     setNewStsLunas('Not Yet');
@@ -717,7 +792,13 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    await loadMasterReferences();
+    const [defPpn, refInfo] = await Promise.all([
+      fetchDefaultPpnRate(),
+      loadMasterReferences(),
+    ]);
+    setDefaultCompanyPpn(defPpn);
+    setNewPpn(String(defPpn));
+    if (refInfo?.defaultLokasi) setNewLokasiStock(refInfo.defaultLokasi);
   };
 
   const handleEdit = async () => {
@@ -730,6 +811,8 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
     const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(item.id);
     setModalError(null);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal || todayDisp);
     setNewCustomer(item.namaCustomer);
@@ -789,6 +872,33 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
       activeDetails.length > 0 && totalFromDetails > 0
         ? totalFromDetails
         : parseNum(newNilaiPenjualan);
+
+    if (!overrideCreditLimit) {
+      const custMeta = customerMetaMap[newCustomer.trim().toUpperCase()];
+      if (
+        custMeta &&
+        custMeta.limitKredit > 0 &&
+        custMeta.piutang + finalNilaiPenjualan > custMeta.limitKredit
+      ) {
+        setShowCreditOverrideBox(true);
+        setModalError(
+          `Peringatan Limit Kredit Customer: Piutang (${formatRupiah(custMeta.piutang)}) + Faktur (${formatRupiah(
+            finalNilaiPenjualan
+          )}) melebihi Limit Kredit (${formatRupiah(custMeta.limitKredit)}). Centang "Abaikan batas limit kredit" untuk melanjutkan.`
+        );
+        return;
+      }
+      const salesLimit = salesLimitMap[newSales.trim().toUpperCase()] || 0;
+      if (salesLimit > 0 && finalNilaiPenjualan > salesLimit) {
+        setShowCreditOverrideBox(true);
+        setModalError(
+          `Peringatan Limit Kredit Sales (${newSales.trim().toUpperCase()}): Nilai Faktur (${formatRupiah(
+            finalNilaiPenjualan
+          )}) melebihi Limit (${formatRupiah(salesLimit)}). Centang "Abaikan batas limit kredit" untuk melanjutkan.`
+        );
+        return;
+      }
+    }
 
     try {
       setIsBusy(true);
@@ -1391,7 +1501,18 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   <div className="w-64">
                     <DatePickerInput
                       value={newTanggal}
-                      onChange={(formatted) => setNewTanggal(formatted)}
+                      onChange={(formatted) => {
+                        setNewTanggal(formatted);
+                        if (!editingId && newCustomer) {
+                          const custMeta = customerMetaMap[newCustomer.trim().toUpperCase()];
+                          if (custMeta && custMeta.tmpPembayaran > 0) {
+                            const baseDateIso = toIsoDate(formatted) || todayIso();
+                            setNewJthTmp(
+                              toDisplayDMyShort(addDaysToIsoDate(baseDateIso, custMeta.tmpPembayaran))
+                            );
+                          }
+                        }
+                      }}
                       format="dMyShort"
                     />
                   </div>
@@ -1435,7 +1556,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   <label className="font-semibold shrink-0">Nama Customer:</label>
                   <select
                     value={newCustomer}
-                    onChange={(e) => setNewCustomer(e.target.value)}
+                    onChange={(e) => handleSelectCustomer(e.target.value)}
                     required
                     className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] uppercase cursor-pointer"
                   >
@@ -1814,8 +1935,18 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
               </div>
 
               {modalError && (
-                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
-                  ⚠ {modalError}
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold space-y-1">
+                  <div>⚠ {modalError}</div>
+                  {showCreditOverrideBox && (
+                    <label className="inline-flex items-center gap-1.5 text-[11px] text-black font-normal cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={overrideCreditLimit}
+                        onChange={(e) => setOverrideCreditLimit(e.target.checked)}
+                      />
+                      Abaikan batas limit kredit dan tetap simpan Faktur Penjualan ini
+                    </label>
+                  )}
                 </div>
               )}
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#D4D0C8]">

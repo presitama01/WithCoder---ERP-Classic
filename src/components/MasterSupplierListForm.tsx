@@ -9,11 +9,20 @@ import {
   erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
+  nextUniqueCode,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { matchesMultiKeyword } from '../lib/searchUtils';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
+import { ConfirmDialog } from './ConfirmDialog';
+import {
+  cascadeMasterRename,
+  checkMasterUsage,
+  isMissingColumnError,
+  isValidEmail,
+  isValidWebsite,
+} from '../lib/masterValidation';
 
 export interface SupplierItem {
   id: string;
@@ -27,6 +36,11 @@ export interface SupplierItem {
   contactPerson: string;
   email: string;
   website: string;
+  npwp: string;
+  tmpPembayaran: number;
+  noRekening: string;
+  mataUang: string;
+  isActive: boolean;
 }
 
 interface MasterSupplierListFormProps {
@@ -47,6 +61,11 @@ function mapDbToItem(r: any): SupplierItem {
     contactPerson: r.contact_person || '',
     email: r.email || '',
     website: r.website || '',
+    npwp: r.npwp || '',
+    tmpPembayaran: Number(r.tmp_pembayaran || 0),
+    noRekening: r.no_rekening || '',
+    mataUang: r.mata_uang || 'IDR',
+    isActive: r.is_active !== false,
   };
 }
 
@@ -73,11 +92,17 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   const [newContactPerson, setNewContactPerson] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newWebsite, setNewWebsite] = useState('');
+  const [newNpwp, setNewNpwp] = useState('');
+  const [newTmpPembayaran, setNewTmpPembayaran] = useState('30');
+  const [newNoRekening, setNewNoRekening] = useState('');
+  const [newMataUang, setNewMataUang] = useState('IDR');
+  const [newIsActive, setNewIsActive] = useState(true);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -147,7 +172,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
     }
     try {
       setIsBusy(true);
-      const saved = await erpUpdate<any>('master_suppliers', selected.id, {
+      const basePayload = {
         kode_supplier: selected.kodeSupplier.trim().toUpperCase(),
         nama_supplier: selected.namaSupplier.trim().toUpperCase(),
         hutang: Number(selected.hutang) || 0,
@@ -158,10 +183,33 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
         contact_person: selected.contactPerson.trim(),
         email: selected.email.trim(),
         website: selected.website.trim(),
-      });
+      };
+      let saved: any;
+      let usedFallback = false;
+      try {
+        saved = await erpUpdate<any>('master_suppliers', selected.id, {
+          ...basePayload,
+          npwp: selected.npwp.trim(),
+          tmp_pembayaran: Number(selected.tmpPembayaran) || 0,
+          no_rekening: selected.noRekening.trim(),
+          mata_uang: selected.mataUang || 'IDR',
+          is_active: selected.isActive,
+        });
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await erpUpdate<any>('master_suppliers', selected.id, basePayload);
+        } else {
+          throw err;
+        }
+      }
       const mapped = mapDbToItem(saved);
       setSupplierList((prev) => prev.map((s) => (s.id === selected.id ? mapped : s)));
-      showFeedback(`Supplier [${mapped.kodeSupplier} - ${mapped.namaSupplier}] tersimpan ke Supabase`);
+      showFeedback(
+        usedFallback
+          ? `Supplier [${mapped.kodeSupplier}] tersimpan (jalankan SQL migrasi untuk kolom tambahan)`
+          : `Supplier [${mapped.kodeSupplier} - ${mapped.namaSupplier}] tersimpan ke Supabase`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -178,7 +226,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   const handleAddNew = () => {
     setEditingId(null);
     setModalError(null);
-    setNewKode('');
+    setNewKode(nextUniqueCode(supplierList.map((s) => s.kodeSupplier), 'SUP', 3));
     setNewNama('');
     setNewHutang('0');
     setNewHutangGiro('0');
@@ -188,6 +236,11 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
     setNewContactPerson('');
     setNewEmail('');
     setNewWebsite('');
+    setNewNpwp('');
+    setNewTmpPembayaran('30');
+    setNewNoRekening('');
+    setNewMataUang('IDR');
+    setNewIsActive(true);
     setIsAddOpen(true);
   };
 
@@ -209,21 +262,50 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
     setNewContactPerson(item.contactPerson);
     setNewEmail(item.email);
     setNewWebsite(item.website);
+    setNewNpwp(item.npwp);
+    setNewTmpPembayaran(String(item.tmpPembayaran ?? 0));
+    setNewNoRekening(item.noRekening);
+    setNewMataUang(item.mataUang || 'IDR');
+    setNewIsActive(item.isActive !== false);
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = async () => {
+    const item = supplierList.find((s) => s.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    try {
+      setIsBusy(true);
+      const usageMsg = await checkMasterUsage([
+        { table: 'purchase_orders', label: 'Purchase Order', eq: { nama_supplier: item.namaSupplier } },
+        { table: 'pembelian_barangs', label: 'Pembelian Barang', eq: { nama_supplier: item.namaSupplier } },
+        { table: 'retur_pembelians', label: 'Retur Pembelian', eq: { nama_supplier: item.namaSupplier } },
+        { table: 'giro_pembelian_headers', label: 'Daftar Giro Pembelian', eq: { supplier: item.namaSupplier } },
+      ]);
+      if (usageMsg) {
+        showFeedback(usageMsg);
+        return;
+      }
+      setConfirmDeleteOpen(true);
+    } catch (err: any) {
+      showFeedback(`Gagal cek referensi: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedId) return;
     try {
       setIsBusy(true);
       await erpDelete('master_suppliers', selectedId);
       const updated = supplierList.filter((s) => s.id !== selectedId);
       setSupplierList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback('Data supplier dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -234,48 +316,115 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode dan Nama Supplier wajib diisi.');
+      return;
+    }
+    if (supplierList.some((s) => s.kodeSupplier.toUpperCase() === cleanKode && s.id !== editingId)) {
+      setModalError(`Kode Supplier [${cleanKode}] sudah terdaftar.`);
+      return;
+    }
+    const hutangVal = parseFloat(newHutang) || 0;
+    const giroVal = parseFloat(newHutangGiro) || 0;
+    const tmpVal = parseInt(newTmpPembayaran, 10) || 0;
+    if (hutangVal < 0 || giroVal < 0 || tmpVal < 0) {
+      setModalError('Hutang, Hutang Giro, dan Tempo Pembayaran tidak boleh negatif.');
+      return;
+    }
+    if (!isValidEmail(newEmail)) {
+      setModalError('Format email supplier tidak valid.');
+      return;
+    }
+    if (!isValidWebsite(newWebsite)) {
+      setModalError('Format website tidak valid (contoh: https://perusahaan.com).');
       return;
     }
 
     try {
       setIsBusy(true);
-      const dbPayload = {
-        kode_supplier: newKode.trim().toUpperCase(),
-        nama_supplier: newNama.trim().toUpperCase(),
-        hutang: parseFloat(newHutang) || 0,
-        hutang_giro: parseFloat(newHutangGiro) || 0,
+      const legacyPayload = {
+        kode_supplier: cleanKode,
+        nama_supplier: cleanNama,
+        hutang: hutangVal,
+        hutang_giro: giroVal,
         alamat: newAlamat.trim(),
         kota: newKota.trim().toUpperCase(),
         telepon: newTelepon.trim(),
+      };
+      const midPayload = {
+        ...legacyPayload,
         contact_person: newContactPerson.trim(),
         email: newEmail.trim(),
         website: newWebsite.trim(),
       };
+      const fullPayload = {
+        ...midPayload,
+        npwp: newNpwp.trim(),
+        tmp_pembayaran: tmpVal,
+        no_rekening: newNoRekening.trim(),
+        mata_uang: newMataUang.trim().toUpperCase() || 'IDR',
+        is_active: newIsActive,
+      };
+      let saved: any;
+      let usedFallback = false;
+      const saveFn = async (payload: Record<string, any>) =>
+        editingId
+          ? erpUpdate<any>('master_suppliers', editingId, payload)
+          : erpCreate<any>('master_suppliers', payload);
+      try {
+        saved = await saveFn(fullPayload);
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          try {
+            saved = await saveFn(midPayload);
+          } catch (err2: any) {
+            if (isMissingColumnError(err2?.message || '')) {
+              saved = await saveFn(legacyPayload);
+            } else {
+              throw err2;
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
+      const mapped = mapDbToItem(saved);
       if (editingId) {
-        const saved = await erpUpdate<any>('master_suppliers', editingId, dbPayload);
-        const mapped = mapDbToItem(saved);
-        setSupplierList(supplierList.map((s) => (s.id === editingId ? mapped : s)));
-        showFeedback('Data diperbarui');
+        const prevItem = supplierList.find((s) => s.id === editingId);
+        setSupplierList((prev) =>
+          prev
+            .map((s) => (s.id === editingId ? mapped : s))
+            .sort((a, b) => a.kodeSupplier.localeCompare(b.kodeSupplier))
+        );
+        if (prevItem && prevItem.namaSupplier !== mapped.namaSupplier) {
+          await Promise.all([
+            cascadeMasterRename('purchase_orders', 'nama_supplier', prevItem.namaSupplier, { nama_supplier: mapped.namaSupplier }),
+            cascadeMasterRename('pembelian_barangs', 'nama_supplier', prevItem.namaSupplier, { nama_supplier: mapped.namaSupplier }),
+            cascadeMasterRename('retur_pembelians', 'nama_supplier', prevItem.namaSupplier, { nama_supplier: mapped.namaSupplier }),
+            cascadeMasterRename('giro_pembelian_headers', 'supplier', prevItem.namaSupplier, { supplier: mapped.namaSupplier }),
+          ]);
+        }
+        showFeedback(
+          usedFallback
+            ? 'Data diperbarui (jalankan SQL migrasi untuk NPWP / Tempo / Rekening / Currency)'
+            : 'Data diperbarui'
+        );
       } else {
-        const saved = await erpCreate<any>('master_suppliers', dbPayload);
-        const mapped = mapDbToItem(saved);
-        setSupplierList([mapped, ...supplierList]);
+        setSupplierList((prev) => [mapped, ...prev].sort((a, b) => a.kodeSupplier.localeCompare(b.kodeSupplier)));
         setSelectedId(mapped.id);
-        showFeedback('Data tersimpan');
+        showFeedback(
+          usedFallback
+            ? 'Data tersimpan (jalankan SQL migrasi untuk NPWP / Tempo / Rekening / Currency)'
+            : 'Data tersimpan'
+        );
       }
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      const rawMsg = err?.message || 'Gagal menyimpan data ke database';
-      const msg =
-        (rawMsg.includes('contact_person') ||
-          rawMsg.includes('email') ||
-          rawMsg.includes('website')) &&
-        rawMsg.toLowerCase().includes('schema cache')
-          ? `${rawMsg} — Jalankan SQL Query penambahan kolom contact_person, email, website pada tabel master_suppliers di Supabase SQL Editor.`
-          : rawMsg;
+      const msg = err?.message || 'Gagal menyimpan data ke database';
       setModalError(msg);
       showFeedback(`Gagal simpan: ${msg}`);
     } finally {
@@ -377,12 +526,17 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
         { header: 'Nama Supplier', accessor: 'namaSupplier' },
         { header: 'Hutang', accessor: 'hutang', align: 'right' },
         { header: 'Hutang Giro', accessor: 'hutangGiro', align: 'right' },
+        { header: 'NPWP', accessor: 'npwp' },
+        { header: 'Tempo (Hari)', accessor: 'tmpPembayaran', align: 'right' },
+        { header: 'No. Rekening', accessor: 'noRekening' },
+        { header: 'Curr', accessor: 'mataUang' },
         { header: 'Alamat', accessor: 'alamat' },
         { header: 'Kota', accessor: 'kota' },
         { header: 'Telepon', accessor: 'telepon' },
         { header: 'Contact Person', accessor: 'contactPerson' },
         { header: 'Email', accessor: 'email' },
         { header: 'Website', accessor: 'website' },
+        { header: 'Status', accessor: (r) => (r.isActive ? 'AKTIF' : 'NON-AKTIF') },
       ],
       rows: filteredSupplier,
     });
@@ -414,7 +568,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={handleDelete}
+            onHapus={handleRequestDelete}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -454,28 +608,33 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
           />
         </div>
 
-        <div className="flex-1 overflow-auto bg-white m-2 border border-[#ACA899] shadow-inner">
+        <div className="flex-1 overflow-auto bg-white mx-2 mt-2 border border-[#ACA899] shadow-inner">
           <div className="min-w-max">
             <table className="w-full text-left text-[11px] border-collapse select-none">
               <thead className="sticky top-0 bg-[#ECE9D8] text-black font-semibold border-b border-[#ACA899]">
                 <tr className="h-[24px]">
                   <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0" />
-                  <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
-                  <th className="w-[210px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Supplier</th>
-                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang</th>
-                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang Giro</th>
-                  <th className="w-[210px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat</th>
-                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Telepon</th>
-                  <th className="w-[150px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Contact Person</th>
-                  <th className="w-[170px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
-                  <th className="w-[170px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Website</th>
+                  <th className="w-[85px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
+                  <th className="w-[200px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Supplier</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Hutang Giro</th>
+                  <th className="w-[125px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">NPWP</th>
+                  <th className="w-[65px] border-r border-[#ACA899] px-2 py-0.5 text-center font-bold bg-[#ECE9D8]">Tempo</th>
+                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">No. Rekening</th>
+                  <th className="w-[50px] border-r border-[#ACA899] px-2 py-0.5 text-center font-bold bg-[#ECE9D8]">Curr</th>
+                  <th className="w-[190px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat</th>
+                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Telepon</th>
+                  <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Contact Person</th>
+                  <th className="w-[155px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
+                  <th className="w-[155px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Website</th>
+                  <th className="w-[75px] px-2 py-0.5 text-center font-bold bg-[#ECE9D8]">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSupplier.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="text-center py-6 text-gray-500 italic">
+                    <td colSpan={16} className="text-center py-6 text-gray-500 italic">
                       Tidak ada data Master Supplier
                     </td>
                   </tr>
@@ -488,7 +647,11 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                         onClick={() => setSelectedId(item.id)}
                         onDoubleClick={handleEdit}
                         className={`h-[22px] border-b border-[#ACA899] cursor-pointer ${
-                          isSelected ? 'bg-[#0A246A] text-white' : 'bg-white hover:bg-[#E8EEF8]'
+                          isSelected
+                            ? 'bg-[#0A246A] text-white'
+                            : !item.isActive
+                            ? 'bg-[#F3F3F3] text-gray-500 hover:bg-[#E8EEF8]'
+                            : 'bg-white hover:bg-[#E8EEF8]'
                         }`}
                       >
                         <td className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
@@ -498,12 +661,19 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-semibold">{item.namaSupplier}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{item.hutang.toLocaleString('id-ID')}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{item.hutangGiro.toLocaleString('id-ID')}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.npwp || '-'}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-center font-mono">{item.tmpPembayaran} hr</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.noRekening || '-'}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-center font-mono">{item.mataUang}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.alamat}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.kota}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.contactPerson || '-'}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.email || '-'}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.website || '-'}</td>
+                        <td className="px-2 py-0.5 text-center text-[10px] font-bold">
+                          {item.isActive ? 'AKTIF' : 'NON-AKTIF'}
+                        </td>
                       </tr>
                     );
                   })
@@ -512,13 +682,22 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
             </table>
           </div>
         </div>
+        <div className="shrink-0 flex items-center justify-between px-3 py-1.5 text-[11px] font-sans">
+          <div className="w-[450px] max-w-[60vw] truncate h-[22px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 flex items-center text-gray-700">
+            {selectedSupplier ? `Supplier Terpilih: ${selectedSupplier.kodeSupplier} - ${selectedSupplier.namaSupplier}` : ''}
+          </div>
+          <div className="flex items-center space-x-6 text-[12px] font-bold text-black pr-16">
+            <span>Record</span>
+            <span className="font-mono">{filteredSupplier.length}</span>
+          </div>
+        </div>
       </div>
 
       {/* Add / Koreksi Modal */}
       {isAddOpen && (
         <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-[540px] max-w-[96vw] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col">
-            <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3">
+          <div className="w-[580px] max-w-[96vw] max-h-[92vh] bg-[#ECE9D8] border-2 border-t-white border-l-white border-b-[#707070] border-r-[#707070] shadow-2xl p-4 flex flex-col overflow-hidden">
+            <div className="bg-[#000080] text-white px-2 py-1 font-bold text-[12px] flex justify-between items-center mb-3 shrink-0">
               <span>{editingId ? 'Koreksi Master Supplier' : 'Tambah Master Supplier Baru'}</span>
               <button
                 type="button"
@@ -531,8 +710,8 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                 ✕
               </button>
             </div>
-            <form noValidate onSubmit={handleSaveNew} className="space-y-2.5 text-[11px]">
-              <div className="grid grid-cols-2 gap-2.5">
+            <form noValidate onSubmit={handleSaveNew} className="space-y-2.5 text-[11px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="block font-bold mb-1">Kode:</label>
                   <input
@@ -540,11 +719,11 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                     required
                     value={newKode}
                     onChange={(e) => setNewKode(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase"
-                    placeholder="SUP01"
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase font-mono font-bold"
+                    placeholder="SUP001"
                   />
                 </div>
-                <div>
+                <div className="col-span-2">
                   <label className="block font-bold mb-1">Nama Supplier:</label>
                   <input
                     type="text"
@@ -558,23 +737,84 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block font-bold mb-1">Hutang (Rp):</label>
+                  <label className="block font-bold mb-1">
+                    Hutang (Rp) {editingId && <span className="text-[9px] font-normal text-gray-600">(Auto transaksi)</span>}:
+                  </label>
                   <input
                     type="number"
+                    min="0"
                     value={newHutang}
                     onChange={(e) => setNewHutang(e.target.value)}
+                    readOnly={Boolean(editingId)}
+                    title={editingId ? 'Otomatis disinkronkan dari Pembelian, Retur Pembelian & Giro Pembelian' : undefined}
+                    className={`w-full h-[24px] border border-[#7F9DB9] px-2 font-mono text-right ${
+                      editingId ? 'bg-[#ECE9D8] text-gray-600 cursor-not-allowed' : 'bg-white'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">
+                    Hutang Giro (Rp) {editingId && <span className="text-[9px] font-normal text-gray-600">(Auto transaksi)</span>}:
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newHutangGiro}
+                    onChange={(e) => setNewHutangGiro(e.target.value)}
+                    readOnly={Boolean(editingId)}
+                    title={editingId ? 'Otomatis disinkronkan dari Daftar Giro Pembelian yang belum cair' : undefined}
+                    className={`w-full h-[24px] border border-[#7F9DB9] px-2 font-mono text-right ${
+                      editingId ? 'bg-[#ECE9D8] text-gray-600 cursor-not-allowed' : 'bg-white'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block font-bold mb-1">NPWP:</label>
+                  <input
+                    type="text"
+                    value={newNpwp}
+                    onChange={(e) => setNewNpwp(e.target.value)}
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                    placeholder="00.000.000.0-000.000"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Tempo Bayar (Hari):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newTmpPembayaran}
+                    onChange={(e) => setNewTmpPembayaran(e.target.value)}
                     className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold mb-1">Hutang Giro (Rp):</label>
-                  <input
-                    type="number"
-                    value={newHutangGiro}
-                    onChange={(e) => setNewHutangGiro(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
-                  />
+                  <label className="block font-bold mb-1">Mata Uang:</label>
+                  <select
+                    value={newMataUang}
+                    onChange={(e) => setNewMataUang(e.target.value)}
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 cursor-pointer"
+                  >
+                    <option value="IDR">IDR</option>
+                    <option value="USD">USD</option>
+                    <option value="SGD">SGD</option>
+                    <option value="EUR">EUR</option>
+                  </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-bold mb-1">No. Rekening Supplier:</label>
+                <input
+                  type="text"
+                  value={newNoRekening}
+                  onChange={(e) => setNewNoRekening(e.target.value)}
+                  className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
+                  placeholder="Contoh: BCA 1234567890 a/n PT. SUPPLIER"
+                />
               </div>
 
               <div>
@@ -603,7 +843,7 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                     type="text"
                     value={newTelepon}
                     onChange={(e) => setNewTelepon(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono"
                   />
                 </div>
               </div>
@@ -642,13 +882,23 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
                 />
               </div>
 
+              <label className="flex items-center gap-2 cursor-pointer font-bold pt-0.5">
+                <input
+                  type="checkbox"
+                  checked={newIsActive}
+                  onChange={(e) => setNewIsActive(e.target.checked)}
+                  className="w-3.5 h-3.5 cursor-pointer"
+                />
+                <span>Supplier Aktif</span>
+              </label>
+
               {modalError && (
                 <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
                   ⚠ {modalError}
                 </div>
               )}
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#ACA899]">
                 <button
                   type="submit"
                   disabled={isBusy}
@@ -718,6 +968,16 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
         ]}
       />
 
+      <ConfirmDialog
+        isOpen={confirmDeleteOpen}
+        title="Konfirmasi Hapus Master Supplier"
+        message={`Yakin ingin menghapus Supplier [${selectedSupplier?.kodeSupplier || ''} - ${selectedSupplier?.namaSupplier || ''}]?`}
+        detail="Data yang sudah dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -725,16 +985,17 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
         subtitle={`Total Record: ${filteredSupplier.length}`}
         orientation="landscape"
         columns={[
-          { header: 'Kode', accessor: 'kodeSupplier', width: '68px' },
-          { header: 'Nama Supplier', accessor: 'namaSupplier', width: '130px' },
-          { header: 'Hutang', accessor: (r) => formatMoney(r.hutang), align: 'right', width: '86px' },
-          { header: 'Hutang Giro', accessor: (r) => formatMoney(r.hutangGiro), align: 'right', width: '86px' },
-          { header: 'Alamat', accessor: 'alamat', width: '120px' },
-          { header: 'Kota', accessor: 'kota', width: '78px' },
-          { header: 'Telepon', accessor: 'telepon', width: '84px' },
-          { header: 'Contact Person', accessor: 'contactPerson', width: '96px' },
-          { header: 'Email', accessor: 'email', width: '104px' },
-          { header: 'Website', accessor: 'website', width: '104px' },
+          { header: 'Kode', accessor: 'kodeSupplier', width: '62px' },
+          { header: 'Nama Supplier', accessor: 'namaSupplier', width: '125px' },
+          { header: 'Hutang', accessor: (r) => formatMoney(r.hutang), align: 'right', width: '78px' },
+          { header: 'Hutang Giro', accessor: (r) => formatMoney(r.hutangGiro), align: 'right', width: '78px' },
+          { header: 'Tempo', accessor: (r) => `${r.tmpPembayaran} hr`, align: 'center', width: '48px' },
+          { header: 'NPWP', accessor: (r) => r.npwp || '-', width: '92px' },
+          { header: 'Alamat', accessor: 'alamat', width: '115px' },
+          { header: 'Kota', accessor: 'kota', width: '72px' },
+          { header: 'Telepon', accessor: 'telepon', width: '80px' },
+          { header: 'Contact Person', accessor: 'contactPerson', width: '88px' },
+          { header: 'Email', accessor: 'email', width: '95px' },
         ]}
         rows={filteredSupplier}
         summaryItems={[
@@ -759,6 +1020,8 @@ export const MasterSupplierListForm: React.FC<MasterSupplierListFormProps> = ({
             ? [
                 { label: 'Kode Supplier', value: selectedSupplier.kodeSupplier },
                 { label: 'Nama Supplier', value: selectedSupplier.namaSupplier },
+                { label: 'NPWP / Tempo', value: `${selectedSupplier.npwp || '-'} | ${selectedSupplier.tmpPembayaran} Hari (${selectedSupplier.mataUang})` },
+                { label: 'No. Rekening', value: selectedSupplier.noRekening || '-' },
                 { label: 'Contact Person', value: selectedSupplier.contactPerson || '-' },
                 { label: 'Email / Website', value: [selectedSupplier.email, selectedSupplier.website].filter(Boolean).join(' | ') || '-' },
               ]

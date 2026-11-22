@@ -4,10 +4,12 @@ import { FormHeaderBanner } from './FormHeaderBanner';
 import { DatePickerInput } from './DatePickerInput';
 import { A4PrintPreviewModal, PrintColumn } from './A4PrintPreviewModal';
 import {
+  addDaysToIsoDate,
   erpCompositeSave,
   erpDelete,
   erpList,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -83,6 +85,12 @@ interface MasterBarangOption {
   namaBarang: string;
   unit: string;
   cost: number;
+}
+
+interface MasterSupplierMeta {
+  namaSupplier: string;
+  mataUang: string;
+  tmpPembayaran: number;
 }
 
 interface ListPembelianFormProps {
@@ -180,6 +188,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
   const [tanggalFilter, setTanggalFilter] = useState<string>('Semua');
 
   const [supplierOptions, setSupplierOptions] = useState<string[]>([]);
+  const [supplierMetaMap, setSupplierMetaMap] = useState<Record<string, MasterSupplierMeta>>({});
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
   const [poOptions, setPoOptions] = useState<PurchaseOrderRef[]>([]);
   const [poDetailsByNoPoMap, setPoDetailsByNoPoMap] = useState<Record<string, PembelianDetailItem[]>>({});
@@ -232,18 +241,32 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     ]);
 
     if (suppRes.status === 'fulfilled') {
+      const metaMap: Record<string, MasterSupplierMeta> = {};
+      const activeSupps = suppRes.value.filter((s: any) => s.is_active !== false);
       const supps = Array.from(
         new Set(
-          suppRes.value
-            .map((s: any) => String(s.nama_supplier || '').trim().toUpperCase())
+          activeSupps
+            .map((s: any) => {
+              const nm = String(s.nama_supplier || '').trim().toUpperCase();
+              if (nm) {
+                metaMap[nm] = {
+                  namaSupplier: nm,
+                  mataUang: String(s.mata_uang || 'IDR').trim().toUpperCase() || 'IDR',
+                  tmpPembayaran: Math.max(0, Number(s.tmp_pembayaran || 0)),
+                };
+              }
+              return nm;
+            })
             .filter(Boolean)
         )
       );
+      setSupplierMetaMap(metaMap);
       setSupplierOptions(supps);
     }
 
     if (barangRes.status === 'fulfilled') {
       const mapped: MasterBarangOption[] = barangRes.value
+        .filter((r: any) => r.is_active !== false)
         .map((r: any) => ({
           kode: String(r.kode || '').trim().toUpperCase(),
           namaBarang: String(r.nama_barang || '').trim(),
@@ -539,7 +562,14 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     const matchedPo = poOptions.find((p) => p.noBukti === cleanNoPo);
     const targetPpn = matchedPo ? matchedPo.ppn : parseNum(newPpn);
     if (matchedPo) {
-      if (matchedPo.namaSupplier) setNewSupplier(matchedPo.namaSupplier);
+      if (matchedPo.namaSupplier) {
+        setNewSupplier(matchedPo.namaSupplier);
+        const suppMeta = supplierMetaMap[matchedPo.namaSupplier.trim().toUpperCase()];
+        if (suppMeta && suppMeta.tmpPembayaran > 0) {
+          const baseDateIso = toIsoDate(newTanggal) || todayIso();
+          setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, suppMeta.tmpPembayaran)));
+        }
+      }
       if (matchedPo.mataUang) setNewMataUang(matchedPo.mataUang);
       setNewPpn(String(matchedPo.ppn));
       setPpnManualOverride(false);
@@ -596,6 +626,18 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     }
   };
 
+  const handleSelectSupplier = (supplierName: string, overrideDateStr?: string) => {
+    setNewSupplier(supplierName);
+    const suppMeta = supplierMetaMap[supplierName.trim().toUpperCase()];
+    if (suppMeta) {
+      if (suppMeta.mataUang && !newNoPo.trim()) {
+        setNewMataUang(suppMeta.mataUang);
+      }
+      const baseDateIso = toIsoDate(overrideDateStr ?? newTanggal) || todayIso();
+      setNewJthTmp(toDisplayDMyShort(addDaysToIsoDate(baseDateIso, suppMeta.tmpPembayaran)));
+    }
+  };
+
   const handleAddNew = async () => {
     const currentUser = (getCurrentUser().username || 'ADMIN').toUpperCase();
     const todayDisp = toDisplayDMyShort(todayIso());
@@ -623,7 +665,11 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    await loadMasterReferences();
+    const [defaultPpn] = await Promise.all([
+      fetchDefaultPpnRate(),
+      loadMasterReferences(),
+    ]);
+    setNewPpn(String(defaultPpn));
   };
 
   const handleEdit = async () => {
@@ -1238,7 +1284,18 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     <div className="w-64">
                       <DatePickerInput
                         value={newTanggal}
-                        onChange={(formatted) => setNewTanggal(formatted)}
+                        onChange={(formatted) => {
+                          setNewTanggal(formatted);
+                          if (!editingId && newSupplier) {
+                            const suppMeta = supplierMetaMap[newSupplier.trim().toUpperCase()];
+                            if (suppMeta && suppMeta.tmpPembayaran > 0) {
+                              const baseDateIso = toIsoDate(formatted) || todayIso();
+                              setNewJthTmp(
+                                toDisplayDMyShort(addDaysToIsoDate(baseDateIso, suppMeta.tmpPembayaran))
+                              );
+                            }
+                          }
+                        }}
                         format="dMyShort"
                       />
                     </div>
@@ -1265,7 +1322,7 @@ export const ListPembelianForm: React.FC<ListPembelianFormProps> = ({
                     <label className="font-semibold text-gray-700 shrink-0">Nama Supplier:</label>
                     <select
                       value={newSupplier}
-                      onChange={(e) => setNewSupplier(e.target.value)}
+                      onChange={(e) => handleSelectSupplier(e.target.value)}
                       required
                       className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded uppercase cursor-pointer"
                     >

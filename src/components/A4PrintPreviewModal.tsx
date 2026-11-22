@@ -429,7 +429,7 @@ export function A4PrintPreviewModal<T = any>({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-          {hasSelectedScope && !toolbarExtra && (
+          {hasSelectedScope && (
             <div className="flex items-center bg-[#111827] border border-gray-600 rounded-[2px] p-0.5 text-[10.5px]">
               <button
                 type="button"
@@ -533,27 +533,39 @@ export function A4PrintPreviewModal<T = any>({
                   {isFirstPage ? (
                     <div className="border-b-[2px] border-black pb-1.5">
                       <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <h1 className="text-[11.5pt] font-bold uppercase tracking-tight text-black leading-[1.15]">
-                            {company.company_name || 'PT. UNIMETRIKA UTAMA'}
-                          </h1>
-                          {addressLines.map((line, i) => (
-                            <div
-                              key={i}
-                              className="text-[7.5pt] text-black uppercase leading-[1.3]"
-                            >
-                              {line}
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          {company.logo_url && (
+                            <img
+                              src={company.logo_url}
+                              alt="Logo"
+                              className="w-11 h-11 object-contain border border-gray-300 bg-white p-0.5 shrink-0"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <h1 className="text-[11.5pt] font-bold uppercase tracking-tight text-black leading-[1.15]">
+                              {company.company_name || 'PT. UNIMETRIKA UTAMA'}
+                            </h1>
+                            {addressLines.map((line, i) => (
+                              <div
+                                key={i}
+                                className="text-[7.5pt] text-black uppercase leading-[1.3]"
+                              >
+                                {line}
+                              </div>
+                            ))}
+                            <div className="text-[7.5pt] text-black leading-[1.3] mt-[1px]">
+                              {[
+                                company.country,
+                                company.phone ? `Telp: ${company.phone}` : '',
+                                company.fax ? `Fax: ${company.fax}` : '',
+                                company.mail ? `Email: ${company.mail}` : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' | ')}
                             </div>
-                          ))}
-                          <div className="text-[7.5pt] text-black leading-[1.3] mt-[1px]">
-                            {[
-                              company.country,
-                              company.phone ? `Telp: ${company.phone}` : '',
-                              company.fax ? `Fax: ${company.fax}` : '',
-                              company.mail ? `Email: ${company.mail}` : '',
-                            ]
-                              .filter(Boolean)
-                              .join(' | ')}
                           </div>
                         </div>
 

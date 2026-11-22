@@ -7,6 +7,8 @@ import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import { cascadeMasterRename, checkMasterUsage } from '../lib/masterValidation';
 
 export interface TypeItem {
   id: string;
@@ -34,6 +36,7 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<TypeItem | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -136,17 +139,32 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = () => {
+    const item = types.find((t) => t.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    setConfirmDeleteItem(item);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteItem) return;
     try {
       setIsBusy(true);
-      await erpDelete('master_types', selectedId);
-      const updated = types.filter((t) => t.id !== selectedId);
+      const usageMsg = await checkMasterUsage([
+        { table: 'master_barangs', label: 'Master Barang', eq: { tipe: confirmDeleteItem.namaTipe } },
+      ]);
+      if (usageMsg) {
+        setConfirmDeleteItem(null);
+        showFeedback(usageMsg);
+        return;
+      }
+      await erpDelete('master_types', confirmDeleteItem.id);
+      const updated = types.filter((t) => t.id !== confirmDeleteItem.id);
       setTypes(updated);
       setSelectedId(updated[0]?.id || '');
+      setConfirmDeleteItem(null);
       showFeedback('Data dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
@@ -158,29 +176,44 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode dan Nama Tipe wajib diisi.');
+      return;
+    }
+    const dupKode = types.find((t) => t.kode.toUpperCase() === cleanKode && t.id !== editingId);
+    if (dupKode) {
+      setModalError(`Kode Type [${cleanKode}] sudah digunakan.`);
       return;
     }
 
     try {
       setIsBusy(true);
       const payload = {
-        kode: newKode.trim().toUpperCase(),
-        nama_tipe: newNama.trim().toUpperCase(),
+        kode: cleanKode,
+        nama_tipe: cleanNama,
       };
       if (editingId) {
+        const prevItem = types.find((t) => t.id === editingId);
         const saved = await erpUpdate<any>('master_types', editingId, payload);
-        setTypes(
-          types.map((t) =>
-            t.id === editingId ? { id: saved.id, kode: saved.kode, namaTipe: saved.nama_tipe } : t
-          )
+        if (prevItem && prevItem.namaTipe.toUpperCase() !== cleanNama) {
+          await cascadeMasterRename('master_barangs', 'tipe', prevItem.namaTipe, {
+            tipe: cleanNama,
+          });
+        }
+        setTypes((prev) =>
+          prev
+            .map((t) =>
+              t.id === editingId ? { id: saved.id, kode: saved.kode, namaTipe: saved.nama_tipe } : t
+            )
+            .sort((a, b) => a.kode.localeCompare(b.kode))
         );
         showFeedback('Data diperbarui');
       } else {
         const saved = await erpCreate<any>('master_types', payload);
         const newItem: TypeItem = { id: saved.id, kode: saved.kode, namaTipe: saved.nama_tipe };
-        setTypes([...types, newItem]);
+        setTypes((prev) => [...prev, newItem].sort((a, b) => a.kode.localeCompare(b.kode)));
         setSelectedId(newItem.id);
         showFeedback('Data tersimpan');
       }
@@ -267,7 +300,7 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
           onSimpan={handleToolbarSimpan}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
-          onHapus={handleDelete}
+          onHapus={handleRequestDelete}
           onPrint={() => setIsPrintOpen(true)}
           onFind={handleFind}
           isBusy={isBusy}
@@ -477,6 +510,15 @@ export const TypeListForm: React.FC<TypeListFormProps> = ({ isOpen, onClose }) =
               ]
             : undefined
         }
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(confirmDeleteItem)}
+        message={`Hapus Type [${confirmDeleteItem?.kode} - ${confirmDeleteItem?.namaTipe}]?`}
+        detail="Sistem akan memeriksa apakah Tipe masih dipakai pada Master Barang sebelum menghapus."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteItem(null)}
       />
     </div>
   );

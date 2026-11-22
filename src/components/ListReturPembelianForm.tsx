@@ -8,6 +8,7 @@ import {
   erpDelete,
   erpList,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -282,6 +283,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
       const supps = Array.from(
         new Set(
           suppRes.value
+            .filter((s: any) => s.is_active !== false)
             .map((s: any) => String(s.nama_supplier || '').trim().toUpperCase())
             .filter(Boolean)
         )
@@ -291,6 +293,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
 
     if (barangRes.status === 'fulfilled') {
       const mapped: MasterBarangOption[] = barangRes.value
+        .filter((r: any) => r.is_active !== false)
         .map((r: any) => ({
           kode: String(r.kode || '').trim().toUpperCase(),
           namaBarang: String(r.nama_barang || '').trim(),
@@ -649,7 +652,11 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    await loadMasterReferences();
+    const [defaultPpn] = await Promise.all([
+      fetchDefaultPpnRate(),
+      loadMasterReferences(),
+    ]);
+    setNewPpn(String(defaultPpn));
   };
 
   const handleEdit = async () => {

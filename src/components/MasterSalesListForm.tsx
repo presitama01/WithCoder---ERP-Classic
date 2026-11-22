@@ -9,11 +9,19 @@ import {
   erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
+  nextUniqueCode,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import {
+  cascadeMasterRename,
+  checkMasterUsage,
+  isMissingColumnError,
+  isValidEmail,
+} from '../lib/masterValidation';
 
 export interface SalesItem {
   id: string;
@@ -21,10 +29,12 @@ export interface SalesItem {
   namaSales: string;
   alamat: string;
   kota: string;
+  wilayah: string;
   telepon: string;
   email: string;
   limit: number;
   komisi: number;
+  isActive: boolean;
 }
 
 interface MasterSalesListFormProps {
@@ -39,10 +49,12 @@ function mapDbToItem(r: any): SalesItem {
     namaSales: r.nama_sales || '',
     alamat: r.alamat || '',
     kota: r.kota || '',
+    wilayah: r.wilayah || '',
     telepon: r.telepon || '',
     email: r.email || '',
     limit: Number(r.limit_kredit || 0),
     komisi: Number(r.komisi || 0),
+    isActive: r.is_active !== false,
   };
 }
 
@@ -51,6 +63,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
   onClose,
 }) => {
   const [salesList, setSalesList] = useState<SalesItem[]>([]);
+  const [wilayahOptions, setWilayahOptions] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [searchField, setSearchField] = useState<string>('Semua');
@@ -63,15 +76,18 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
   const [newNama, setNewNama] = useState('');
   const [newAlamat, setNewAlamat] = useState('');
   const [newKota, setNewKota] = useState('');
+  const [newWilayah, setNewWilayah] = useState('');
   const [newTelepon, setNewTelepon] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newLimit, setNewLimit] = useState('10000000');
   const [newKomisi, setNewKomisi] = useState('2.0');
+  const [newIsActive, setNewIsActive] = useState(true);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -113,7 +129,22 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         }
       }
 
-      const rows = await erpList<any>('master_sales', queryOpts);
+      const [rows, wilRes] = await Promise.all([
+        erpList<any>('master_sales', queryOpts),
+        erpList<any>('master_wilayahs', { orderBy: 'wilayah', asc: true, limit: 1000 }).catch(() => []),
+      ]);
+      const wOpts = Array.from(
+        new Set(
+          (wilRes || [])
+            .map((w: any) => {
+              const kode = String(w.kode_wilayah || w.kode || '').trim().toUpperCase();
+              const nama = String(w.wilayah || w.nama_wilayah || '').trim().toUpperCase();
+              return kode && nama ? `${kode} - ${nama}` : nama || kode;
+            })
+            .filter(Boolean)
+        )
+      );
+      setWilayahOptions(wOpts);
       const mapped = rows.map(mapDbToItem);
       setSalesList(mapped);
       if (mapped.length > 0 && !mapped.some((s) => s.id === selectedId)) {
@@ -138,7 +169,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
     }
     try {
       setIsBusy(true);
-      const saved = await erpUpdate<any>('master_sales', selected.id, {
+      const corePayload = {
         kode_sales: selected.kodeSales.trim().toUpperCase(),
         nama_sales: selected.namaSales.trim().toUpperCase(),
         alamat: selected.alamat.trim(),
@@ -147,10 +178,30 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         email: selected.email.trim(),
         limit_kredit: Number(selected.limit) || 0,
         komisi: Number(selected.komisi) || 0,
-      });
+      };
+      let saved: any;
+      let usedFallback = false;
+      try {
+        saved = await erpUpdate<any>('master_sales', selected.id, {
+          ...corePayload,
+          wilayah: selected.wilayah.trim().toUpperCase(),
+          is_active: selected.isActive,
+        });
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await erpUpdate<any>('master_sales', selected.id, corePayload);
+        } else {
+          throw err;
+        }
+      }
       const mapped = mapDbToItem(saved);
       setSalesList((prev) => prev.map((s) => (s.id === selected.id ? mapped : s)));
-      showFeedback(`Sales [${mapped.kodeSales} - ${mapped.namaSales}] tersimpan ke Supabase`);
+      showFeedback(
+        usedFallback
+          ? `Sales [${mapped.kodeSales}] tersimpan (jalankan SQL migrasi untuk kolom Wilayah / Status)`
+          : `Sales [${mapped.kodeSales} - ${mapped.namaSales}] tersimpan ke Supabase`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -167,14 +218,16 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
   const handleAddNew = () => {
     setEditingId(null);
     setModalError(null);
-    setNewKode('');
+    setNewKode(nextUniqueCode(salesList.map((s) => s.kodeSales), 'SLS', 3));
     setNewNama('');
     setNewAlamat('');
     setNewKota('');
+    setNewWilayah('');
     setNewTelepon('');
     setNewEmail('');
     setNewLimit('10000000');
     setNewKomisi('2.0');
+    setNewIsActive(true);
     setIsAddOpen(true);
   };
 
@@ -190,25 +243,50 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
     setNewNama(item.namaSales);
     setNewAlamat(item.alamat);
     setNewKota(item.kota);
+    setNewWilayah(item.wilayah || '');
     setNewTelepon(item.telepon);
     setNewEmail(item.email);
     setNewLimit(String(item.limit));
     setNewKomisi(String(item.komisi));
+    setNewIsActive(item.isActive !== false);
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = async () => {
+    const item = salesList.find((s) => s.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    try {
+      setIsBusy(true);
+      const usageMsg = await checkMasterUsage([
+        { table: 'master_customers', label: 'Master Customer', eq: { kode_sales: item.kodeSales } },
+        { table: 'sales_orders', label: 'Sales Order', eq: { sales: item.namaSales } },
+        { table: 'faktur_penjualans', label: 'Faktur Penjualan', eq: { sales: item.namaSales } },
+      ]);
+      if (usageMsg) {
+        showFeedback(usageMsg);
+        return;
+      }
+      setConfirmDeleteOpen(true);
+    } catch (err: any) {
+      showFeedback(`Gagal cek referensi: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedId) return;
     try {
       setIsBusy(true);
       await erpDelete('master_sales', selectedId);
       const updated = salesList.filter((s) => s.id !== selectedId);
       setSalesList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback('Data sales dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -219,43 +297,113 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode dan Nama Sales wajib diisi.');
+      return;
+    }
+    if (salesList.some((s) => s.kodeSales.toUpperCase() === cleanKode && s.id !== editingId)) {
+      setModalError(`Kode Sales [${cleanKode}] sudah terdaftar.`);
+      return;
+    }
+    if (!isValidEmail(newEmail)) {
+      setModalError('Format email sales tidak valid.');
+      return;
+    }
+    const limitVal = parseFloat(newLimit) || 0;
+    const komisiVal = parseFloat(newKomisi) || 0;
+    if (limitVal < 0) {
+      setModalError('Limit kredit sales tidak boleh negatif.');
+      return;
+    }
+    if (komisiVal < 0 || komisiVal > 100) {
+      setModalError('Persentase komisi harus berada di antara 0% sampai 100%.');
       return;
     }
 
     try {
       setIsBusy(true);
-      const dbPayload = {
-        kode_sales: newKode.trim().toUpperCase(),
-        nama_sales: newNama.trim().toUpperCase(),
+      const safeCorePayload = {
+        kode_sales: cleanKode,
+        nama_sales: cleanNama,
         alamat: newAlamat.trim(),
         kota: newKota.trim().toUpperCase(),
         telepon: newTelepon.trim(),
-        email: newEmail.trim(),
-        limit_kredit: parseFloat(newLimit) || 0,
-        komisi: parseFloat(newKomisi) || 0,
+        limit_kredit: limitVal,
+        komisi: komisiVal,
       };
+      const withEmailPayload = {
+        ...safeCorePayload,
+        email: newEmail.trim(),
+      };
+      const fullPayload = {
+        ...withEmailPayload,
+        wilayah: newWilayah.trim().toUpperCase(),
+        is_active: newIsActive,
+      };
+      let saved: any;
+      let usedFallback = false;
+      const saveFn = async (payload: Record<string, any>) =>
+        editingId
+          ? erpUpdate<any>('master_sales', editingId, payload)
+          : erpCreate<any>('master_sales', payload);
+
+      try {
+        saved = await saveFn(fullPayload);
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          try {
+            saved = await saveFn(withEmailPayload);
+          } catch (err2: any) {
+            if (isMissingColumnError(err2?.message || '')) {
+              saved = await saveFn(safeCorePayload);
+            } else {
+              throw err2;
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
+      const mapped = mapDbToItem(saved);
       if (editingId) {
-        const saved = await erpUpdate<any>('master_sales', editingId, dbPayload);
-        const mapped = mapDbToItem(saved);
-        setSalesList(salesList.map((s) => (s.id === editingId ? mapped : s)));
-        showFeedback('Data diperbarui');
+        const prevItem = salesList.find((s) => s.id === editingId);
+        setSalesList((prev) =>
+          prev
+            .map((s) => (s.id === editingId ? mapped : s))
+            .sort((a, b) => a.kodeSales.localeCompare(b.kodeSales))
+        );
+        if (prevItem && (prevItem.kodeSales !== mapped.kodeSales || prevItem.namaSales !== mapped.namaSales)) {
+          await Promise.all([
+            cascadeMasterRename('master_customers', 'kode_sales', prevItem.kodeSales, {
+              kode_sales: mapped.kodeSales,
+              nama_sales: mapped.namaSales,
+              sales: mapped.namaSales,
+            }),
+            cascadeMasterRename('sales_orders', 'sales', prevItem.namaSales, { sales: mapped.namaSales }),
+            cascadeMasterRename('faktur_penjualans', 'sales', prevItem.namaSales, { sales: mapped.namaSales }),
+          ]);
+        }
+        showFeedback(
+          usedFallback
+            ? 'Data diperbarui (jalankan SQL migrasi untuk kolom Wilayah / Status)'
+            : 'Data diperbarui'
+        );
       } else {
-        const saved = await erpCreate<any>('master_sales', dbPayload);
-        const mapped = mapDbToItem(saved);
-        setSalesList([mapped, ...salesList]);
+        setSalesList((prev) => [mapped, ...prev].sort((a, b) => a.kodeSales.localeCompare(b.kodeSales)));
         setSelectedId(mapped.id);
-        showFeedback('Data tersimpan');
+        showFeedback(
+          usedFallback
+            ? 'Data tersimpan (jalankan SQL migrasi untuk kolom Wilayah / Status)'
+            : 'Data tersimpan'
+        );
       }
       setIsAddOpen(false);
       setEditingId(null);
     } catch (err: any) {
-      const rawMsg = err?.message || 'Gagal menyimpan data ke database';
-      const msg =
-        rawMsg.includes('email') && rawMsg.toLowerCase().includes('schema cache')
-          ? `${rawMsg} — Jalankan SQL Query penambahan kolom email pada tabel master_sales di Supabase SQL Editor.`
-          : rawMsg;
+      const msg = err?.message || 'Gagal menyimpan data ke database';
       setModalError(msg);
       showFeedback(`Gagal simpan: ${msg}`);
     } finally {
@@ -271,7 +419,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
     if (field === 'Telepon') return matchesMultiKeyword([item.telepon], rawTerm);
     if (field === 'Email') return matchesMultiKeyword([item.email], rawTerm);
     return matchesMultiKeyword(
-      [item.kodeSales, item.namaSales, item.alamat, item.kota, item.telepon, item.email],
+      [item.kodeSales, item.namaSales, item.alamat, item.kota, item.wilayah, item.telepon, item.email],
       rawTerm
     );
   };
@@ -328,10 +476,12 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         { header: 'Nama Sales', accessor: 'namaSales' },
         { header: 'Alamat', accessor: 'alamat' },
         { header: 'Kota', accessor: 'kota' },
+        { header: 'Wilayah', accessor: 'wilayah' },
         { header: 'Telepon', accessor: 'telepon' },
         { header: 'Email', accessor: 'email' },
         { header: 'Limit', accessor: 'limit', align: 'right' },
         { header: 'Komisi (%)', accessor: 'komisi', align: 'right' },
+        { header: 'Status', accessor: (r) => (r.isActive ? 'AKTIF' : 'NON-AKTIF') },
       ],
       rows: filteredSales,
     });
@@ -363,7 +513,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={handleDelete}
+            onHapus={handleRequestDelete}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -401,26 +551,28 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
           />
         </div>
 
-        <div className="flex-1 overflow-auto bg-white m-2 border border-[#ACA899] shadow-inner">
+        <div className="flex-1 overflow-auto bg-white mx-2 mt-2 border border-[#ACA899] shadow-inner">
           <div className="min-w-max">
             <table className="w-full text-left text-[11px] border-collapse select-none">
               <thead className="sticky top-0 bg-[#ECE9D8] text-black font-semibold border-b border-[#ACA899]">
                 <tr className="h-[24px]">
                   <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0" />
-                  <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
-                  <th className="w-[190px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Sales</th>
-                  <th className="w-[210px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat</th>
-                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
-                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Telepon</th>
-                  <th className="w-[175px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
-                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit</th>
-                  <th className="w-[95px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Komisi (%)</th>
+                  <th className="w-[85px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
+                  <th className="w-[180px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Sales</th>
+                  <th className="w-[190px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
+                  <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Wilayah</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Telepon</th>
+                  <th className="w-[165px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
+                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit</th>
+                  <th className="w-[85px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Komisi (%)</th>
+                  <th className="w-[75px] px-2 py-0.5 text-center font-bold bg-[#ECE9D8]">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSales.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-6 text-gray-500 italic">
+                    <td colSpan={11} className="text-center py-6 text-gray-500 italic">
                       Tidak ada data Master Sales
                     </td>
                   </tr>
@@ -433,7 +585,11 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                         onClick={() => setSelectedId(item.id)}
                         onDoubleClick={handleEdit}
                         className={`h-[22px] border-b border-[#ACA899] cursor-pointer ${
-                          isSelected ? 'bg-[#0A246A] text-white' : 'bg-white hover:bg-[#E8EEF8]'
+                          isSelected
+                            ? 'bg-[#0A246A] text-white'
+                            : !item.isActive
+                            ? 'bg-[#F3F3F3] text-gray-500 hover:bg-[#E8EEF8]'
+                            : 'bg-white hover:bg-[#E8EEF8]'
                         }`}
                       >
                         <td className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
@@ -443,6 +599,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-semibold">{item.namaSales}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.alamat}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.kota}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.wilayah || '-'}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.email || '-'}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">
@@ -451,12 +608,24 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">
                           {item.komisi}%
                         </td>
+                        <td className="px-2 py-0.5 text-center text-[10px] font-bold">
+                          {item.isActive ? 'AKTIF' : 'NON-AKTIF'}
+                        </td>
                       </tr>
                     );
                   })
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center justify-between px-3 py-1.5 text-[11px] font-sans">
+          <div className="w-[450px] max-w-[60vw] truncate h-[22px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 flex items-center text-gray-700">
+            {selectedSales ? `Sales Terpilih: ${selectedSales.kodeSales} - ${selectedSales.namaSales}` : ''}
+          </div>
+          <div className="flex items-center space-x-6 text-[12px] font-bold text-black pr-16">
+            <span>Record</span>
+            <span className="font-mono">{filteredSales.length}</span>
           </div>
         </div>
       </div>
@@ -534,15 +703,34 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block font-bold mb-1">Email:</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="sales@perusahaan.com"
-                  className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
-                />
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-bold mb-1">Email:</label>
+                  <input
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="sales@perusahaan.com"
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Wilayah Tugas:</label>
+                  <select
+                    value={newWilayah}
+                    onChange={(e) => setNewWilayah(e.target.value)}
+                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 uppercase cursor-pointer"
+                  >
+                    <option value="">-- Pilih Wilayah --</option>
+                    {Array.from(
+                      new Set([...wilayahOptions, newWilayah.trim().toUpperCase()].filter(Boolean))
+                    ).map((w) => (
+                      <option key={w} value={w}>
+                        {w}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
@@ -550,6 +738,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                   <label className="block font-bold mb-1">Limit (Rp):</label>
                   <input
                     type="number"
+                    min="0"
                     value={newLimit}
                     onChange={(e) => setNewLimit(e.target.value)}
                     className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
@@ -559,6 +748,8 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                   <label className="block font-bold mb-1">Komisi (%):</label>
                   <input
                     type="number"
+                    min="0"
+                    max="100"
                     step="0.1"
                     value={newKomisi}
                     onChange={(e) => setNewKomisi(e.target.value)}
@@ -566,6 +757,16 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
                   />
                 </div>
               </div>
+
+              <label className="flex items-center gap-2 cursor-pointer font-bold pt-0.5">
+                <input
+                  type="checkbox"
+                  checked={newIsActive}
+                  onChange={(e) => setNewIsActive(e.target.checked)}
+                  className="w-3.5 h-3.5 cursor-pointer"
+                />
+                <span>Sales Aktif</span>
+              </label>
 
               {modalError && (
                 <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
@@ -641,6 +842,16 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         ]}
       />
 
+      <ConfirmDialog
+        isOpen={confirmDeleteOpen}
+        title="Konfirmasi Hapus Master Sales"
+        message={`Yakin ingin menghapus Sales [${selectedSales?.kodeSales || ''} - ${selectedSales?.namaSales || ''}]?`}
+        detail="Data yang sudah dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -648,14 +859,15 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
         subtitle={`Total Record: ${filteredSales.length}`}
         orientation="landscape"
         columns={[
-          { header: 'Kode', accessor: 'kodeSales', width: '70px' },
-          { header: 'Nama Sales', accessor: 'namaSales', width: '140px' },
-          { header: 'Alamat', accessor: 'alamat', width: '150px' },
-          { header: 'Kota', accessor: 'kota', width: '90px' },
-          { header: 'Telepon', accessor: 'telepon', width: '95px' },
-          { header: 'Email', accessor: 'email', width: '130px' },
-          { header: 'Limit', accessor: (r) => formatMoney(r.limit), align: 'right', width: '95px' },
-          { header: 'Komisi (%)', accessor: (r) => `${r.komisi}%`, align: 'right', width: '70px' },
+          { header: 'Kode', accessor: 'kodeSales', width: '65px' },
+          { header: 'Nama Sales', accessor: 'namaSales', width: '130px' },
+          { header: 'Alamat', accessor: 'alamat', width: '140px' },
+          { header: 'Kota', accessor: 'kota', width: '80px' },
+          { header: 'Wilayah', accessor: (r) => r.wilayah || '-', width: '105px' },
+          { header: 'Telepon', accessor: 'telepon', width: '90px' },
+          { header: 'Email', accessor: 'email', width: '125px' },
+          { header: 'Limit', accessor: (r) => formatMoney(r.limit), align: 'right', width: '90px' },
+          { header: 'Komisi (%)', accessor: (r) => `${r.komisi}%`, align: 'right', width: '65px' },
         ]}
         rows={filteredSales}
         summaryItems={[
@@ -672,7 +884,7 @@ export const MasterSalesListForm: React.FC<MasterSalesListFormProps> = ({
             ? [
                 { label: 'Kode Sales', value: selectedSales.kodeSales },
                 { label: 'Nama Sales', value: selectedSales.namaSales },
-                { label: 'Kota', value: selectedSales.kota || '-' },
+                { label: 'Kota / Wilayah', value: [selectedSales.kota, selectedSales.wilayah].filter(Boolean).join(' / ') || '-' },
                 { label: 'Email', value: selectedSales.email || '-' },
               ]
             : undefined

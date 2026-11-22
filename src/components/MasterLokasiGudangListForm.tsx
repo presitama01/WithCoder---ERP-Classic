@@ -7,6 +7,8 @@ import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import { cascadeMasterRename, checkMasterUsage, isMissingColumnError } from '../lib/masterValidation';
 
 export interface LokasiGudangItem {
   id: string;
@@ -19,6 +21,8 @@ export interface LokasiGudangItem {
   fax?: string;
   pic?: string;
   keterangan?: string;
+  isDefault: boolean;
+  isActive: boolean;
 }
 
 interface MasterLokasiGudangListFormProps {
@@ -38,6 +42,8 @@ function mapDbToItem(r: any): LokasiGudangItem {
     fax: r.fax || '',
     pic: r.pic || '',
     keterangan: r.keterangan || '',
+    isDefault: Boolean(r.is_default),
+    isActive: r.is_active !== false,
   };
 }
 
@@ -62,11 +68,14 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
   const [newFax, setNewFax] = useState('');
   const [newPic, setNewPic] = useState('');
   const [newKeterangan, setNewKeterangan] = useState('');
+  const [newIsDefault, setNewIsDefault] = useState(false);
+  const [newIsActive, setNewIsActive] = useState(true);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -122,7 +131,7 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     }
     try {
       setIsBusy(true);
-      const saved = await erpUpdate<any>('master_lokasi_gudangs', selected.id, {
+      const basePayload = {
         kode: selected.kode.trim().toUpperCase(),
         nama_lokasi: selected.namaLokasi.trim().toUpperCase(),
         alamat: selected.alamat.trim().toUpperCase(),
@@ -132,10 +141,30 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         fax: (selected.fax || '').trim(),
         pic: (selected.pic || '').trim().toUpperCase(),
         keterangan: (selected.keterangan || '').trim().toUpperCase(),
-      });
+      };
+      let saved: any;
+      let usedFallback = false;
+      try {
+        saved = await erpUpdate<any>('master_lokasi_gudangs', selected.id, {
+          ...basePayload,
+          is_default: selected.isDefault,
+          is_active: selected.isActive,
+        });
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await erpUpdate<any>('master_lokasi_gudangs', selected.id, basePayload);
+        } else {
+          throw err;
+        }
+      }
       const mapped = mapDbToItem(saved);
       setLokasiList((prev) => prev.map((l) => (l.id === selected.id ? mapped : l)));
-      showFeedback(`Lokasi Gudang [${mapped.kode} - ${mapped.namaLokasi}] tersimpan ke Supabase`);
+      showFeedback(
+        usedFallback
+          ? `Lokasi Gudang [${mapped.kode}] tersimpan (jalankan SQL migrasi untuk kolom tambahan)`
+          : `Lokasi Gudang [${mapped.kode} - ${mapped.namaLokasi}] tersimpan ke Supabase`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -162,6 +191,8 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     setNewFax('');
     setNewPic('');
     setNewKeterangan('');
+    setNewIsDefault(false);
+    setNewIsActive(true);
     setIsAddOpen(true);
   };
 
@@ -182,21 +213,49 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
     setNewFax(item.fax || '');
     setNewPic(item.pic || '');
     setNewKeterangan(item.keterangan || '');
+    setNewIsDefault(Boolean(item.isDefault));
+    setNewIsActive(item.isActive !== false);
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = async () => {
+    const item = lokasiList.find((l) => l.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    try {
+      setIsBusy(true);
+      const formattedLabel = `${item.kode} - ${item.namaLokasi}`;
+      const usageMsg = await checkMasterUsage([
+        { table: 'purchase_requests', label: 'Purchase Request', ilike: { lokasi_stock: item.namaLokasi } },
+        { table: 'purchase_orders', label: 'Purchase Order', ilike: { delivery_to: item.namaLokasi } },
+        { table: 'sales_orders', label: 'Sales Order', ilike: { lokasi_stock: item.namaLokasi } },
+        { table: 'faktur_penjualans', label: 'Faktur Penjualan', ilike: { lokasi_stock: item.namaLokasi } },
+        { table: 'stock_awal', label: 'Stock Awal', eq: { lokasi: formattedLabel } },
+      ]);
+      if (usageMsg) {
+        showFeedback(usageMsg);
+        return;
+      }
+      setConfirmDeleteOpen(true);
+    } catch (err: any) {
+      showFeedback(`Gagal cek referensi: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedId) return;
     try {
       setIsBusy(true);
       await erpDelete('master_lokasi_gudangs', selectedId);
       const updated = lokasiList.filter((l) => l.id !== selectedId);
       setLokasiList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback('Data lokasi gudang dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -207,16 +266,22 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode Lokasi dan Nama Lokasi wajib diisi.');
+      return;
+    }
+    if (lokasiList.some((l) => l.kode.toUpperCase() === cleanKode && l.id !== editingId)) {
+      setModalError(`Kode Lokasi [${cleanKode}] sudah terdaftar.`);
       return;
     }
 
     try {
       setIsBusy(true);
-      const dbPayload = {
-        kode: newKode.trim().toUpperCase(),
-        nama_lokasi: newNama.trim().toUpperCase(),
+      const basePayload = {
+        kode: cleanKode,
+        nama_lokasi: cleanNama,
         alamat: newAlamat.trim().toUpperCase(),
         kota: newKota.trim().toUpperCase(),
         telepon1: newTelp1.trim(),
@@ -225,17 +290,57 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         pic: newPic.trim().toUpperCase(),
         keterangan: newKeterangan.trim().toUpperCase(),
       };
+      const fullPayload = {
+        ...basePayload,
+        is_default: newIsDefault,
+        is_active: newIsActive,
+      };
+      let saved: any;
+      let usedFallback = false;
+      const saveFn = async (payload: Record<string, any>) =>
+        editingId
+          ? erpUpdate<any>('master_lokasi_gudangs', editingId, payload)
+          : erpCreate<any>('master_lokasi_gudangs', payload);
+      try {
+        saved = await saveFn(fullPayload);
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await saveFn(basePayload);
+        } else {
+          throw err;
+        }
+      }
+      const mapped = mapDbToItem(saved);
       if (editingId) {
-        const saved = await erpUpdate<any>('master_lokasi_gudangs', editingId, dbPayload);
-        const mapped = mapDbToItem(saved);
-        setLokasiList(lokasiList.map((l) => (l.id === editingId ? mapped : l)));
-        showFeedback('Data diperbarui');
+        const prevItem = lokasiList.find((l) => l.id === editingId);
+        setLokasiList((prev) =>
+          prev
+            .map((l) => (l.id === editingId ? mapped : l))
+            .sort((a, b) => a.kode.localeCompare(b.kode))
+        );
+        if (prevItem && prevItem.namaLokasi !== mapped.namaLokasi) {
+          const oldFormatted = `${prevItem.kode} - ${prevItem.namaLokasi}`;
+          const newFormatted = `${mapped.kode} - ${mapped.namaLokasi}`;
+          await Promise.all([
+            cascadeMasterRename('purchase_requests', 'lokasi_stock', oldFormatted, { lokasi_stock: newFormatted }),
+            cascadeMasterRename('sales_orders', 'lokasi_stock', oldFormatted, { lokasi_stock: newFormatted }),
+            cascadeMasterRename('faktur_penjualans', 'lokasi_stock', oldFormatted, { lokasi_stock: newFormatted }),
+          ]);
+        }
+        showFeedback(
+          usedFallback
+            ? 'Data diperbarui (jalankan SQL migrasi untuk kolom is_default / is_active)'
+            : 'Data diperbarui'
+        );
       } else {
-        const saved = await erpCreate<any>('master_lokasi_gudangs', dbPayload);
-        const mapped = mapDbToItem(saved);
-        setLokasiList([...lokasiList, mapped]);
+        setLokasiList((prev) => [...prev, mapped].sort((a, b) => a.kode.localeCompare(b.kode)));
         setSelectedId(mapped.id);
-        showFeedback('Data tersimpan');
+        showFeedback(
+          usedFallback
+            ? 'Data tersimpan (jalankan SQL migrasi untuk kolom is_default / is_active)'
+            : 'Data tersimpan'
+        );
       }
       setIsAddOpen(false);
       setEditingId(null);
@@ -333,7 +438,7 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={handleDelete}
+            onHapus={handleRequestDelete}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -378,7 +483,8 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                     <th className="w-[105px] min-w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Telepon2</th>
                     <th className="w-[105px] min-w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Fax</th>
                     <th className="w-[140px] min-w-[140px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Penanggung Jawab</th>
-                    <th className="min-w-[150px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Keterangan</th>
+                    <th className="min-w-[140px] border-r border-[#ACA899] px-2 py-0.5 text-left font-bold text-[11px] bg-[#ECE9D8]">Keterangan</th>
+                    <th className="w-[85px] border-r border-[#ACA899] px-2 py-0.5 text-center font-bold text-[11px] bg-[#ECE9D8]">Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -390,14 +496,25 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                         onClick={() => setSelectedId(item.id)}
                         onDoubleClick={handleEdit}
                         className={`h-[22px] border-b border-[#ACA899] cursor-pointer ${
-                          isSelected ? 'bg-[#0A246A] text-white' : 'bg-white hover:bg-[#EAF2FC]'
+                          isSelected
+                            ? 'bg-[#0A246A] text-white'
+                            : !item.isActive
+                            ? 'bg-[#F3F3F3] text-gray-500 hover:bg-[#EAF2FC]'
+                            : 'bg-white hover:bg-[#EAF2FC]'
                         }`}
                       >
                         <td className="w-[20px] min-w-[20px] max-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
                           {isSelected ? <span className="text-[10px] font-bold text-black leading-none inline-block">▶</span> : null}
                         </td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold">{item.kode}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold uppercase">{item.namaLokasi}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold uppercase">
+                          {item.namaLokasi}
+                          {item.isDefault && (
+                            <span className={`ml-1.5 text-[9px] px-1 border ${isSelected ? 'border-white/70 text-white' : 'border-blue-600 text-blue-700 bg-blue-50'}`}>
+                              UTAMA
+                            </span>
+                          )}
+                        </td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.alamat}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-bold uppercase">{item.kota}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon1}</td>
@@ -405,12 +522,15 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.fax || ''}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] uppercase">{item.pic || ''}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.keterangan || ''}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-center text-[10px] font-bold">
+                          {item.isActive ? 'AKTIF' : 'NON-AKTIF'}
+                        </td>
                       </tr>
                     );
                   })}
                   {filteredLokasi.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="text-center py-6 text-gray-500">
+                      <td colSpan={11} className="text-center py-6 text-gray-500">
                         Belum ada data lokasi gudang
                       </td>
                     </tr>
@@ -545,6 +665,27 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                 />
               </div>
 
+              <div className="flex items-center gap-6 pl-[122px] pt-1">
+                <label className="flex items-center gap-1.5 font-bold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newIsDefault}
+                    onChange={(e) => setNewIsDefault(e.target.checked)}
+                    className="w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>Gudang Utama (Default)</span>
+                </label>
+                <label className="flex items-center gap-1.5 font-bold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newIsActive}
+                    onChange={(e) => setNewIsActive(e.target.checked)}
+                    className="w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>Lokasi Aktif</span>
+                </label>
+              </div>
+
               {modalError && (
                 <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
                   ⚠ {modalError}
@@ -607,6 +748,16 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
           { header: 'Kota', accessor: (r) => r.kota || '-', widthClass: 'w-24' },
           { header: 'Penanggung Jawab', accessor: (r) => r.pic || '-', widthClass: 'w-32' },
         ]}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmDeleteOpen}
+        title="Konfirmasi Hapus Lokasi Gudang"
+        message={`Yakin ingin menghapus Lokasi [${selectedLokasi?.kode || ''} - ${selectedLokasi?.namaLokasi || ''}]?`}
+        detail="Data yang sudah dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
       />
 
       <A4PrintPreviewModal

@@ -388,6 +388,211 @@ export function registerErpApiRoutes(app: Express): void {
     }
   };
 
+  const syncMasterBarangQtyPo = async (
+    supabase: SupabaseClient,
+    kodes: string[]
+  ): Promise<void> => {
+    const cleanKodes = Array.from(
+      new Set(kodes.map((k) => String(k || '').trim().toUpperCase()).filter(Boolean))
+    );
+    if (cleanKodes.length === 0) return;
+
+    try {
+      const { data: openPos } = await supabase
+        .from('purchase_orders')
+        .select('id, po_close')
+        .neq('po_close', 'Closed');
+      const openPoIds = (openPos || []).map((p: any) => p.id).filter(Boolean);
+
+      const qtyPoByKode: Record<string, number> = {};
+      if (openPoIds.length > 0) {
+        const { data: poDets } = await supabase
+          .from('purchase_order_details')
+          .select('kode, qty, terima, po_id')
+          .in('po_id', openPoIds)
+          .in('kode', cleanKodes);
+
+        for (const d of poDets || []) {
+          const k = String(d.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          const remaining = Math.max(0, Number(d.qty || 0) - Number(d.terima || 0));
+          qtyPoByKode[k] = Number(((qtyPoByKode[k] || 0) + remaining).toFixed(2));
+        }
+      }
+
+      for (const k of cleanKodes) {
+        await supabase
+          .from('master_barangs')
+          .update({ qty_po: qtyPoByKode[k] || 0 })
+          .eq('kode', k);
+      }
+    } catch {
+      // Non-fatal sync
+    }
+  };
+
+  const syncMasterBarangQtySo = async (
+    supabase: SupabaseClient,
+    kodes: string[]
+  ): Promise<void> => {
+    const cleanKodes = Array.from(
+      new Set(kodes.map((k) => String(k || '').trim().toUpperCase()).filter(Boolean))
+    );
+    if (cleanKodes.length === 0) return;
+
+    try {
+      const { data: openSos } = await supabase
+        .from('sales_orders')
+        .select('id, so_close')
+        .neq('so_close', 'Closed');
+      const openSoIds = (openSos || []).map((s: any) => s.id).filter(Boolean);
+
+      const qtySoByKode: Record<string, number> = {};
+      if (openSoIds.length > 0) {
+        const { data: soDets } = await supabase
+          .from('sales_order_details')
+          .select('kode, qty, terima, so_id')
+          .in('so_id', openSoIds)
+          .in('kode', cleanKodes);
+
+        for (const d of soDets || []) {
+          const k = String(d.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          const remaining = Math.max(0, Number(d.qty || 0) - Number(d.terima || 0));
+          qtySoByKode[k] = Number(((qtySoByKode[k] || 0) + remaining).toFixed(2));
+        }
+      }
+
+      for (const k of cleanKodes) {
+        await supabase
+          .from('master_barangs')
+          .update({ qty_so: qtySoByKode[k] || 0 })
+          .eq('kode', k);
+      }
+    } catch {
+      // Non-fatal sync
+    }
+  };
+
+  const syncSupplierHutang = async (
+    supabase: SupabaseClient,
+    supplierNames: string[]
+  ): Promise<void> => {
+    const names = Array.from(
+      new Set(supplierNames.map((n) => String(n || '').trim().toUpperCase()).filter(Boolean))
+    );
+    if (names.length === 0) return;
+
+    for (const supName of names) {
+      try {
+        const [{ data: pembRows }, { data: returRows }, { data: giroDets }] = await Promise.all([
+          supabase
+            .from('pembelian_barangs')
+            .select('no_bukti, nilai_pembelian, sts_post, sts_lunas')
+            .eq('nama_supplier', supName),
+          supabase
+            .from('retur_pembelians')
+            .select('nilai_retur, sts_post')
+            .eq('nama_supplier', supName),
+          supabase
+            .from('giro_pembelian_details')
+            .select('amount_paid, sts_cair, ref_type, no_ref')
+            .eq('supplier', supName),
+        ]);
+
+        const postedPemb = (pembRows || []).filter(
+          (p: any) => String(p.sts_post || '').toUpperCase() === 'POSTED'
+        );
+        const totalOpenPemb = postedPemb
+          .filter((p: any) => String(p.sts_lunas || '').toUpperCase() !== 'LUNAS')
+          .reduce((s: number, p: any) => s + Number(p.nilai_pembelian || 0), 0);
+
+        const openPembBuktiSet = new Set(
+          postedPemb
+            .filter((p: any) => String(p.sts_lunas || '').toUpperCase() !== 'LUNAS')
+            .map((p: any) => String(p.no_bukti || '').trim().toUpperCase())
+        );
+
+        const totalRetur = (returRows || [])
+          .filter((r: any) => String(r.sts_post || '').toUpperCase() === 'POSTED')
+          .reduce((s: number, r: any) => s + Number(r.nilai_retur || 0), 0);
+
+        let cairOnOpenPemb = 0;
+        let pendingGiroTotal = 0;
+        for (const g of giroDets || []) {
+          const st = String(g.sts_cair || 'Cair').toUpperCase();
+          const amt = Number(g.amount_paid || 0);
+          if (st === 'CAIR') {
+            const refType = String(g.ref_type || '').toUpperCase();
+            const noRef = String(g.no_ref || '').trim().toUpperCase();
+            if (refType === 'PEMBELIAN' && openPembBuktiSet.has(noRef)) {
+              cairOnOpenPemb += amt;
+            }
+          } else if (st !== 'TOLAK' && st !== 'BATAL') {
+            pendingGiroTotal += amt;
+          }
+        }
+
+        const netHutang = Math.max(
+          0,
+          Number((totalOpenPemb - cairOnOpenPemb - totalRetur).toFixed(2))
+        );
+        const netHutangGiro = Math.max(0, Number(pendingGiroTotal.toFixed(2)));
+
+        await supabase
+          .from('master_suppliers')
+          .update({ hutang: netHutang, hutang_giro: netHutangGiro })
+          .eq('nama_supplier', supName);
+      } catch {
+        // Non-fatal sync
+      }
+    }
+  };
+
+  const syncCustomerPiutang = async (
+    supabase: SupabaseClient,
+    customerNames: string[]
+  ): Promise<void> => {
+    const names = Array.from(
+      new Set(customerNames.map((n) => String(n || '').trim().toUpperCase()).filter(Boolean))
+    );
+    if (names.length === 0) return;
+
+    for (const custName of names) {
+      try {
+        const [{ data: fakturRows }, { data: giroDets }] = await Promise.all([
+          supabase
+            .from('faktur_penjualans')
+            .select('nilai_penjualan, sts_lunas, sts_post')
+            .eq('nama_customer', custName),
+          supabase
+            .from('giro_penjualan_details')
+            .select('amount_paid')
+            .eq('customer', custName),
+        ]);
+
+        const totalPiutang = (fakturRows || [])
+          .filter((f: any) => String(f.sts_lunas || '').toUpperCase() !== 'LUNAS')
+          .reduce((s: number, f: any) => s + Number(f.nilai_penjualan || 0), 0);
+
+        const totalGiro = (giroDets || []).reduce(
+          (s: number, g: any) => s + Number(g.amount_paid || 0),
+          0
+        );
+
+        await supabase
+          .from('master_customers')
+          .update({
+            piutang: Math.max(0, Number(totalPiutang.toFixed(2))),
+            piutang_giro: Math.max(0, Number(totalGiro.toFixed(2))),
+          })
+          .eq('nama_customer', custName);
+      } catch {
+        // Non-fatal sync
+      }
+    }
+  };
+
   // Composite endpoints for Master-Detail transactions
   app.post('/api/erp/composite/purchase-request', async (req: Request, res: Response) => {
     const { client: supabase, missingEnv } = getSupabaseClient();
@@ -587,6 +792,11 @@ export function registerErpApiRoutes(app: Express): void {
 
       await syncGiroPembelianToHutangAndPo(supabase, affectedRefs, headerRow.tanggal);
 
+      const affectedSuppliers = (savedDetails || []).map((d: any) => d.supplier).filter(Boolean);
+      if (affectedSuppliers.length > 0) {
+        await syncSupplierHutang(supabase, affectedSuppliers);
+      }
+
       return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan giro pembelian.' });
@@ -657,6 +867,11 @@ export function registerErpApiRoutes(app: Express): void {
           .select();
         if (detErr) return res.status(400).json({ error: detErr.message });
         savedDetails = detData || [];
+      }
+
+      const affectedCustomers = (savedDetails || []).map((d: any) => d.customer).filter(Boolean);
+      if (affectedCustomers.length > 0) {
+        await syncCustomerPiutang(supabase, affectedCustomers);
       }
 
       return res.json({ header: headerRow, details: savedDetails });
@@ -798,6 +1013,11 @@ export function registerErpApiRoutes(app: Express): void {
         }
       }
 
+      const poKodes = (savedDetails || []).map((d: any) => d.kode).filter(Boolean);
+      if (poKodes.length > 0) {
+        await syncMasterBarangQtyPo(supabase, poKodes);
+      }
+
       return res.json({ header: headerRow, details: savedDetails });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan Purchase Order.' });
@@ -921,8 +1141,16 @@ export function registerErpApiRoutes(app: Express): void {
         headerRow.no_po || '',
       ]);
 
-      // 3. Sync HPP Pembelian
+      // 3. Sync HPP Pembelian & Master Barang Qty.PO & Supplier Hutang
       await syncPembelianToHpp(supabase, headerRow);
+      await syncMasterBarangQtyPo(
+        supabase,
+        [...oldDetails.map((d: any) => d.kode), ...savedDetails.map((d: any) => d.kode)]
+      );
+      await syncSupplierHutang(supabase, [
+        oldHeader?.nama_supplier || '',
+        headerRow?.nama_supplier || '',
+      ]);
 
       return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
@@ -1038,6 +1266,10 @@ export function registerErpApiRoutes(app: Express): void {
         }
       }
       await adjustMasterBarangStockAndCost(supabase, stockDelta);
+      await syncSupplierHutang(supabase, [
+        oldHeader?.nama_supplier || '',
+        headerRow?.nama_supplier || '',
+      ]);
 
       return res.json({ header: headerRow, details: savedDetails, detailWarning });
     } catch (err: any) {
@@ -1179,6 +1411,11 @@ export function registerErpApiRoutes(app: Express): void {
         savedDetails = detData || [];
       }
 
+      const soKodes = (savedDetails || []).map((d: any) => d.kode).filter(Boolean);
+      if (soKodes.length > 0) {
+        await syncMasterBarangQtySo(supabase, soKodes);
+      }
+
       return res.json({ header: headerRow, details: savedDetails });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Gagal menyimpan Sales Order.' });
@@ -1262,6 +1499,10 @@ export function registerErpApiRoutes(app: Express): void {
         } else {
           savedDetails = detData || [];
         }
+      }
+
+      if (headerRow?.nama_customer) {
+        await syncCustomerPiutang(supabase, [headerRow.nama_customer]);
       }
 
       return res.json({ header: headerRow, details: savedDetails, detailWarning });
@@ -1590,6 +1831,12 @@ export function registerErpApiRoutes(app: Express): void {
         if (oldHdr?.no_bukti) {
           await supabase.from('hpp_pembelians').delete().eq('no_bukti', oldHdr.no_bukti);
         }
+        if (oldDets && oldDets.length > 0) {
+          await syncMasterBarangQtyPo(supabase, oldDets.map((d: any) => d.kode));
+        }
+        if (oldHdr?.nama_supplier) {
+          await syncSupplierHutang(supabase, [oldHdr.nama_supplier]);
+        }
         return res.json({ ok: true });
       }
 
@@ -1617,19 +1864,24 @@ export function registerErpApiRoutes(app: Express): void {
           }
           await adjustMasterBarangStockAndCost(supabase, stockDelta);
         }
+        if (oldHdr?.nama_supplier) {
+          await syncSupplierHutang(supabase, [oldHdr.nama_supplier]);
+        }
         return res.json({ ok: true });
       }
 
       if (table === 'giro_pembelian_headers' && matchCol === 'id') {
         let oldRefs: Array<{ refType: string; noRef: string }> = [];
+        let oldSuppliers: string[] = [];
         try {
           const { data: oldDets } = await supabase
             .from('giro_pembelian_details')
-            .select('ref_type, no_ref')
+            .select('ref_type, no_ref, supplier')
             .eq('header_id', id);
           oldRefs = (oldDets || [])
             .filter((d: any) => d.ref_type && d.no_ref)
             .map((d: any) => ({ refType: d.ref_type, noRef: d.no_ref }));
+          oldSuppliers = (oldDets || []).map((d: any) => d.supplier).filter(Boolean);
         } catch {}
 
         await supabase.from('giro_pembelian_details').delete().eq('header_id', id);
@@ -1638,6 +1890,69 @@ export function registerErpApiRoutes(app: Express): void {
 
         if (oldRefs.length > 0) {
           await syncGiroPembelianToHutangAndPo(supabase, oldRefs);
+        }
+        if (oldSuppliers.length > 0) {
+          await syncSupplierHutang(supabase, oldSuppliers);
+        }
+        return res.json({ ok: true });
+      }
+
+      if (table === 'purchase_orders' && matchCol === 'id') {
+        const { data: oldDets } = await supabase
+          .from('purchase_order_details')
+          .select('kode')
+          .eq('po_id', id);
+        await supabase.from('purchase_order_details').delete().eq('po_id', id);
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        if (oldDets && oldDets.length > 0) {
+          await syncMasterBarangQtyPo(supabase, oldDets.map((d: any) => d.kode));
+        }
+        return res.json({ ok: true });
+      }
+
+      if (table === 'sales_orders' && matchCol === 'id') {
+        const { data: oldDets } = await supabase
+          .from('sales_order_details')
+          .select('kode')
+          .eq('so_id', id);
+        await supabase.from('sales_order_details').delete().eq('so_id', id);
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        if (oldDets && oldDets.length > 0) {
+          await syncMasterBarangQtySo(supabase, oldDets.map((d: any) => d.kode));
+        }
+        return res.json({ ok: true });
+      }
+
+      if (table === 'faktur_penjualans' && matchCol === 'id') {
+        const { data: oldHdr } = await supabase
+          .from('faktur_penjualans')
+          .select('nama_customer')
+          .eq('id', id)
+          .single();
+        try {
+          await supabase.from('faktur_penjualan_details').delete().eq('faktur_id', id);
+        } catch {}
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        if (oldHdr?.nama_customer) {
+          await syncCustomerPiutang(supabase, [oldHdr.nama_customer]);
+        }
+        return res.json({ ok: true });
+      }
+
+      if (table === 'giro_penjualan_headers' && matchCol === 'id') {
+        const { data: oldDets } = await supabase
+          .from('giro_penjualan_details')
+          .select('customer')
+          .eq('header_id', id);
+        await supabase.from('giro_penjualan_details').delete().eq('header_id', id);
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        const custs = (oldDets || []).map((d: any) => d.customer).filter(Boolean);
+        if (custs.length > 0) {
+          await syncCustomerPiutang(supabase, custs);
         }
         return res.json({ ok: true });
       }

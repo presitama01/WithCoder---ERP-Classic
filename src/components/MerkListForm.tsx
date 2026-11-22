@@ -7,6 +7,8 @@ import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import { cascadeMasterRename, checkMasterUsage } from '../lib/masterValidation';
 
 export interface MerkItem {
   id: string;
@@ -34,6 +36,7 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<MerkItem | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -136,17 +139,32 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
     setIsAddOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = () => {
+    const item = merks.find((m) => m.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    setConfirmDeleteItem(item);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteItem) return;
     try {
       setIsBusy(true);
-      await erpDelete('master_merks', selectedId);
-      const updated = merks.filter((m) => m.id !== selectedId);
+      const usageMsg = await checkMasterUsage([
+        { table: 'master_barangs', label: 'Master Barang', eq: { merk: confirmDeleteItem.namaMerk } },
+      ]);
+      if (usageMsg) {
+        setConfirmDeleteItem(null);
+        showFeedback(usageMsg);
+        return;
+      }
+      await erpDelete('master_merks', confirmDeleteItem.id);
+      const updated = merks.filter((m) => m.id !== confirmDeleteItem.id);
       setMerks(updated);
       setSelectedId(updated[0]?.id || '');
+      setConfirmDeleteItem(null);
       showFeedback('Data dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
@@ -158,29 +176,46 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode dan Nama Merk wajib diisi.');
+      return;
+    }
+    const dupKode = merks.find((m) => m.kode.toUpperCase() === cleanKode && m.id !== editingId);
+    if (dupKode) {
+      setModalError(`Kode Merk [${cleanKode}] sudah digunakan.`);
       return;
     }
 
     try {
       setIsBusy(true);
       const payload = {
-        kode: newKode.trim().toUpperCase(),
-        nama_merk: newNama.trim().toUpperCase(),
+        kode: cleanKode,
+        nama_merk: cleanNama,
       };
       if (editingId) {
+        const prevItem = merks.find((m) => m.id === editingId);
         const saved = await erpUpdate<any>('master_merks', editingId, payload);
-        setMerks(
-          merks.map((m) =>
-            m.id === editingId ? { id: saved.id, kode: saved.kode, namaMerk: saved.nama_merk } : m
-          )
+        if (prevItem && prevItem.namaMerk.toUpperCase() !== cleanNama) {
+          await cascadeMasterRename('master_barangs', 'merk', prevItem.namaMerk, {
+            merk: cleanNama,
+          });
+        }
+        setMerks((prev) =>
+          prev
+            .map((m) =>
+              m.id === editingId ? { id: saved.id, kode: saved.kode, namaMerk: saved.nama_merk } : m
+            )
+            .sort((a, b) => a.namaMerk.localeCompare(b.namaMerk))
         );
         showFeedback('Data diperbarui');
       } else {
         const saved = await erpCreate<any>('master_merks', payload);
         const newItem: MerkItem = { id: saved.id, kode: saved.kode, namaMerk: saved.nama_merk };
-        setMerks([newItem, ...merks]);
+        setMerks((prev) =>
+          [...prev, newItem].sort((a, b) => a.namaMerk.localeCompare(b.namaMerk))
+        );
         setSelectedId(newItem.id);
         showFeedback('Data tersimpan');
       }
@@ -267,7 +302,7 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
           onSimpan={handleToolbarSimpan}
           onBaru={handleAddNew}
           onKoreksi={handleEdit}
-          onHapus={handleDelete}
+          onHapus={handleRequestDelete}
           onPrint={() => setIsPrintOpen(true)}
           onFind={handleFind}
           isBusy={isBusy}
@@ -291,13 +326,13 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
         />
       </div>
 
-      <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8]">
-        <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-white shadow-inner">
+      <div className="flex-1 flex flex-col p-2 overflow-hidden bg-[#ECE9D8] min-h-[200px]">
+        <div className="flex-1 flex flex-col border border-[#7F9DB9] bg-white shadow-inner min-h-0">
           <div className="h-[20px] bg-[#ECE9D8] border-b border-[#ACA899] flex items-center justify-center text-[11px] font-bold text-black">
             List
           </div>
 
-          <div className="flex-1 overflow-y-scroll overflow-x-hidden bg-[#F0EDE2] custom-scrollbar">
+          <div className="flex-1 overflow-auto bg-[#F0EDE2] custom-scrollbar">
             <table className="w-full border-collapse text-[11px] font-sans select-none">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
@@ -477,6 +512,15 @@ export const MerkListForm: React.FC<MerkListFormProps> = ({ isOpen, onClose }) =
               ]
             : undefined
         }
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(confirmDeleteItem)}
+        message={`Hapus Merk [${confirmDeleteItem?.kode} - ${confirmDeleteItem?.namaMerk}]?`}
+        detail="Sistem akan memeriksa apakah Merk masih dipakai pada Master Barang sebelum menghapus."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteItem(null)}
       />
     </div>
   );

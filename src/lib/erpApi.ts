@@ -16,6 +16,7 @@ export interface CompanyProfileData {
   ppn_value: number;
   wirajaya: boolean;
   backup: boolean;
+  logo_url?: string;
 }
 
 export const FALLBACK_COMPANY_PROFILE: CompanyProfileData = {
@@ -33,6 +34,7 @@ export const FALLBACK_COMPANY_PROFILE: CompanyProfileData = {
   ppn_value: 0,
   wirajaya: true,
   backup: true,
+  logo_url: '',
 };
 
 export interface ErpQueryOptions {
@@ -301,6 +303,25 @@ export async function fetchActiveCompanyProfile(): Promise<CompanyProfileData> {
     // Fallback gracefully
   }
   return FALLBACK_COMPANY_PROFILE;
+}
+
+export function getDefaultCompanyPpn(profile?: CompanyProfileData | null): number {
+  if (!profile) return 11;
+  return profile.ppn_active ? Math.max(0, Number(profile.ppn_value || 0)) : 0;
+}
+
+export async function fetchDefaultPpnRate(): Promise<number> {
+  const profile = await fetchActiveCompanyProfile();
+  return getDefaultCompanyPpn(profile);
+}
+
+export function addDaysToIsoDate(isoDate: string, days: number): string {
+  const base = toIsoDate(isoDate) || todayIso();
+  const safeDays = Math.max(0, Math.round(Number(days || 0)));
+  if (safeDays === 0) return base;
+  const [y, m, d] = base.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + safeDays));
+  return dt.toISOString().slice(0, 10);
 }
 
 export async function syncAppSettings(patch: {

@@ -8,6 +8,7 @@ import {
   erpDelete,
   erpList,
   fetchActiveCompanyProfile,
+  fetchDefaultPpnRate,
   formatMoney,
   formatRupiah,
   nextUniqueCode,
@@ -65,6 +66,9 @@ export interface SalesOrderDetailItem {
 interface MasterCustomerOption {
   namaCustomer: string;
   sales: string;
+  ppn: boolean;
+  limitKredit: number;
+  piutang: number;
 }
 
 interface PurchaseOrderOption {
@@ -188,6 +192,10 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const [customerOptions, setCustomerOptions] = useState<MasterCustomerOption[]>([]);
   const [salesOptions, setSalesOptions] = useState<string[]>([]);
+  const [salesLimitMap, setSalesLimitMap] = useState<Record<string, number>>({});
+  const [defaultCompanyPpn, setDefaultCompanyPpn] = useState<number>(11);
+  const [overrideCreditLimit, setOverrideCreditLimit] = useState<boolean>(false);
+  const [showCreditOverrideBox, setShowCreditOverrideBox] = useState<boolean>(false);
   const [poOptions, setPoOptions] = useState<PurchaseOrderOption[]>([]);
   const [lokasiOptions, setLokasiOptions] = useState<string[]>([]);
   const [barangOptions, setBarangOptions] = useState<MasterBarangOption[]>([]);
@@ -229,25 +237,35 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
     if (custRes.status === 'fulfilled') {
       const custMap = new Map<string, MasterCustomerOption>();
-      for (const c of custRes.value) {
+      for (const c of custRes.value.filter((row: any) => row.is_active !== false)) {
         const namaCustomer = String(c.nama_customer || '').trim().toUpperCase();
         if (!namaCustomer) continue;
         custMap.set(namaCustomer, {
           namaCustomer,
           sales: String(c.sales || '').trim().toUpperCase(),
+          ppn: c.ppn !== false,
+          limitKredit: Math.max(0, Number(c.limit_kredit || 0)),
+          piutang: Math.max(0, Number(c.piutang || 0)),
         });
       }
       setCustomerOptions(Array.from(custMap.values()));
     }
 
     if (salesRes.status === 'fulfilled') {
+      const sLimit: Record<string, number> = {};
       const uniqueSales = Array.from(
         new Set(
           salesRes.value
-            .map((s: any) => String(s.nama_sales || '').trim().toUpperCase())
+            .filter((s: any) => s.is_active !== false)
+            .map((s: any) => {
+              const nm = String(s.nama_sales || '').trim().toUpperCase();
+              if (nm) sLimit[nm] = Math.max(0, Number(s.limit_kredit || 0));
+              return nm;
+            })
             .filter(Boolean)
         )
       );
+      setSalesLimitMap(sLimit);
       setSalesOptions(uniqueSales);
     }
 
@@ -265,9 +283,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     }
 
     if (lokasiRes.status === 'fulfilled') {
+      const sortedLok = [...lokasiRes.value]
+        .filter((l: any) => l.is_active !== false)
+        .sort((a: any, b: any) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0));
       const lokasis = Array.from(
         new Set(
-          lokasiRes.value
+          sortedLok
             .map((l: any) => {
               const kode = String(l.kode || '').trim().toUpperCase();
               const nama = String(l.nama_lokasi || '').trim().toUpperCase();
@@ -278,10 +299,12 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         )
       );
       setLokasiOptions(lokasis);
+      return { defaultLokasi: lokasis[0] || '01 - OFFICE' };
     }
 
     if (barangRes.status === 'fulfilled') {
       const mappedBarangs: MasterBarangOption[] = barangRes.value
+        .filter((b: any) => b.is_active !== false)
         .map((b: any) => ({
           kode: String(b.kode || '').trim().toUpperCase(),
           namaBarang: String(b.nama_barang || '').trim(),
@@ -292,6 +315,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         .filter((b: MasterBarangOption) => b.kode);
       setBarangOptions(mappedBarangs);
     }
+    return { defaultLokasi: lokasiOptions[0] || '01 - OFFICE' };
   };
 
   const SEARCH_FIELD_TO_DB_COL: Record<string, string> = {
@@ -595,9 +619,15 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
 
   const handleSelectCustomer = (customerName: string) => {
     setNewCustomer(customerName);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     const foundCust = customerOptions.find((c) => c.namaCustomer === customerName);
-    if (foundCust?.sales && !newSales.trim()) {
-      setNewSales(foundCust.sales);
+    if (foundCust) {
+      if (foundCust.sales) {
+        setNewSales(foundCust.sales);
+      }
+      const nextPpnPct = foundCust.ppn ? defaultCompanyPpn : 0;
+      handlePpnPercentChange(String(nextPpnPct));
     }
   };
 
@@ -606,6 +636,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(null);
     setModalError(null);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     setNewNoBukti(nextUniqueCode(soList.map((s) => s.noBukti), '2608-SO-', 3));
     setNewTanggal(todayDisp);
     setNewCustomer('');
@@ -616,7 +648,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewTglKirim(todayDisp);
     setNewPersen('0');
     setNewKeterangan('');
-    setNewPpn('11');
+    setNewPpn(String(defaultCompanyPpn));
     setNewNilaiPpn('0');
     setPpnManualOverride(false);
     setNewSoClose('Not Yet');
@@ -627,7 +659,13 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     setNewTglUpdate('');
     setDetailRows([createBlankDetailRow(1)]);
     setIsAddOpen(true);
-    await loadMasterReferences();
+    const [defPpn, refInfo] = await Promise.all([
+      fetchDefaultPpnRate(),
+      loadMasterReferences(),
+    ]);
+    setDefaultCompanyPpn(defPpn);
+    setNewPpn(String(defPpn));
+    if (refInfo?.defaultLokasi) setNewLokasiStock(refInfo.defaultLokasi);
   };
 
   const handleEdit = async () => {
@@ -640,6 +678,8 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
     const todayDisp = toDisplayDMyShort(todayIso());
     setEditingId(item.id);
     setModalError(null);
+    setOverrideCreditLimit(false);
+    setShowCreditOverrideBox(false);
     setNewNoBukti(item.noBukti);
     setNewTanggal(item.tanggal || todayDisp);
     setNewCustomer(item.namaCustomer);
@@ -713,6 +753,29 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
         const calc = calcPpnDeduction(totalFromDetails, ppnPct);
         finalNilaiPpn = calc.nominalPpn;
         finalNilaiSo = calc.netNilaiSo;
+      }
+    }
+
+    if (!overrideCreditLimit) {
+      const custMeta = customerOptions.find((c) => c.namaCustomer === newCustomer.trim().toUpperCase());
+      if (custMeta && custMeta.limitKredit > 0 && custMeta.piutang + finalNilaiSo > custMeta.limitKredit) {
+        setShowCreditOverrideBox(true);
+        setModalError(
+          `Peringatan Limit Kredit Customer: Piutang (${formatRupiah(custMeta.piutang)}) + Nilai SO (${formatRupiah(
+            finalNilaiSo
+          )}) melebihi Limit Kredit (${formatRupiah(custMeta.limitKredit)}). Centang "Abaikan batas limit kredit" jika tetap ingin menyimpan.`
+        );
+        return;
+      }
+      const salesLimit = salesLimitMap[newSales.trim().toUpperCase()] || 0;
+      if (salesLimit > 0 && finalNilaiSo > salesLimit) {
+        setShowCreditOverrideBox(true);
+        setModalError(
+          `Peringatan Limit Kredit Sales (${newSales.trim().toUpperCase()}): Nilai SO (${formatRupiah(
+            finalNilaiSo
+          )}) melebihi Limit (${formatRupiah(salesLimit)}). Centang "Abaikan batas limit kredit" jika tetap ingin menyimpan.`
+        );
+        return;
       }
     }
 
@@ -1662,8 +1725,18 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
               </div>
 
               {modalError && (
-                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold">
-                  ⚠ {modalError}
+                <div className="bg-[#FFF0F0] border border-[#C00000] text-[#900000] px-2.5 py-1.5 text-[11px] font-semibold space-y-1">
+                  <div>⚠ {modalError}</div>
+                  {showCreditOverrideBox && (
+                    <label className="inline-flex items-center gap-1.5 text-[11px] text-black font-normal cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={overrideCreditLimit}
+                        onChange={(e) => setOverrideCreditLimit(e.target.checked)}
+                      />
+                      Abaikan batas limit kredit dan tetap simpan Sales Order ini
+                    </label>
+                  )}
                 </div>
               )}
               <div className="flex justify-end space-x-2 pt-2 border-t border-[#D4D0C8]">

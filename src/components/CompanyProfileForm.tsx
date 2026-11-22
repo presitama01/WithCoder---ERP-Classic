@@ -17,6 +17,8 @@ import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import { isMissingColumnError, isValidEmail } from '../lib/masterValidation';
 
 interface CompanyProfileFormProps {
   isOpen: boolean;
@@ -35,6 +37,7 @@ interface CompanyFormState {
   phone: string;
   fax: string;
   mail: string;
+  logoUrl: string;
   ppnActive: boolean;
   ppnValue: string;
   wirajaya: boolean;
@@ -54,6 +57,7 @@ function mapDbToForm(row: CompanyProfileData): CompanyFormState {
     phone: row.phone || '',
     fax: row.fax || '',
     mail: row.mail || '',
+    logoUrl: row.logo_url || '',
     ppnActive: Boolean(row.ppn_active),
     ppnValue: String(row.ppn_value ?? 0),
     wirajaya: Boolean(row.wirajaya),
@@ -178,9 +182,18 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
       companyNameRef.current?.focus();
       return;
     }
+    if (!isValidEmail(formData.mail)) {
+      showFeedback('Format email perusahaan tidak valid');
+      return;
+    }
+    const ppnNum = Number(formData.ppnValue) || 0;
+    if (ppnNum < 0 || ppnNum > 100) {
+      showFeedback('Persentase PPN harus antara 0% sampai 100%');
+      return;
+    }
     try {
       setIsBusy(true);
-      const payload: Partial<CompanyProfileData> = {
+      const basePayload: Partial<CompanyProfileData> = {
         profile_code: formData.profileCode.trim() || '01',
         company_name: formData.companyName.trim().toUpperCase(),
         no_npwp: formData.noNpwp.trim(),
@@ -192,18 +205,37 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         fax: formData.fax.trim(),
         mail: formData.mail.trim(),
         ppn_active: formData.ppnActive,
-        ppn_value: Number(formData.ppnValue) || 0,
+        ppn_value: ppnNum,
         wirajaya: formData.wirajaya,
         backup: formData.backup,
       };
-      const saved = await erpUpsert<CompanyProfileData>(
-        'company_profiles',
-        payload,
-        'profile_code'
-      );
+      let saved: CompanyProfileData;
+      let usedFallback = false;
+      try {
+        saved = await erpUpsert<CompanyProfileData>(
+          'company_profiles',
+          { ...basePayload, logo_url: formData.logoUrl.trim() },
+          'profile_code'
+        );
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await erpUpsert<CompanyProfileData>(
+            'company_profiles',
+            basePayload,
+            'profile_code'
+          );
+        } else {
+          throw err;
+        }
+      }
       setFormData(mapDbToForm(saved));
       await loadProfiles(saved.profile_code);
-      showFeedback('Company Profile tersimpan ke Supabase');
+      showFeedback(
+        usedFallback
+          ? 'Profil tersimpan (jalankan SQL migrasi untuk menyimpan Logo URL)'
+          : 'Company Profile tersimpan ke Supabase'
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -228,6 +260,7 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
       phone: '',
       fax: '',
       mail: '',
+      logoUrl: '',
       ppnActive: false,
       ppnValue: '0',
       wirajaya: false,
@@ -296,22 +329,6 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
 
   const handleSearchTermChange = (val: string) => {
     setSearchTerm(val);
-    if (!val.trim()) return;
-    const matched = profiles.find((p) => {
-      if (searchField === 'Kode') return matchesMultiKeyword([p.profile_code], val);
-      if (searchField === 'Company Name') return matchesMultiKeyword([p.company_name], val);
-      if (searchField === 'No. NPWP') return matchesMultiKeyword([p.no_npwp], val);
-      if (searchField === 'Alamat') return matchesMultiKeyword([p.address], val);
-      if (searchField === 'Phone') return matchesMultiKeyword([p.phone], val);
-      if (searchField === 'Email') return matchesMultiKeyword([p.mail], val);
-      return matchesMultiKeyword(
-        [p.profile_code, p.company_name, p.no_npwp, p.address, p.phone, p.mail],
-        val
-      );
-    });
-    if (matched) {
-      setFormData(mapDbToForm(matched));
-    }
   };
 
   const handleExportExcel = () => {
@@ -538,6 +555,27 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
                 />
               </div>
 
+              <div className="flex items-center gap-2">
+                <label className="w-36 text-right pr-3 font-medium">Logo URL :</label>
+                <input
+                  type="text"
+                  value={formData.logoUrl}
+                  onChange={(e) => handleChange('logoUrl', e.target.value)}
+                  placeholder="https://... atau /assets/logo.png (ditampilkan di kop surat Print)"
+                  className="border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white bg-white px-2 py-1 flex-1 text-xs outline-none focus:border-[#316AC5]"
+                />
+                {formData.logoUrl.trim() && (
+                  <img
+                    src={formData.logoUrl.trim()}
+                    alt="Preview Logo"
+                    className="h-8 w-10 object-contain border border-[#ACA899] bg-white p-0.5 shrink-0"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                )}
+              </div>
+
               <div className="flex justify-between items-center pt-3 border-t border-[#ACA899] mt-4">
                 <div className="flex items-center gap-2">
                   <input
@@ -622,39 +660,15 @@ export const CompanyProfileForm: React.FC<CompanyProfileFormProps> = ({ isOpen, 
         ]}
       />
 
-      {/* Delete Confirmation Modal */}
-      {confirmDeleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-[#ECE9D8] border-2 border-[#0055EA] shadow-xl w-[360px] overflow-hidden">
-            <div className="bg-[#0A246A] text-white px-3 py-1.5 font-bold text-xs">
-              Konfirmasi Hapus Profil Perusahaan
-            </div>
-            <div className="p-4 text-xs text-black space-y-3">
-              <p>
-                Yakin ingin menghapus profil [{formData.profileCode} - {formData.companyName}] dari
-                database Supabase?
-              </p>
-              <div className="flex justify-end space-x-2 pt-2 border-t border-[#C0C0C0]">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteId(null)}
-                  className="px-3 py-1 bg-[#ECE9D8] border border-[#7A7A7A] text-xs cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={handleConfirmHapus}
-                  className="px-3 py-1 bg-[#C00000] text-white border border-black text-xs font-bold cursor-pointer"
-                >
-                  Ya, Hapus
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={Boolean(confirmDeleteId)}
+        title="Konfirmasi Hapus Profil Perusahaan"
+        message={`Yakin ingin menghapus profil [${formData.profileCode} - ${formData.companyName}] dari database Supabase?`}
+        detail="Data profil yang dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmHapus}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
 
       <A4PrintPreviewModal
         isOpen={isPrintOpen}

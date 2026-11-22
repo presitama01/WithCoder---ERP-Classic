@@ -9,12 +9,20 @@ import {
   erpUpdate,
   fetchActiveCompanyProfile,
   formatMoney,
+  nextUniqueCode,
   parseNum,
 } from '../lib/erpApi';
 import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import {
+  cascadeMasterRename,
+  checkMasterUsage,
+  isMissingColumnError,
+  isValidEmail,
+} from '../lib/masterValidation';
 
 export interface CustomerItem {
   id: string;
@@ -45,6 +53,7 @@ export interface CustomerItem {
   delFax: string;
   piutang: number;
   piutangGiro: number;
+  isActive: boolean;
 }
 
 export interface SalesRef {
@@ -92,6 +101,7 @@ function mapDbToItem(r: any): CustomerItem {
     delFax: r.del_fax || '',
     piutang: Number(r.piutang || 0),
     piutangGiro: Number(r.piutang_giro || 0),
+    isActive: r.is_active !== false,
   };
 }
 
@@ -142,11 +152,13 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   const [newDelKota, setNewDelKota] = useState('');
   const [newDelTelepon, setNewDelTelepon] = useState('');
   const [newDelFax, setNewDelFax] = useState('');
+  const [newIsActive, setNewIsActive] = useState(true);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -158,22 +170,28 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     const [salesRes, expRes, wilRes] = await Promise.allSettled([
       erpList<any>('master_sales', { orderBy: 'kode_sales', asc: true, limit: 1000 }),
       erpList<any>('master_expedisis', { orderBy: 'kode_expedisi', asc: true, limit: 1000 }),
-      erpList<any>('master_wilayahs', { orderBy: 'kode', asc: true, limit: 1000 }),
+      erpList<any>('master_wilayahs', { orderBy: 'wilayah', asc: true, limit: 1000 }),
     ]);
 
     if (salesRes.status === 'fulfilled') {
-      const sList: SalesRef[] = salesRes.value.map((s: any) => ({
-        kodeSales: String(s.kode_sales || '').trim().toUpperCase(),
-        namaSales: String(s.nama_sales || '').trim().toUpperCase(),
-      })).filter((s: SalesRef) => s.kodeSales);
+      const sList: SalesRef[] = salesRes.value
+        .filter((s: any) => s.is_active !== false)
+        .map((s: any) => ({
+          kodeSales: String(s.kode_sales || '').trim().toUpperCase(),
+          namaSales: String(s.nama_sales || '').trim().toUpperCase(),
+        }))
+        .filter((s: SalesRef) => s.kodeSales);
       setSalesOptions(sList);
     }
 
     if (expRes.status === 'fulfilled') {
-      const eList: ExpedisiRef[] = expRes.value.map((e: any) => ({
-        kodeExpedisi: String(e.kode_expedisi || '').trim().toUpperCase(),
-        namaExpedisi: String(e.nama_expedisi || '').trim().toUpperCase(),
-      })).filter((e: ExpedisiRef) => e.kodeExpedisi);
+      const eList: ExpedisiRef[] = expRes.value
+        .filter((e: any) => e.is_active !== false)
+        .map((e: any) => ({
+          kodeExpedisi: String(e.kode_expedisi || '').trim().toUpperCase(),
+          namaExpedisi: String(e.nama_expedisi || '').trim().toUpperCase(),
+        }))
+        .filter((e: ExpedisiRef) => e.kodeExpedisi);
       setExpedisiOptions(eList);
     }
 
@@ -182,8 +200,8 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         new Set(
           wilRes.value
             .map((w: any) => {
-              const kode = String(w.kode || '').trim().toUpperCase();
-              const nama = String(w.nama_wilayah || '').trim().toUpperCase();
+              const kode = String(w.kode_wilayah || w.kode || '').trim().toUpperCase();
+              const nama = String(w.wilayah || w.nama_wilayah || '').trim().toUpperCase();
               if (kode && nama) return `${kode} - ${nama}`;
               return nama || kode;
             })
@@ -250,7 +268,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     }
     try {
       setIsBusy(true);
-      const saved = await erpUpdate<any>('master_customers', selected.id, {
+      const basePayload = {
         kode_customer: selected.kodeCustomer.trim().toUpperCase(),
         nama_customer: selected.namaCustomer.trim().toUpperCase(),
         ppn: selected.ppn,
@@ -280,10 +298,29 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         kota: selected.invKota.trim().toUpperCase(),
         phone: selected.invTelepon.trim(),
         sales: selected.namaSales.trim().toUpperCase(),
-      });
+      };
+      let saved: any;
+      let usedFallback = false;
+      try {
+        saved = await erpUpdate<any>('master_customers', selected.id, {
+          ...basePayload,
+          is_active: selected.isActive,
+        });
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await erpUpdate<any>('master_customers', selected.id, basePayload);
+        } else {
+          throw err;
+        }
+      }
       const mapped = mapDbToItem(saved);
       setCustomerList((prev) => prev.map((c) => (c.id === selected.id ? mapped : c)));
-      showFeedback(`Pelanggan [${mapped.kodeCustomer} - ${mapped.namaCustomer}] tersimpan ke Supabase`);
+      showFeedback(
+        usedFallback
+          ? `Pelanggan [${mapped.kodeCustomer}] tersimpan (jalankan SQL migrasi untuk kolom is_active)`
+          : `Pelanggan [${mapped.kodeCustomer} - ${mapped.namaCustomer}] tersimpan ke Supabase`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -318,7 +355,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   const handleAddNew = async () => {
     setEditingId(null);
     setModalError(null);
-    setNewKode('');
+    setNewKode(nextUniqueCode(customerList.map((c) => c.kodeCustomer), 'CUS', 3));
     setNewNama('');
     setNewPpn(true);
     setNewHitung(true);
@@ -326,7 +363,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     setNewAlamatNpwp('');
     setNewWilayah('');
     setNewLimitKredit('0');
-    setNewTmpPembayaran('0');
+    setNewTmpPembayaran('30');
     setNewRubahKode('');
     setNewKodeSales('');
     setNewNamaSales('');
@@ -343,6 +380,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     setNewDelKota('');
     setNewDelTelepon('');
     setNewDelFax('');
+    setNewIsActive(true);
     setIsAddOpen(true);
     await loadMasterReferences();
   };
@@ -380,22 +418,54 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
     setNewDelKota(item.delKota);
     setNewDelTelepon(item.delTelepon);
     setNewDelFax(item.delFax);
+    setNewIsActive(item.isActive !== false);
     setIsAddOpen(true);
     await loadMasterReferences();
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleCopyInvToDel = () => {
+    setNewDelAlamat(newInvAlamat);
+    setNewDelKota(newInvKota);
+    setNewDelTelepon(newInvTelepon);
+    setNewDelFax(newInvFax);
+  };
+
+  const handleRequestDelete = async () => {
+    const item = customerList.find((c) => c.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    try {
+      setIsBusy(true);
+      const usageMsg = await checkMasterUsage([
+        { table: 'sales_orders', label: 'Sales Order', eq: { nama_customer: item.namaCustomer } },
+        { table: 'faktur_penjualans', label: 'Faktur Penjualan', eq: { nama_customer: item.namaCustomer } },
+        { table: 'surat_jalans', label: 'Surat Jalan', eq: { nama_customer: item.namaCustomer } },
+        { table: 'giro_penjualan_details', label: 'Penerimaan Giro', eq: { customer: item.namaCustomer } },
+      ]);
+      if (usageMsg) {
+        showFeedback(usageMsg);
+        return;
+      }
+      setConfirmDeleteOpen(true);
+    } catch (err: any) {
+      showFeedback(`Gagal cek referensi: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedId) return;
     try {
       setIsBusy(true);
       await erpDelete('master_customers', selectedId);
       const updated = customerList.filter((c) => c.id !== selectedId);
       setCustomerList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback('Data pelanggan dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -406,23 +476,39 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode dan Nama Pelanggan wajib diisi.');
+      return;
+    }
+    if (customerList.some((c) => c.kodeCustomer.toUpperCase() === cleanKode && c.id !== editingId)) {
+      setModalError(`Kode Customer [${cleanKode}] sudah terdaftar.`);
+      return;
+    }
+    if (!isValidEmail(newEmail)) {
+      setModalError('Format email pelanggan tidak valid.');
+      return;
+    }
+    const limitVal = parseNum(newLimitKredit);
+    const tmpVal = parseInt(newTmpPembayaran, 10) || 0;
+    if (limitVal < 0 || tmpVal < 0) {
+      setModalError('Limit Kredit dan Tempo Pembayaran tidak boleh negatif.');
       return;
     }
 
     try {
       setIsBusy(true);
-      const dbPayload = {
-        kode_customer: newKode.trim().toUpperCase(),
-        nama_customer: newNama.trim().toUpperCase(),
+      const basePayload = {
+        kode_customer: cleanKode,
+        nama_customer: cleanNama,
         ppn: newPpn,
         hitung: newHitung,
         npwp: newNpwp.trim(),
         alamat_npwp: newAlamatNpwp.trim(),
         wilayah: newWilayah.trim().toUpperCase(),
-        limit_kredit: parseNum(newLimitKredit),
-        tmp_pembayaran: parseInt(newTmpPembayaran) || 0,
+        limit_kredit: limitVal,
+        tmp_pembayaran: tmpVal,
         rubah_kode: newRubahKode.trim().toUpperCase(),
         kode_sales: newKodeSales.trim().toUpperCase(),
         nama_sales: newNamaSales.trim().toUpperCase(),
@@ -444,17 +530,52 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         phone: newInvTelepon.trim(),
         sales: newNamaSales.trim().toUpperCase(),
       };
+      const fullPayload = { ...basePayload, is_active: newIsActive };
+      let saved: any;
+      let usedFallback = false;
+      const saveFn = async (payload: Record<string, any>) =>
+        editingId
+          ? erpUpdate<any>('master_customers', editingId, payload)
+          : erpCreate<any>('master_customers', payload);
+      try {
+        saved = await saveFn(fullPayload);
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await saveFn(basePayload);
+        } else {
+          throw err;
+        }
+      }
+      const mapped = mapDbToItem(saved);
       if (editingId) {
-        const saved = await erpUpdate<any>('master_customers', editingId, dbPayload);
-        const mapped = mapDbToItem(saved);
-        setCustomerList(customerList.map((c) => (c.id === editingId ? mapped : c)));
-        showFeedback('Data diperbarui');
+        const prevItem = customerList.find((c) => c.id === editingId);
+        setCustomerList((prev) =>
+          prev
+            .map((c) => (c.id === editingId ? mapped : c))
+            .sort((a, b) => a.kodeCustomer.localeCompare(b.kodeCustomer))
+        );
+        if (prevItem && prevItem.namaCustomer !== mapped.namaCustomer) {
+          await Promise.all([
+            cascadeMasterRename('sales_orders', 'nama_customer', prevItem.namaCustomer, { nama_customer: mapped.namaCustomer }),
+            cascadeMasterRename('faktur_penjualans', 'nama_customer', prevItem.namaCustomer, { nama_customer: mapped.namaCustomer }),
+            cascadeMasterRename('surat_jalans', 'nama_customer', prevItem.namaCustomer, { nama_customer: mapped.namaCustomer }),
+            cascadeMasterRename('giro_penjualan_details', 'customer', prevItem.namaCustomer, { customer: mapped.namaCustomer }),
+          ]);
+        }
+        showFeedback(
+          usedFallback
+            ? 'Data diperbarui (jalankan SQL migrasi untuk kolom is_active)'
+            : 'Data diperbarui'
+        );
       } else {
-        const saved = await erpCreate<any>('master_customers', dbPayload);
-        const mapped = mapDbToItem(saved);
-        setCustomerList([mapped, ...customerList]);
+        setCustomerList((prev) => [mapped, ...prev].sort((a, b) => a.kodeCustomer.localeCompare(b.kodeCustomer)));
         setSelectedId(mapped.id);
-        showFeedback('Data tersimpan');
+        showFeedback(
+          usedFallback
+            ? 'Data tersimpan (jalankan SQL migrasi untuk kolom is_active)'
+            : 'Data tersimpan'
+        );
       }
       setIsAddOpen(false);
       setEditingId(null);
@@ -513,12 +634,17 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         { header: 'Kode', accessor: 'kodeCustomer' },
         { header: 'Nama Pelanggan', accessor: 'namaCustomer' },
         { header: 'Limit Kredit', accessor: 'limitKredit', align: 'right' },
+        { header: 'Piutang', accessor: 'piutang', align: 'right' },
+        { header: 'Piutang Giro', accessor: 'piutangGiro', align: 'right' },
+        { header: 'Tempo (Hari)', accessor: 'tmpPembayaran', align: 'right' },
+        { header: 'Wilayah', accessor: 'wilayah' },
         { header: 'Alamat', accessor: 'invAlamat' },
         { header: 'Kota', accessor: 'invKota' },
         { header: 'Phone', accessor: 'invTelepon' },
         { header: 'Email', accessor: 'email' },
         { header: 'Sales', accessor: 'namaSales' },
         { header: 'Expedisi', accessor: 'namaExpedisi' },
+        { header: 'Status', accessor: (r) => (r.isActive ? 'AKTIF' : 'NON-AKTIF') },
       ],
       rows: filteredCustomer,
     });
@@ -571,7 +697,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={handleDelete}
+            onHapus={handleRequestDelete}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -610,30 +736,34 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
           />
         </div>
 
-        <div className="flex-1 overflow-auto bg-white m-2 border border-[#ACA899] shadow-inner">
+        <div className="flex-1 overflow-auto bg-white mx-2 mt-2 border border-[#ACA899] shadow-inner">
           <div className="min-w-max">
             <table className="w-full text-left text-[11px] border-collapse select-none">
               <thead className="sticky top-0 bg-[#ECE9D8] text-black font-semibold border-b border-[#ACA899]">
                 <tr className="h-[24px]">
                   <th className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0" />
-                  <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
-                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">NPWP</th>
-                  <th className="w-[200px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Customer</th>
-                  <th className="w-[180px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat Kirim</th>
-                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
-                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Wilayah Area</th>
-                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit Kredit</th>
-                  <th className="w-[130px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Contact Person</th>
+                  <th className="w-[85px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode</th>
+                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">NPWP</th>
+                  <th className="w-[195px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Customer</th>
+                  <th className="w-[175px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Alamat Kirim</th>
+                  <th className="w-[100px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kota</th>
+                  <th className="w-[115px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Wilayah Area</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Limit Kredit</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Piutang</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 text-right font-bold bg-[#ECE9D8]">Piutang Giro</th>
+                  <th className="w-[65px] border-r border-[#ACA899] px-2 py-0.5 text-center font-bold bg-[#ECE9D8]">Tempo</th>
+                  <th className="w-[120px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Contact Person</th>
                   <th className="w-[140px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Email</th>
-                  <th className="w-[110px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Handphone</th>
-                  <th className="w-[90px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Kode Sales</th>
-                  <th className="w-[130px] px-2 py-0.5 font-bold bg-[#ECE9D8]">Nama Sales</th>
+                  <th className="w-[105px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Handphone</th>
+                  <th className="w-[125px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Sales</th>
+                  <th className="w-[125px] border-r border-[#ACA899] px-2 py-0.5 font-bold bg-[#ECE9D8]">Expedisi</th>
+                  <th className="w-[75px] px-2 py-0.5 text-center font-bold bg-[#ECE9D8]">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredCustomer.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="text-center py-6 text-gray-500 italic">
+                    <td colSpan={17} className="text-center py-6 text-gray-500 italic">
                       Tidak ada data pelanggan yang cocok
                     </td>
                   </tr>
@@ -646,7 +776,11 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                         onClick={() => setSelectedId(item.id)}
                         onDoubleClick={handleEdit}
                         className={`h-[22px] border-b border-[#ACA899] cursor-pointer ${
-                          isSelected ? 'bg-[#0A246A] text-white' : 'bg-white hover:bg-[#E8EEF8]'
+                          isSelected
+                            ? 'bg-[#0A246A] text-white'
+                            : !item.isActive
+                            ? 'bg-[#F3F3F3] text-gray-500 hover:bg-[#E8EEF8]'
+                            : 'bg-white hover:bg-[#E8EEF8]'
                         }`}
                       >
                         <td className="w-[20px] min-w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] text-center p-0">
@@ -659,17 +793,32 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.delKota || item.invKota}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.wilayah}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{formatMoney(item.limitKredit)}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{formatMoney(item.piutang)}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-right font-mono">{formatMoney(item.piutangGiro)}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] text-center font-mono">{item.tmpPembayaran} hr</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.cpNama}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.email}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.handphone}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899] font-mono">{item.kodeSales}</td>
-                        <td className="px-2 py-0.5">{item.namaSales || item.sales}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.namaSales || '-'}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.namaExpedisi || '-'}</td>
+                        <td className="px-2 py-0.5 text-center text-[10px] font-bold">
+                          {item.isActive ? 'AKTIF' : 'NON-AKTIF'}
+                        </td>
                       </tr>
                     );
                   })
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center justify-between px-3 py-1.5 text-[11px] font-sans">
+          <div className="w-[450px] max-w-[60vw] truncate h-[22px] bg-white border-2 border-t-[#808080] border-l-[#808080] border-b-white border-r-white px-2 flex items-center text-gray-700">
+            {selectedCustomer ? `Pelanggan Terpilih: ${selectedCustomer.kodeCustomer} - ${selectedCustomer.namaCustomer}` : ''}
+          </div>
+          <div className="flex items-center space-x-6 text-[12px] font-bold text-black pr-16">
+            <span>Record</span>
+            <span className="font-mono">{filteredCustomer.length}</span>
           </div>
         </div>
       </div>
@@ -715,6 +864,14 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                         />
                         <span>Hitung</span>
                       </label>
+                      <label className="flex items-center space-x-1 cursor-pointer font-bold">
+                        <input
+                          type="checkbox"
+                          checked={newIsActive}
+                          onChange={(e) => setNewIsActive(e.target.checked)}
+                        />
+                        <span>Aktif</span>
+                      </label>
                     </div>
                   </div>
 
@@ -754,10 +911,12 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                     <select
                       value={newWilayah}
                       onChange={(e) => setNewWilayah(e.target.value)}
-                      className="w-36 h-[22px] bg-white border border-[#7F9DB9] px-1 uppercase cursor-pointer"
+                      className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-1 uppercase cursor-pointer"
                     >
                       <option value="">-- Pilih Wilayah --</option>
-                      {wilayahOptions.map((w) => (
+                      {Array.from(
+                        new Set([...wilayahOptions, newWilayah.trim().toUpperCase()].filter(Boolean))
+                      ).map((w) => (
                         <option key={w} value={w}>{w}</option>
                       ))}
                     </select>
@@ -767,6 +926,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                     <label className="w-28 font-semibold">Limit Kredit :</label>
                     <input
                       type="number"
+                      min="0"
                       value={newLimitKredit}
                       onChange={(e) => setNewLimitKredit(e.target.value)}
                       className="w-36 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
@@ -777,6 +937,7 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                     <label className="w-28 font-semibold">Tmp Pembayaran :</label>
                     <input
                       type="number"
+                      min="0"
                       value={newTmpPembayaran}
                       onChange={(e) => setNewTmpPembayaran(e.target.value)}
                       className="w-16 h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-center"
@@ -793,6 +954,22 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
                       className="w-32 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase"
                     />
                   </div>
+                  {editingId && (
+                    <div className="grid grid-cols-2 gap-2 pt-1 text-[10px] border-t border-[#ACA899]">
+                      <div>
+                        <span className="font-semibold text-gray-600">Piutang (Auto):</span>{' '}
+                        <span className="font-mono font-bold text-[#0A246A]">
+                          Rp {formatMoney(selectedCustomer?.piutang || 0)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-600">Piutang Giro (Auto):</span>{' '}
+                        <span className="font-mono font-bold text-[#0A246A]">
+                          Rp {formatMoney(selectedCustomer?.piutangGiro || 0)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </fieldset>
 
                 {/* Right Box: Sales, Expedisi, Contact Person */}
@@ -933,7 +1110,16 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
 
                 {/* Delivery Address */}
                 <fieldset className="border border-[#7F9DB9] p-2 rounded bg-[#ECE9D8] space-y-1.5">
-                  <legend className="font-bold px-1 text-black">Delivery Address</legend>
+                  <legend className="font-bold px-1 text-black flex items-center gap-2">
+                    <span>Delivery Address</span>
+                    <button
+                      type="button"
+                      onClick={handleCopyInvToDel}
+                      className="px-1.5 py-0.5 text-[10px] font-semibold bg-white border border-[#7F9DB9] hover:bg-[#EAF2FC] text-[#0A246A] rounded-[2px] cursor-pointer"
+                    >
+                      Salin dari Invoice
+                    </button>
+                  </legend>
                   <div className="flex items-center space-x-2">
                     <label className="w-20 font-semibold">Alamat :</label>
                     <input
@@ -1050,6 +1236,16 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         ]}
       />
 
+      <ConfirmDialog
+        isOpen={confirmDeleteOpen}
+        title="Konfirmasi Hapus Master Pelanggan"
+        message={`Yakin ingin menghapus Pelanggan [${selectedCustomer?.kodeCustomer || ''} - ${selectedCustomer?.namaCustomer || ''}]?`}
+        detail="Data yang sudah dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
@@ -1057,20 +1253,30 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         subtitle={`Total Record: ${filteredCustomer.length}`}
         orientation="landscape"
         columns={[
-          { header: 'Kode', accessor: 'kodeCustomer', width: '78px' },
-          { header: 'Nama Pelanggan', accessor: 'namaCustomer' },
-          { header: 'Limit Kredit', accessor: (r) => formatMoney(r.limitKredit), align: 'right', width: '95px' },
+          { header: 'Kode', accessor: 'kodeCustomer', width: '68px' },
+          { header: 'Nama Pelanggan', accessor: 'namaCustomer', width: '130px' },
+          { header: 'Limit Kredit', accessor: (r) => formatMoney(r.limitKredit), align: 'right', width: '82px' },
+          { header: 'Piutang', accessor: (r) => formatMoney(r.piutang), align: 'right', width: '82px' },
+          { header: 'Piutang Giro', accessor: (r) => formatMoney(r.piutangGiro), align: 'right', width: '82px' },
           { header: 'Alamat Invoice', accessor: 'invAlamat' },
-          { header: 'Kota', accessor: 'invKota', width: '85px' },
-          { header: 'Phone', accessor: 'invTelepon', width: '90px' },
-          { header: 'Sales', accessor: 'namaSales', width: '110px' },
-          { header: 'Expedisi', accessor: 'namaExpedisi', width: '110px' },
+          { header: 'Kota', accessor: 'invKota', width: '75px' },
+          { header: 'Phone', accessor: 'invTelepon', width: '80px' },
+          { header: 'Sales', accessor: 'namaSales', width: '95px' },
+          { header: 'Expedisi', accessor: 'namaExpedisi', width: '95px' },
         ]}
         rows={filteredCustomer}
         summaryItems={[
           {
             label: 'Total Limit Kredit',
             value: formatMoney(filteredCustomer.reduce((a, b) => a + b.limitKredit, 0)),
+          },
+          {
+            label: 'Total Piutang',
+            value: formatMoney(filteredCustomer.reduce((a, b) => a + b.piutang, 0)),
+          },
+          {
+            label: 'Total Piutang Giro',
+            value: formatMoney(filteredCustomer.reduce((a, b) => a + b.piutangGiro, 0)),
           },
         ]}
         selectedRow={selectedCustomer}
@@ -1090,7 +1296,10 @@ export const MasterCustomerListForm: React.FC<MasterCustomerListFormProps> = ({
         }
         selectedSummaryItems={
           selectedCustomer
-            ? [{ label: 'Limit Kredit', value: formatMoney(selectedCustomer.limitKredit) }]
+            ? [
+                { label: 'Limit Kredit', value: formatMoney(selectedCustomer.limitKredit) },
+                { label: 'Piutang', value: formatMoney(selectedCustomer.piutang) },
+              ]
             : undefined
         }
       />

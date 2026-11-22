@@ -16,6 +16,14 @@ import { exportToExcel } from '../lib/exportExcel';
 import { SupabaseFindModal } from './SupabaseFindModal';
 import { ToolbarSearchControl } from './ToolbarSearchControl';
 import { matchesMultiKeyword } from '../lib/searchUtils';
+import { ConfirmDialog } from './ConfirmDialog';
+import {
+  cascadeMasterRename,
+  checkMasterUsage,
+  isMissingColumnError,
+} from '../lib/masterValidation';
+
+const UNIT_OPTIONS = ['PCS', 'SET', 'UNIT', 'BOX', 'KG', 'MTR', 'LTR', 'ROLL', 'PACK', 'DUS', 'LSN'];
 
 export interface BarangItem {
   id: string;
@@ -33,6 +41,7 @@ export interface BarangItem {
   qtyPo: number;
   qtySo: number;
   notPrint: boolean;
+  isActive: boolean;
 }
 
 interface MasterBarangListFormProps {
@@ -61,6 +70,7 @@ function mapDbToItem(r: any): BarangItem {
     qtyPo: Number(r.qty_po || 0),
     qtySo: Number(r.qty_so || 0),
     notPrint: Boolean(r.not_print),
+    isActive: r.is_active !== false,
   };
 }
 
@@ -94,11 +104,14 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
   const [newQtyPo, setNewQtyPo] = useState('0');
   const [newQtySo, setNewQtySo] = useState('0');
   const [newNotPrint, setNewNotPrint] = useState(false);
+  const [newIsActive, setNewIsActive] = useState(true);
 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [includeNotPrint, setIncludeNotPrint] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -203,7 +216,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     }
     try {
       setIsBusy(true);
-      const saved = await erpUpdate<any>('master_barangs', selected.id, {
+      const basePayload = {
         kode: selected.kode.trim().toUpperCase(),
         nama_barang: selected.namaBarang.trim().toUpperCase(),
         unit: selected.unit.trim().toUpperCase() || 'PCS',
@@ -218,10 +231,29 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
         qty_po: Number(selected.qtyPo) || 0,
         qty_so: Number(selected.qtySo) || 0,
         not_print: Boolean(selected.notPrint),
-      });
+      };
+      let saved: any;
+      let usedFallback = false;
+      try {
+        saved = await erpUpdate<any>('master_barangs', selected.id, {
+          ...basePayload,
+          is_active: selected.isActive,
+        });
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await erpUpdate<any>('master_barangs', selected.id, basePayload);
+        } else {
+          throw err;
+        }
+      }
       const mapped = mapDbToItem(saved);
       setBarangList((prev) => prev.map((b) => (b.id === selected.id ? mapped : b)));
-      showFeedback(`Barang [${mapped.kode} - ${mapped.namaBarang}] tersimpan ke Supabase`);
+      showFeedback(
+        usedFallback
+          ? `Barang [${mapped.kode}] tersimpan (jalankan SQL migrasi untuk kolom is_active)`
+          : `Barang [${mapped.kode} - ${mapped.namaBarang}] tersimpan ke Supabase`
+      );
     } catch (err: any) {
       showFeedback(`Gagal simpan: ${err.message}`);
     } finally {
@@ -253,6 +285,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setNewQtyPo('0');
     setNewQtySo('0');
     setNewNotPrint(false);
+    setNewIsActive(true);
     setIsAddOpen(true);
 
     const freshCats = await loadMasterReferences();
@@ -283,22 +316,49 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     setNewQtyPo(String(item.qtyPo ?? 0));
     setNewQtySo(String(item.qtySo ?? 0));
     setNewNotPrint(Boolean(item.notPrint));
+    setNewIsActive(item.isActive !== false);
     setIsAddOpen(true);
     loadMasterReferences();
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) {
+  const handleRequestDelete = async () => {
+    const item = barangList.find((b) => b.id === selectedId);
+    if (!item) {
       showFeedback('Pilih data yang akan dihapus');
       return;
     }
+    try {
+      setIsBusy(true);
+      const usageMsg = await checkMasterUsage([
+        { table: 'purchase_request_details', label: 'Purchase Request', eq: { kode: item.kode } },
+        { table: 'purchase_order_details', label: 'Purchase Order', eq: { kode: item.kode } },
+        { table: 'pembelian_barang_details', label: 'Pembelian Barang', eq: { kode: item.kode } },
+        { table: 'sales_order_details', label: 'Sales Order', eq: { kode: item.kode } },
+        { table: 'faktur_penjualan_details', label: 'Faktur Penjualan', eq: { kode: item.kode } },
+        { table: 'stock_awal', label: 'Stock Awal', eq: { kode: item.kode } },
+      ]);
+      if (usageMsg) {
+        showFeedback(usageMsg);
+        return;
+      }
+      setConfirmDeleteOpen(true);
+    } catch (err: any) {
+      showFeedback(`Gagal cek referensi: ${err.message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedId) return;
     try {
       setIsBusy(true);
       await erpDelete('master_barangs', selectedId);
       const updated = barangList.filter((b) => b.id !== selectedId);
       setBarangList(updated);
       setSelectedId(updated[0]?.id || '');
-      showFeedback('Data dihapus');
+      setConfirmDeleteOpen(false);
+      showFeedback('Data barang dihapus');
     } catch (err: any) {
       showFeedback(`Gagal hapus: ${err.message}`);
     } finally {
@@ -309,41 +369,98 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
-    if (!newKode.trim() || !newNama.trim()) {
+    const cleanKode = newKode.trim().toUpperCase();
+    const cleanNama = newNama.trim().toUpperCase();
+    if (!cleanKode || !cleanNama) {
       setModalError('Kode Barang dan Nama Barang wajib diisi.');
+      return;
+    }
+    if (barangList.some((b) => b.kode.toUpperCase() === cleanKode && b.id !== editingId)) {
+      setModalError(`Kode Barang [${cleanKode}] sudah terdaftar. Gunakan kode lain.`);
+      return;
+    }
+    const stockVal = parseNum(newStock);
+    const costVal = parseNum(newCost);
+    const priceVal = parseNum(newPrice);
+    const discVal = parseNum(newDisc);
+    const qMinVal = parseNum(newQMin);
+    if (stockVal < 0 || costVal < 0 || priceVal < 0 || qMinVal < 0) {
+      setModalError('Nilai Stock, Cost, Price, dan Q.Min tidak boleh negatif.');
+      return;
+    }
+    if (discVal < 0 || discVal > 100) {
+      setModalError('Discount harus berada di antara 0% sampai 100%.');
       return;
     }
 
     try {
       setIsBusy(true);
-      const dbPayload = {
-        kode: newKode.trim().toUpperCase(),
-        nama_barang: newNama.trim().toUpperCase(),
+      const basePayload = {
+        kode: cleanKode,
+        nama_barang: cleanNama,
         unit: newUnit.trim().toUpperCase() || 'PCS',
         merk: newMerk.trim().toUpperCase(),
         category: newCategory.trim().toUpperCase(),
         tipe: newTipe.trim().toUpperCase(),
-        stock: parseNum(newStock),
-        cost: parseNum(newCost),
-        price: parseNum(newPrice),
-        disc: parseNum(newDisc),
-        q_min: parseNum(newQMin),
+        stock: stockVal,
+        cost: costVal,
+        price: priceVal,
+        disc: discVal,
+        q_min: qMinVal,
         qty_po: parseNum(newQtyPo),
         qty_so: parseNum(newQtySo),
         not_print: newNotPrint,
       };
+      const fullPayload = { ...basePayload, is_active: newIsActive };
 
+      let saved: any;
+      let usedFallback = false;
+      const saveFn = async (payload: Record<string, any>) =>
+        editingId
+          ? erpUpdate<any>('master_barangs', editingId, payload)
+          : erpCreate<any>('master_barangs', payload);
+
+      try {
+        saved = await saveFn(fullPayload);
+      } catch (err: any) {
+        if (isMissingColumnError(err?.message || '')) {
+          usedFallback = true;
+          saved = await saveFn(basePayload);
+        } else {
+          throw err;
+        }
+      }
+
+      const mapped = mapDbToItem(saved);
       if (editingId) {
-        const saved = await erpUpdate<any>('master_barangs', editingId, dbPayload);
-        const mapped = mapDbToItem(saved);
-        setBarangList(barangList.map((b) => (b.id === editingId ? mapped : b)));
-        showFeedback('Data diperbarui');
+        const prevItem = barangList.find((b) => b.id === editingId);
+        setBarangList((prev) =>
+          prev
+            .map((b) => (b.id === editingId ? mapped : b))
+            .sort((a, b) => a.kode.localeCompare(b.kode))
+        );
+        if (prevItem && prevItem.namaBarang !== mapped.namaBarang) {
+          await Promise.all([
+            cascadeMasterRename('purchase_request_details', 'kode', mapped.kode, { nama_barang: mapped.namaBarang }),
+            cascadeMasterRename('purchase_order_details', 'kode', mapped.kode, { nama_barang: mapped.namaBarang }),
+            cascadeMasterRename('pembelian_barang_details', 'kode', mapped.kode, { nama_barang: mapped.namaBarang }),
+            cascadeMasterRename('sales_order_details', 'kode', mapped.kode, { nama_barang: mapped.namaBarang }),
+            cascadeMasterRename('faktur_penjualan_details', 'kode', mapped.kode, { nama_barang: mapped.namaBarang }),
+          ]);
+        }
+        showFeedback(
+          usedFallback
+            ? 'Data diperbarui (jalankan SQL migrasi untuk kolom is_active)'
+            : 'Data diperbarui'
+        );
       } else {
-        const saved = await erpCreate<any>('master_barangs', dbPayload);
-        const mapped = mapDbToItem(saved);
-        setBarangList([mapped, ...barangList]);
+        setBarangList((prev) => [mapped, ...prev].sort((a, b) => a.kode.localeCompare(b.kode)));
         setSelectedId(mapped.id);
-        showFeedback('Data tersimpan');
+        showFeedback(
+          usedFallback
+            ? 'Data tersimpan (jalankan SQL migrasi untuk kolom is_active)'
+            : 'Data tersimpan'
+        );
       }
       setIsAddOpen(false);
       setEditingId(null);
@@ -389,12 +506,16 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
     barangList.find((b) => b.id === selectedId) ||
     null;
 
+  const printableList = includeNotPrint
+    ? filteredList
+    : filteredList.filter((b) => !b.notPrint);
+
   const handleExportExcel = async () => {
     const company = await fetchActiveCompanyProfile();
     exportToExcel({
       fileName: 'Master_Barang',
       sheetTitle: 'LIST MASTER BARANG',
-      subtitle: `Filter: ${filterSemua}`,
+      subtitle: `Filter: ${filterSemua}${includeNotPrint ? ' (Termasuk Not Print)' : ''}`,
       companyProfile: company,
       columns: [
         { header: 'Kode', accessor: 'kode' },
@@ -406,8 +527,13 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
         { header: 'Stock', accessor: 'stock', align: 'right' },
         { header: 'Cost', accessor: 'cost', align: 'right' },
         { header: 'Price', accessor: 'price', align: 'right' },
+        { header: 'Disc (%)', accessor: 'disc', align: 'right' },
+        { header: 'Q.Min', accessor: 'qMin', align: 'right' },
+        { header: 'Qty.PO', accessor: 'qtyPo', align: 'right' },
+        { header: 'Qty.SO', accessor: 'qtySo', align: 'right' },
+        { header: 'Aktif', accessor: (r) => (r.isActive ? 'YA' : 'NON-AKTIF') },
       ],
-      rows: filteredList,
+      rows: printableList,
     });
     showFeedback('Export Excel selesai');
   };
@@ -488,7 +614,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
             onSimpan={handleToolbarSimpan}
             onBaru={handleAddNew}
             onKoreksi={handleEdit}
-            onHapus={handleDelete}
+            onHapus={handleRequestDelete}
             onPrint={() => setIsPrintOpen(true)}
             onFind={handleFind}
             isBusy={isBusy}
@@ -542,8 +668,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
             List
           </div>
 
-          <div className="flex-1 overflow-auto bg-[#F0EDE2]">
-            <table className="min-w-[1350px] w-full border-collapse text-[11px] font-sans select-none">
+          <div className="flex-1 overflow-auto bg-white">
+            <table className="min-w-[1380px] w-full border-collapse text-[11px] font-sans select-none">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#ECE9D8] text-black border-b border-[#ACA899]">
                   <th className="w-[20px] border-r border-[#ACA899] bg-[#ECE9D8] p-0" />
@@ -553,8 +679,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   <th className="w-[80px] border-r border-[#ACA899] px-1.5 py-1 text-left font-bold text-[11px]">Merk</th>
                   <th className="w-[85px] border-r border-[#ACA899] px-1.5 py-1 text-left font-bold text-[11px]">Category</th>
                   <th className="w-[110px] border-r border-[#ACA899] px-1.5 py-1 text-left font-bold text-[11px]">Tipe</th>
-                  <th className="w-[60px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Stock</th>
-                  <th className="w-[65px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Cost</th>
+                  <th className="w-[65px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Stock</th>
+                  <th className="w-[75px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Cost</th>
                   <th className="w-[85px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Price</th>
                   <th className="w-[45px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Disc</th>
                   <th className="w-[50px] border-r border-[#ACA899] px-1.5 py-1 text-right font-bold text-[11px]">Q.Min</th>
@@ -564,27 +690,51 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {filteredList.map((item) => {
+                {filteredList.map((item, idx) => {
                   const isSelected = selectedId === item.id;
+                  const isLowStock = item.qMin > 0 && item.stock <= item.qMin;
                   return (
                     <tr
                       key={item.id}
                       onClick={() => setSelectedId(item.id)}
                       onDoubleClick={handleEdit}
-                      className={`h-[20px] border-b border-[#D6D6D6] cursor-pointer text-black ${
-                        isSelected ? 'bg-[#FFE600] font-semibold' : 'bg-[#FFFF00] hover:brightness-95'
+                      className={`h-[21px] border-b border-[#D6D6D6] cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#316AC5] text-white font-semibold'
+                          : !item.isActive
+                          ? 'bg-[#F3F3F3] text-gray-500 hover:bg-[#EAF2FC]'
+                          : isLowStock
+                          ? 'bg-[#FFF4E5] text-black hover:bg-[#FFE6C7]'
+                          : idx % 2 === 0
+                          ? 'bg-white text-black hover:bg-[#EAF2FC]'
+                          : 'bg-[#F9FAFC] text-black hover:bg-[#EAF2FC]'
                       }`}
                     >
-                      <td className="w-[20px] border-r border-[#ACA899] text-center p-0 bg-[#ECE9D8]">
+                      <td className="w-[20px] border-r border-[#ACA899] text-center p-0 bg-[#ECE9D8] text-black">
                         {isSelected ? <span className="text-[10px] font-bold leading-none inline-block">▶</span> : null}
                       </td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] font-mono whitespace-nowrap">{item.kode}</td>
-                      <td className="px-2 py-0.5 border-r border-[#ACA899] uppercase tracking-tight whitespace-nowrap">{item.namaBarang}</td>
+                      <td className="px-2 py-0.5 border-r border-[#ACA899] uppercase tracking-tight whitespace-nowrap">
+                        {item.namaBarang}
+                        {!item.isActive && (
+                          <span className={`ml-1.5 text-[9px] px-1 border ${isSelected ? 'border-white/70 text-white' : 'border-gray-400 text-gray-600'}`}>
+                            NON-AKTIF
+                          </span>
+                        )}
+                      </td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] uppercase whitespace-nowrap">{item.unit}</td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] uppercase whitespace-nowrap">{item.merk}</td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] uppercase whitespace-nowrap">{item.category}</td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] uppercase whitespace-nowrap">{item.tipe}</td>
-                      <td className="px-1.5 py-0.5 border-r border-[#ACA899] text-right whitespace-nowrap font-mono">{fmtDot(item.stock)}</td>
+                      <td
+                        title={isLowStock ? `Stock <= Q.Min (${item.qMin})` : undefined}
+                        className={`px-1.5 py-0.5 border-r border-[#ACA899] text-right whitespace-nowrap font-mono ${
+                          isLowStock && !isSelected ? 'text-[#C00000] font-bold' : ''
+                        }`}
+                      >
+                        {isLowStock ? '⚠ ' : ''}
+                        {fmtDot(item.stock)}
+                      </td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] text-right whitespace-nowrap font-mono">{fmtDot(item.cost)}</td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] text-right whitespace-nowrap font-mono">{fmtDot(item.price)}</td>
                       <td className="px-1.5 py-0.5 border-r border-[#ACA899] text-right whitespace-nowrap font-mono">{fmtDot(item.disc)}</td>
@@ -604,25 +754,13 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   );
                 })}
 
-                {Array.from({ length: Math.max(0, 10 - filteredList.length) }).map((_, emptyIdx) => (
-                  <tr key={`empty-${emptyIdx}`} className="h-[20px] bg-[#FFFF00] border-b border-[#D6D6D6]">
-                    <td className="w-[20px] border-r border-[#ACA899] bg-[#ECE9D8]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
-                    <td className="border-r border-[#ACA899]" />
+                {filteredList.length === 0 && (
+                  <tr>
+                    <td colSpan={15} className="text-center py-6 text-gray-500 italic bg-white">
+                      Tidak ada data Master Barang yang cocok.
+                    </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -696,10 +834,13 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                     onChange={(e) => setNewUnit(e.target.value)}
                     className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none cursor-pointer"
                   >
-                    <option value="PCS">PCS</option>
-                    <option value="SET">SET</option>
-                    <option value="UNIT">UNIT</option>
-                    <option value="BOX">BOX</option>
+                    {Array.from(
+                      new Set([...UNIT_OPTIONS, newUnit.trim().toUpperCase()].filter(Boolean))
+                    ).map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="flex items-center space-x-2 min-w-0">
@@ -754,18 +895,26 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
 
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block font-bold mb-0.5">Stock :</label>
+                  <label className="block font-bold mb-0.5">
+                    Stock {editingId ? <span className="text-[9px] font-normal text-gray-600">(Auto transaksi)</span> : ':'}
+                  </label>
                   <input
                     type="number"
+                    min="0"
                     value={newStock}
                     onChange={(e) => setNewStock(e.target.value)}
-                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                    readOnly={Boolean(editingId)}
+                    title={editingId ? 'Stock dihitung otomatis dari Stock Awal & Transaksi Pembelian/Penjualan/Mutasi' : undefined}
+                    className={`w-full h-[22px] border border-[#7F9DB9] px-2 font-mono text-right ${
+                      editingId ? 'bg-[#ECE9D8] text-gray-600 cursor-not-allowed' : 'bg-white'
+                    }`}
                   />
                 </div>
                 <div>
                   <label className="block font-bold mb-0.5">Cost :</label>
                   <input
                     type="number"
+                    min="0"
                     value={newCost}
                     onChange={(e) => setNewCost(e.target.value)}
                     className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
@@ -775,6 +924,7 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   <label className="block font-bold mb-0.5">Price :</label>
                   <input
                     type="number"
+                    min="0"
                     value={newPrice}
                     onChange={(e) => setNewPrice(e.target.value)}
                     className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
@@ -787,6 +937,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   <label className="block font-bold mb-0.5">Disc (%) :</label>
                   <input
                     type="number"
+                    min="0"
+                    max="100"
                     value={newDisc}
                     onChange={(e) => setNewDisc(e.target.value)}
                     className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
@@ -796,41 +948,54 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   <label className="block font-bold mb-0.5">Q.Min :</label>
                   <input
                     type="number"
+                    min="0"
                     value={newQMin}
                     onChange={(e) => setNewQMin(e.target.value)}
                     className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold mb-0.5">Qty.PO :</label>
+                  <label className="block font-bold mb-0.5">Qty.PO <span className="text-[9px] font-normal text-gray-600">(Auto)</span>:</label>
                   <input
                     type="number"
                     value={newQtyPo}
-                    onChange={(e) => setNewQtyPo(e.target.value)}
-                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                    readOnly
+                    title="Otomatis disinkronkan dari outstanding Purchase Order"
+                    className="w-full h-[22px] bg-[#ECE9D8] text-gray-600 cursor-not-allowed border border-[#7F9DB9] px-2 font-mono text-right"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold mb-0.5">Qty.SO :</label>
+                  <label className="block font-bold mb-0.5">Qty.SO <span className="text-[9px] font-normal text-gray-600">(Auto)</span>:</label>
                   <input
                     type="number"
                     value={newQtySo}
-                    onChange={(e) => setNewQtySo(e.target.value)}
-                    className="w-full h-[22px] bg-white border border-[#7F9DB9] px-2 font-mono text-right"
+                    readOnly
+                    title="Otomatis disinkronkan dari outstanding Sales Order"
+                    className="w-full h-[22px] bg-[#ECE9D8] text-gray-600 cursor-not-allowed border border-[#7F9DB9] px-2 font-mono text-right"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2 pt-0.5">
-                <input
-                  id="master-barang-not-print"
-                  type="checkbox"
-                  checked={newNotPrint}
-                  onChange={(e) => setNewNotPrint(e.target.checked)}
-                  className="w-3.5 h-3.5 cursor-pointer"
-                />
-                <label htmlFor="master-barang-not-print" className="font-bold cursor-pointer">
-                  Not Print (Jangan tampilkan pada cetak daftar harga)
+              <div className="flex flex-wrap items-center gap-4 pt-0.5">
+                <label htmlFor="master-barang-not-print" className="flex items-center space-x-1.5 font-bold cursor-pointer">
+                  <input
+                    id="master-barang-not-print"
+                    type="checkbox"
+                    checked={newNotPrint}
+                    onChange={(e) => setNewNotPrint(e.target.checked)}
+                    className="w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>Not Print (Sembunyikan di cetak daftar)</span>
+                </label>
+                <label htmlFor="master-barang-is-active" className="flex items-center space-x-1.5 font-bold cursor-pointer">
+                  <input
+                    id="master-barang-is-active"
+                    type="checkbox"
+                    checked={newIsActive}
+                    onChange={(e) => setNewIsActive(e.target.checked)}
+                    className="w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>Barang Aktif</span>
                 </label>
               </div>
 
@@ -901,23 +1066,48 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
         ]}
       />
 
+      <ConfirmDialog
+        isOpen={confirmDeleteOpen}
+        title="Konfirmasi Hapus Master Barang"
+        message={`Yakin ingin menghapus Barang [${selectedBarang?.kode || ''} - ${selectedBarang?.namaBarang || ''}]?`}
+        detail="Data yang sudah dihapus tidak dapat dikembalikan."
+        isBusy={isBusy}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      />
+
       <A4PrintPreviewModal
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title="LAPORAN DAFTAR MASTER BARANG"
-        subtitle={`Kategori: ${filterSemua} | Total: ${filteredList.length} item`}
+        subtitle={`Kategori: ${filterSemua} | Total: ${printableList.length} item${includeNotPrint ? ' (Termasuk Not Print)' : ''}`}
         orientation="landscape"
+        toolbarExtra={
+          <label className="flex items-center gap-1.5 text-[11px] bg-white/95 text-black px-2 py-0.5 rounded-[2px] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeNotPrint}
+              onChange={(e) => setIncludeNotPrint(e.target.checked)}
+              className="w-3.5 h-3.5 cursor-pointer"
+            />
+            <span>Sertakan Not Print</span>
+          </label>
+        }
         columns={[
-          { header: 'Kode', accessor: 'kode', width: '90px' },
+          { header: 'Kode', accessor: 'kode', width: '78px' },
           { header: 'Nama Barang', accessor: 'namaBarang' },
-          { header: 'Unit', accessor: 'unit', width: '50px', align: 'center' },
-          { header: 'Merk', accessor: 'merk', width: '90px' },
-          { header: 'Kategori', accessor: 'category', width: '80px' },
-          { header: 'Stock', accessor: (r) => formatMoney(r.stock), align: 'right', width: '60px' },
-          { header: 'Cost', accessor: (r) => formatMoney(r.cost), align: 'right', width: '90px' },
-          { header: 'Harga Jual', accessor: (r) => formatMoney(r.price), align: 'right', width: '95px' },
+          { header: 'Unit', accessor: 'unit', width: '44px', align: 'center' },
+          { header: 'Merk', accessor: 'merk', width: '72px' },
+          { header: 'Kategori', accessor: 'category', width: '72px' },
+          { header: 'Stock', accessor: (r) => formatMoney(r.stock), align: 'right', width: '54px' },
+          { header: 'Q.Min', accessor: (r) => formatMoney(r.qMin), align: 'right', width: '48px' },
+          { header: 'Qty.PO', accessor: (r) => formatMoney(r.qtyPo), align: 'right', width: '52px' },
+          { header: 'Qty.SO', accessor: (r) => formatMoney(r.qtySo), align: 'right', width: '52px' },
+          { header: 'Cost', accessor: (r) => formatMoney(r.cost), align: 'right', width: '78px' },
+          { header: 'Disc%', accessor: (r) => `${r.disc}%`, align: 'right', width: '45px' },
+          { header: 'Harga Jual', accessor: (r) => formatMoney(r.price), align: 'right', width: '82px' },
         ]}
-        rows={filteredList}
+        rows={printableList}
         selectedRow={selectedBarang}
         selectedTitle="DETAIL DATA MASTER BARANG"
         selectedSubtitle={selectedBarang ? `Kode: ${selectedBarang.kode} - ${selectedBarang.namaBarang}` : undefined}
@@ -928,6 +1118,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                 { label: 'Nama Barang', value: selectedBarang.namaBarang },
                 { label: 'Merk / Kategori', value: [selectedBarang.merk, selectedBarang.category].filter(Boolean).join(' / ') || '-' },
                 { label: 'Tipe / Unit', value: [selectedBarang.tipe, selectedBarang.unit].filter(Boolean).join(' / ') || '-' },
+                { label: 'Qty.PO / Qty.SO', value: `${formatMoney(selectedBarang.qtyPo)} / ${formatMoney(selectedBarang.qtySo)}` },
+                { label: 'Disc / Q.Min', value: `${selectedBarang.disc}% / ${formatMoney(selectedBarang.qMin)}` },
               ]
             : undefined
         }
