@@ -651,8 +651,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
               className="w-full h-[24px] bg-white border border-[#7F9DB9] text-[11px] px-2 pr-5 appearance-none outline-none font-sans focus:border-[#316AC5] cursor-pointer"
             >
               <option value="SEMUA-nya">SEMUA-nya</option>
-              {allCategoryChoices.map((cat) => (
-                <option key={cat} value={cat}>
+              {allCategoryChoices.map((cat, idx) => (
+                <option key={`${cat}-${idx}`} value={cat}>
                   {cat}
                 </option>
               ))}
@@ -820,8 +820,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   autoFocus
                 />
                 <datalist id="master-barang-nama-list">
-                  {namaBarangSuggestions.map((nama) => (
-                    <option key={nama} value={nama} />
+                  {namaBarangSuggestions.map((nama, idx) => (
+                    <option key={`${nama}-${idx}`} value={nama} />
                   ))}
                 </datalist>
               </div>
@@ -836,8 +836,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                   >
                     {Array.from(
                       new Set([...UNIT_OPTIONS, newUnit.trim().toUpperCase()].filter(Boolean))
-                    ).map((u) => (
-                      <option key={u} value={u}>
+                    ).map((u, idx) => (
+                      <option key={`${u}-${idx}`} value={u}>
                         {u}
                       </option>
                     ))}
@@ -851,8 +851,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                     className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none uppercase cursor-pointer"
                   >
                     <option value="">-- Pilih Category --</option>
-                    {modalCategoryChoices.map((cat) => (
-                      <option key={cat} value={cat}>
+                    {modalCategoryChoices.map((cat, idx) => (
+                      <option key={`${cat}-${idx}`} value={cat}>
                         {cat}
                       </option>
                     ))}
@@ -869,8 +869,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                     className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none uppercase cursor-pointer"
                   >
                     <option value="">-- Pilih Merk --</option>
-                    {modalMerkChoices.map((merk) => (
-                      <option key={merk} value={merk}>
+                    {modalMerkChoices.map((merk, idx) => (
+                      <option key={`${merk}-${idx}`} value={merk}>
                         {merk}
                       </option>
                     ))}
@@ -884,8 +884,8 @@ export const MasterBarangListForm: React.FC<MasterBarangListFormProps> = ({
                     className="flex-1 min-w-0 h-[22px] bg-white border border-[#7F9DB9] px-2 outline-none uppercase cursor-pointer"
                   >
                     <option value="">-- Pilih Tipe --</option>
-                    {modalTypeChoices.map((tipe) => (
-                      <option key={tipe} value={tipe}>
+                    {modalTypeChoices.map((tipe, idx) => (
+                      <option key={`${tipe}-${idx}`} value={tipe}>
                         {tipe}
                       </option>
                     ))}
