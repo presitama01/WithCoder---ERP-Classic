@@ -46,6 +46,7 @@ import { KartuStockPrintForm } from './components/KartuStockPrintForm';
 import { LaporanPersediaanBarangPrintForm } from './components/LaporanPersediaanBarangPrintForm';
 import { LaporanPenerimaanBarangLainPrintForm } from './components/LaporanPenerimaanBarangLainPrintForm';
 import { LaporanPengeluaranBarangLainPrintForm } from './components/LaporanPengeluaranBarangLainPrintForm';
+import { StockOpnameForm } from './components/StockOpnameForm';
 import { ListHppPembelianForm } from './components/ListHppPembelianForm';
 import { ListJurnalUmumForm } from './components/ListJurnalUmumForm';
 import { LaporanKertasKerjaPrintForm } from './components/LaporanKertasKerjaPrintForm';
@@ -105,6 +106,7 @@ export default function App() {
     | 'laporan_penjualan_barang'
     | 'faktur_dp'
     | 'faktur_lain'
+    | 'stock_opname'
     | null
   >(null);
   const [activeUser, setActiveUser] = useState<string>(() => getCurrentUser().username || 'ADMIN');
@@ -271,6 +273,14 @@ export default function App() {
       setActiveMdiForm('stock_awal');
       setActiveForm(null);
     } else if (
+      actionName === 'Stock Opname / Penyesuaian Stok' ||
+      actionName === 'Stock Opname' ||
+      actionName === 'Penyesuaian Stok' ||
+      actionName === 'STOCK OPNAME'
+    ) {
+      setActiveMdiForm('stock_opname');
+      setActiveForm(null);
+    } else if (
       actionName === 'Cetak Item Barang' ||
       actionName === 'Item Cost Stock' ||
       actionName === 'Item Cost & Stock' ||
@@ -291,12 +301,14 @@ export default function App() {
       setActiveMdiForm('laporan_persediaan_barang');
       setActiveForm(null);
     } else if (
+      actionName === 'Penerimaan Barang Lain' ||
       actionName === 'Laporan Penerimaan Barang Lain' ||
       actionName === 'LAPORAN PENERIMAAN BARANG LAIN'
     ) {
       setActiveMdiForm('laporan_penerimaan_barang_lain');
       setActiveForm(null);
     } else if (
+      actionName === 'Pengeluaran Barang Lain' ||
       actionName === 'Laporan Pengeluaran Barang Lain' ||
       actionName === 'LAPORAN PENGELUARAN BARANG LAIN'
     ) {
@@ -507,6 +519,14 @@ export default function App() {
       setActiveMdiForm('stock_awal');
       setActiveForm(null);
     } else if (
+      actionName === 'Stock Opname / Penyesuaian Stok' ||
+      actionName === 'Stock Opname' ||
+      actionName === 'Penyesuaian Stok' ||
+      actionName === 'STOCK OPNAME'
+    ) {
+      setActiveMdiForm('stock_opname');
+      setActiveForm(null);
+    } else if (
       actionName === 'Cetak Item Barang' ||
       actionName === 'Item Cost Stock' ||
       actionName === 'Item Cost & Stock' ||
@@ -527,12 +547,14 @@ export default function App() {
       setActiveMdiForm('laporan_persediaan_barang');
       setActiveForm(null);
     } else if (
+      actionName === 'Penerimaan Barang Lain' ||
       actionName === 'Laporan Penerimaan Barang Lain' ||
       actionName === 'LAPORAN PENERIMAAN BARANG LAIN'
     ) {
       setActiveMdiForm('laporan_penerimaan_barang_lain');
       setActiveForm(null);
     } else if (
+      actionName === 'Pengeluaran Barang Lain' ||
       actionName === 'Laporan Pengeluaran Barang Lain' ||
       actionName === 'LAPORAN PENGELUARAN BARANG LAIN'
     ) {
@@ -597,7 +619,8 @@ export default function App() {
     activeMdiForm === 'laporan_penerimaan_barang_lain' ||
     activeMdiForm === 'laporan_pengeluaran_barang_lain' ||
     activeMdiForm === 'laporan_kertas_kerja' ||
-    activeMdiForm === 'laporan_penjualan_barang'
+    activeMdiForm === 'laporan_penjualan_barang' ||
+    activeMdiForm === 'stock_opname'
       ? 'WithCoder - ERP - Main Menu ~ Menu Utama'
       : activeMdiForm === 'jurnal_umum'
       ? 'WithCoder - ERP - Main Menu ~ Menu Utama - [Jurnal Umum]'
@@ -912,6 +935,12 @@ export default function App() {
         {/* Laporan Pengeluaran Barang Lain Print Report Dialog Window */}
         <LaporanPengeluaranBarangLainPrintForm
           isOpen={activeMdiForm === 'laporan_pengeluaran_barang_lain'}
+          onClose={() => setActiveMdiForm(null)}
+        />
+
+        {/* Stock Opname Form Dialog Window */}
+        <StockOpnameForm
+          isOpen={activeMdiForm === 'stock_opname'}
           onClose={() => setActiveMdiForm(null)}
         />
 

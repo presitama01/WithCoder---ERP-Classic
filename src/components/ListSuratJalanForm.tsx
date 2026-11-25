@@ -1072,55 +1072,55 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
 
   const detailPrintColumns: PrintColumn<SuratJalanDetailItem>[] = hidePrintPrices
     ? [
-        { header: 'Kode', accessor: 'kode', width: '100px' },
+        { header: 'Kode', accessor: 'kode', width: '92px' },
         { header: 'Nama Barang', accessor: 'namaBarang' },
-        { header: 'Unit', accessor: 'unit', align: 'center', width: '64px' },
+        { header: 'Unit', accessor: 'unit', align: 'center', width: '52px' },
         {
           header: 'Qty Kirim',
           accessor: (r) => formatMoney(r.qty),
           align: 'right',
-          width: '80px',
+          width: '90px',
         },
         {
           header: 'Diterima',
           accessor: (r) => formatMoney(r.terima),
           align: 'right',
-          width: '80px',
+          width: '90px',
         },
       ]
     : [
-        { header: 'Kode', accessor: 'kode', width: '92px' },
+        { header: 'Kode', accessor: 'kode', width: '70px' },
         { header: 'Nama Barang', accessor: 'namaBarang' },
-        { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
+        { header: 'Unit', accessor: 'unit', align: 'center', width: '38px' },
         {
           header: 'Terima',
           accessor: (r) => formatMoney(r.terima),
           align: 'right',
-          width: '68px',
+          width: '48px',
         },
         {
           header: 'QTY',
           accessor: (r) => formatMoney(r.qty),
           align: 'right',
-          width: '68px',
+          width: '48px',
         },
         {
           header: 'Harga',
           accessor: (r) => formatMoney(r.harga),
           align: 'right',
-          width: '96px',
+          width: '80px',
         },
         {
           header: 'Jumlah',
           accessor: (r) => formatMoney(r.jumlah),
           align: 'right',
-          width: '104px',
+          width: '86px',
         },
         {
           header: 'Total',
           accessor: (r) => formatMoney(r.total),
           align: 'right',
-          width: '104px',
+          width: '88px',
         },
       ];
 
@@ -1254,7 +1254,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.namaExpedisi || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{supirInfo}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.lokasiStock}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan || '-'}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 whitespace-pre-line align-top">{item.keterangan || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.stsPrint}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.stsPost}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.dibuatOleh}</td>
@@ -1619,14 +1619,14 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
                   />
                 </div>
 
-                <div className="md:col-span-2 flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="md:col-span-2 flex items-start justify-between gap-2">
+                  <label className="font-semibold shrink-0 pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    placeholder="Otomatis dari No. SO atau ketik manual..."
-                    className="flex-1 max-w-[730px] px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Otomatis dari No. SO atau ketik manual (mendukung baris penomoran)..."
+                    className="flex-1 max-w-[730px] px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
               </div>
@@ -1940,7 +1940,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
             : []
         }
         showSignatures={printMode === 'detail'}
-        orientation="landscape"
+        orientation={printMode === 'detail' ? 'portrait' : 'landscape'}
         toolbarExtra={
           <div className="flex items-center gap-2">
             {selectedSj && (

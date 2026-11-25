@@ -918,7 +918,7 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.noFakturPajak}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.sales}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.jthTmp}</td>
-                      <td className="px-2 py-0.5 border-r border-[#00B800]">{item.keterangan}</td>
+                      <td className="px-2 py-0.5 border-r border-[#00B800] whitespace-pre-line align-top">{item.keterangan}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800] text-right">{item.ppn}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800] text-right font-mono">{item.nilaiPenjualan}</td>
                       <td className="px-2 py-0.5 border-r border-[#00B800]">{item.stsLunas}</td>
@@ -1121,14 +1121,14 @@ export const ListFakturLainForm: React.FC<ListFakturLainFormProps> = ({
                     </select>
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <label className="font-semibold text-black shrink-0">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="flex items-start justify-between gap-3">
+                  <label className="font-semibold text-black shrink-0 pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    placeholder="Contoh: Biaya Ongkir / Jasa Kalibrasi / Lainnya"
-                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Contoh:&#10;1. Biaya Ongkir&#10;2. Jasa Kalibrasi / Lainnya"
+                    className="w-80 px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3">

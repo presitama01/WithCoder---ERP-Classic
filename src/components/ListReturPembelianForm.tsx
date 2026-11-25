@@ -1130,7 +1130,7 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                     <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">{item.ppn}</td>
                     <td className="px-2.5 py-1 text-right border-r border-[#E0E0E0] font-mono">{item.nilaiPpn}</td>
                     <td className="px-2.5 py-1 text-right border-r border-[#E0E0E0] font-mono font-semibold">{item.nilaiRetur}</td>
-                    <td className="px-2.5 py-1 border-r border-[#E0E0E0]">{item.keterangan}</td>
+                    <td className="px-2.5 py-1 border-r border-[#E0E0E0] whitespace-pre-line align-top">{item.keterangan}</td>
                     <td className="px-2.5 py-1 text-center border-r border-[#E0E0E0]">
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] ${
@@ -1404,13 +1404,14 @@ export const ListReturPembelianForm: React.FC<ListReturPembelianFormProps> = ({
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="font-semibold text-gray-700 shrink-0">Keterangan:</label>
-                    <input
-                      type="text"
+                  <div className="flex items-start justify-between gap-2">
+                    <label className="font-semibold text-gray-700 shrink-0 pt-1">Keterangan:</label>
+                    <textarea
+                      rows={3}
                       value={newKeterangan}
                       onChange={(e) => setNewKeterangan(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px]"
+                      placeholder="Catatan / rincian retur pembelian..."
+                      className="w-64 px-2 py-1 bg-white border border-[#7F9DB9] rounded-[2px] resize-y leading-snug"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">

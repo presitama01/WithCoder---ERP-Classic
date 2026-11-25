@@ -49,6 +49,8 @@ const ALLOWED_TABLES = new Set([
   'retur_penjualans',
   'retur_penjualan_details',
   'stock_awal',
+  'stock_opnames',
+  'stock_opname_details',
   'penerimaan_barang_lains',
   'pengeluaran_barang_lains',
   'hpp_pembelians',
@@ -62,6 +64,7 @@ const ALLOWED_VIEWS = new Set([
   'v_laporan_surat_jalan',
   'v_laporan_retur_penjualan',
   'v_laporan_kertas_kerja',
+  'v_laporan_stock_opname',
 ]);
 
 function isReadableResource(name: string): boolean {
@@ -2364,6 +2367,125 @@ export function registerErpApiRoutes(app: Express): void {
     }
   });
 
+  // Composite save for Stock Opname & Penyesuaian Stok -> atomic delta sync on master_barangs.stock
+  app.post('/api/erp/composite/stock-opname', async (req: Request, res: Response) => {
+    const { client: supabase, missingEnv } = getSupabaseClient();
+    if (!supabase || missingEnv) {
+      return res.status(500).json({ error: getMissingEnvMessage() });
+    }
+
+    try {
+      const { header, details } = (req.body || {}) as {
+        header: Record<string, any>;
+        details?: Record<string, any>[];
+      };
+      if (!header?.no_bukti) {
+        return res.status(400).json({ error: 'No. Bukti Stock Opname wajib diisi.' });
+      }
+
+      let oldHeader: any = null;
+      let oldDetails: any[] = [];
+      if (header.id) {
+        const { data: hdr } = await supabase
+          .from('stock_opnames')
+          .select('*')
+          .eq('id', header.id)
+          .single();
+        oldHeader = hdr;
+        const { data: dets } = await supabase
+          .from('stock_opname_details')
+          .select('*')
+          .eq('opname_id', header.id);
+        oldDetails = dets || [];
+      }
+
+      let headerRow: any = null;
+      if (header.id) {
+        const { id, created_at, updated_at, ...patch } = header;
+        const { data, error } = await supabase
+          .from('stock_opnames')
+          .update(patch)
+          .eq('id', id)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+
+        const { error: delErr } = await supabase
+          .from('stock_opname_details')
+          .delete()
+          .eq('opname_id', id);
+        if (delErr && (!Array.isArray(details) || details.length > 0)) {
+          return res.status(400).json({ error: delErr.message });
+        }
+      } else {
+        const { id: _ignore, created_at: _c, updated_at: _u, ...insertHeader } = header;
+        const { data, error } = await supabase
+          .from('stock_opnames')
+          .insert(insertHeader)
+          .select()
+          .single();
+        if (error) return res.status(400).json({ error: error.message });
+        headerRow = data;
+      }
+
+      let savedDetails: any[] = [];
+      if (Array.isArray(details) && details.length > 0) {
+        const payload = details.map((d, idx) => {
+          const { id: _id, created_at: _c, updated_at: _u, ...rest } = d;
+          const sysQty = Number(d.stock_sistem || 0);
+          const fisikQty = Number(d.stock_fisik || 0);
+          const selisih = Number((fisikQty - sysQty).toFixed(2));
+          const hpp = Number(d.hpp || 0);
+          return {
+            ...rest,
+            opname_id: headerRow.id,
+            no_bukti: headerRow.no_bukti,
+            no_urut: d.no_urut ?? idx + 1,
+            kode: String(d.kode || '').trim().toUpperCase(),
+            stock_sistem: sysQty,
+            stock_fisik: fisikQty,
+            selisih,
+            hpp,
+            total_selisih: Number((selisih * hpp).toFixed(2)),
+          };
+        });
+        const { data: detData, error: detErr } = await supabase
+          .from('stock_opname_details')
+          .insert(payload)
+          .select();
+        if (detErr) return res.status(400).json({ error: detErr.message });
+        savedDetails = detData || [];
+      }
+
+      // Sync selisih delta to master_barangs.stock when posted
+      const stockDelta: Record<string, number> = {};
+      if (oldHeader && isPostedStatus(oldHeader.sts_post)) {
+        for (const od of oldDetails) {
+          const k = String(od.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          const oldSelisih = Number(od.selisih ?? (Number(od.stock_fisik || 0) - Number(od.stock_sistem || 0)));
+          stockDelta[k] = (stockDelta[k] || 0) - oldSelisih;
+        }
+      }
+      if (isPostedStatus(headerRow.sts_post)) {
+        for (const nd of savedDetails) {
+          const k = String(nd.kode || '').trim().toUpperCase();
+          if (!k) continue;
+          const newSelisih = Number(nd.selisih ?? (Number(nd.stock_fisik || 0) - Number(nd.stock_sistem || 0)));
+          stockDelta[k] = (stockDelta[k] || 0) + newSelisih;
+        }
+      }
+      if (Object.keys(stockDelta).length > 0) {
+        await adjustMasterBarangStockAndCost(supabase, stockDelta);
+      }
+
+      return res.json({ header: headerRow, details: savedDetails });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Gagal menyimpan Stock Opname.' });
+    }
+  });
+
   // Generic READ endpoint for all tables and views
   app.get('/api/erp/:table', async (req: Request, res: Response) => {
     const { client: supabase, missingEnv } = getSupabaseClient();
@@ -2466,6 +2588,23 @@ export function registerErpApiRoutes(app: Express): void {
       if (error) {
         return res.status(400).json({ error: error.message });
       }
+
+      if (table === 'penerimaan_barang_lains' || table === 'pengeluaran_barang_lains') {
+        const insertedRows = Array.isArray(data) ? data : data ? [data] : [];
+        const sign = table === 'penerimaan_barang_lains' ? 1 : -1;
+        const delta: Record<string, number> = {};
+        for (const r of insertedRows) {
+          const k = String(r.kode_barang || '').trim().toUpperCase();
+          const qty = Number(r.qty || 0);
+          if (k && qty !== 0) {
+            delta[k] = (delta[k] || 0) + sign * qty;
+          }
+        }
+        if (Object.keys(delta).length > 0) {
+          await adjustMasterBarangStockAndCost(supabase, delta);
+        }
+      }
+
       return res.json({ data: Array.isArray(body) ? data : data?.[0] || null });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Server error saat menyimpan data.' });
@@ -2525,6 +2664,16 @@ export function registerErpApiRoutes(app: Express): void {
     }
 
     try {
+      let oldAdjustRow: any = null;
+      if (table === 'penerimaan_barang_lains' || table === 'pengeluaran_barang_lains') {
+        const { data: oldData } = await supabase
+          .from(table)
+          .select('kode_barang, qty')
+          .eq(matchCol, id)
+          .limit(1);
+        oldAdjustRow = oldData?.[0] || null;
+      }
+
       const copy = { ...(req.body || {}) };
       delete copy.id;
       delete copy.created_at;
@@ -2539,7 +2688,25 @@ export function registerErpApiRoutes(app: Express): void {
       if (error) {
         return res.status(400).json({ error: error.message });
       }
-      return res.json({ data: data?.[0] || null });
+
+      const updatedRow = data?.[0] || null;
+      if ((table === 'penerimaan_barang_lains' || table === 'pengeluaran_barang_lains') && updatedRow) {
+        const sign = table === 'penerimaan_barang_lains' ? 1 : -1;
+        const delta: Record<string, number> = {};
+        if (oldAdjustRow?.kode_barang) {
+          const oldK = String(oldAdjustRow.kode_barang).trim().toUpperCase();
+          delta[oldK] = (delta[oldK] || 0) - sign * Number(oldAdjustRow.qty || 0);
+        }
+        if (updatedRow.kode_barang) {
+          const newK = String(updatedRow.kode_barang).trim().toUpperCase();
+          delta[newK] = (delta[newK] || 0) + sign * Number(updatedRow.qty || 0);
+        }
+        if (Object.keys(delta).length > 0) {
+          await adjustMasterBarangStockAndCost(supabase, delta);
+        }
+      }
+
+      return res.json({ data: updatedRow });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Server error saat memperbarui data.' });
     }
@@ -2862,6 +3029,53 @@ export function registerErpApiRoutes(app: Express): void {
         }
         if (custs.length > 0) {
           await syncCustomerPiutang(supabase, custs);
+        }
+        return res.json({ ok: true });
+      }
+
+      if (table === 'stock_opnames' && matchCol === 'id') {
+        const { data: oldHdr } = await supabase
+          .from('stock_opnames')
+          .select('sts_post')
+          .eq('id', id)
+          .single();
+        let oldDets: any[] = [];
+        try {
+          const { data: detRows } = await supabase
+            .from('stock_opname_details')
+            .select('kode, stock_sistem, stock_fisik, selisih')
+            .eq('opname_id', id);
+          oldDets = detRows || [];
+          await supabase.from('stock_opname_details').delete().eq('opname_id', id);
+        } catch {}
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+
+        if (oldHdr && isPostedStatus(oldHdr.sts_post) && oldDets.length > 0) {
+          const stockDelta: Record<string, number> = {};
+          for (const od of oldDets) {
+            const k = String(od.kode || '').trim().toUpperCase();
+            if (!k) continue;
+            const oldSelisih = Number(od.selisih ?? (Number(od.stock_fisik || 0) - Number(od.stock_sistem || 0)));
+            stockDelta[k] = (stockDelta[k] || 0) - oldSelisih;
+          }
+          await adjustMasterBarangStockAndCost(supabase, stockDelta);
+        }
+        return res.json({ ok: true });
+      }
+
+      if ((table === 'penerimaan_barang_lains' || table === 'pengeluaran_barang_lains') && matchCol === 'id') {
+        const { data: oldRow } = await supabase
+          .from(table)
+          .select('kode_barang, qty')
+          .eq('id', id)
+          .single();
+        const { error } = await supabase.from(table).delete().eq(matchCol, id);
+        if (error) return res.status(400).json({ error: error.message });
+        if (oldRow?.kode_barang && Number(oldRow.qty || 0) !== 0) {
+          const sign = table === 'penerimaan_barang_lains' ? -1 : 1;
+          const k = String(oldRow.kode_barang).trim().toUpperCase();
+          await adjustMasterBarangStockAndCost(supabase, { [k]: sign * Number(oldRow.qty || 0) });
         }
         return res.json({ ok: true });
       }

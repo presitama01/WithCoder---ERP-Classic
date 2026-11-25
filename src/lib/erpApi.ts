@@ -273,7 +273,8 @@ export async function erpCompositeSave<T = any>(
     | 'surat-jalan'
     | 'pembelian'
     | 'retur-pembelian'
-    | 'retur-penjualan',
+    | 'retur-penjualan'
+    | 'stock-opname',
   header: Record<string, any>,
   details?: Record<string, any>[]
 ): Promise<T> {

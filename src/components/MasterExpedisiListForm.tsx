@@ -644,7 +644,7 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 items-start">
                 <div>
                   <label className="block font-bold mb-1">Armada / No. Polisi:</label>
                   <input
@@ -657,11 +657,12 @@ export const MasterExpedisiListForm: React.FC<MasterExpedisiListFormProps> = ({
                 </div>
                 <div>
                   <label className="block font-bold mb-1">Keterangan:</label>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="w-full h-[24px] bg-white border border-[#7F9DB9] px-2"
+                    placeholder="Catatan expedisi..."
+                    className="w-full bg-white border border-[#7F9DB9] px-2 py-1 resize-y leading-snug"
                   />
                 </div>
               </div>

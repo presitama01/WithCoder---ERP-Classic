@@ -69,11 +69,12 @@ export function exportToPdf<T = any>(options: {
     compress: true,
   });
 
+  const isPortrait = orientation === 'portrait';
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const marginX = 12;
-  const marginTop = 12;
-  const marginBottom = 16;
+  const marginX = isPortrait ? 10 : 12;
+  const marginTop = isPortrait ? 10 : 12;
+  const marginBottom = isPortrait ? 14 : 16;
   const usableWidth = pageWidth - marginX * 2;
   const printDate = toDisplayDMyShort(todayIso());
   const companyName = (companyProfile?.company_name || 'PT. UNIMETRIKA UTAMA').toUpperCase();
@@ -85,14 +86,14 @@ export function exportToPdf<T = any>(options: {
 
   // Left block: Company Name, Address, Contact
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11.5);
-  const leftMaxWidth = usableWidth - 55;
+  doc.setFontSize(isPortrait ? 10.5 : 11.5);
+  const leftMaxWidth = usableWidth - 52;
   const compLines = doc.splitTextToSize(companyName, leftMaxWidth);
   doc.text(compLines, marginX, cursorY);
-  let leftY = cursorY + compLines.length * 4.2;
+  let leftY = cursorY + compLines.length * 4;
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(isPortrait ? 7 : 7.5);
   const rawAddressLines = (companyProfile?.address || companyProfile?.npwp_address || '')
     .split(/\r?\n/)
     .map((l) => l.trim().toUpperCase())
@@ -101,7 +102,7 @@ export function exportToPdf<T = any>(options: {
   for (const addrLine of rawAddressLines) {
     const wrapped = doc.splitTextToSize(addrLine, leftMaxWidth);
     doc.text(wrapped, marginX, leftY);
-    leftY += wrapped.length * 3.3;
+    leftY += wrapped.length * 3.1;
   }
 
   const contactLine = [
@@ -116,34 +117,34 @@ export function exportToPdf<T = any>(options: {
   if (contactLine) {
     const wrappedContact = doc.splitTextToSize(contactLine, leftMaxWidth);
     doc.text(wrappedContact, marginX, leftY);
-    leftY += wrappedContact.length * 3.3;
+    leftY += wrappedContact.length * 3.1;
   }
 
   // Right block: NPWP, Kode Profil, Tgl Cetak
   let rightY = cursorY;
-  doc.setFontSize(7.5);
+  doc.setFontSize(isPortrait ? 7 : 7.5);
   if (companyProfile?.no_npwp) {
     doc.setFont('helvetica', 'bold');
     doc.text(`NPWP: ${companyProfile.no_npwp}`, pageWidth - marginX, rightY, { align: 'right' });
-    rightY += 3.6;
+    rightY += 3.5;
   }
   doc.setFont('helvetica', 'normal');
   doc.text(`Kode Profil: ${companyProfile?.profile_code || '01'}`, pageWidth - marginX, rightY, {
     align: 'right',
   });
-  rightY += 3.6;
+  rightY += 3.5;
   doc.text(`Tgl Cetak: ${printDate}`, pageWidth - marginX, rightY, { align: 'right' });
-  rightY += 3.6;
+  rightY += 3.5;
 
   cursorY = Math.max(leftY, rightY) + 1.5;
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.5);
   doc.line(marginX, cursorY, pageWidth - marginX, cursorY);
-  cursorY += 5;
+  cursorY += 4.5;
 
   // --- 2. Document Title & Subtitle ---
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(isPortrait ? 9.5 : 10);
   const titleText = (title || 'LAPORAN').toUpperCase();
   doc.text(titleText, pageWidth / 2, cursorY, { align: 'center' });
   const titleWidth = doc.getTextWidth(titleText);
@@ -154,53 +155,114 @@ export function exportToPdf<T = any>(options: {
     pageWidth / 2 + titleWidth / 2,
     cursorY + 0.9
   );
-  cursorY += 4.2;
+  cursorY += 4;
 
   if (subtitle) {
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFontSize(isPortrait ? 7.5 : 8);
     doc.setTextColor(45, 45, 45);
     doc.text(subtitle, pageWidth / 2, cursorY, { align: 'center' });
     doc.setTextColor(0, 0, 0);
-    cursorY += 4.2;
+    cursorY += 4;
   }
 
-  // --- 3. Metadata Grid (if present) ---
+  // --- 3. Metadata Grid (if present, wraps long & multiline values cleanly) ---
   if (metaLines.length > 0) {
     const colW = usableWidth / 2;
-    const rowCount = Math.ceil(metaLines.length / 2);
-    const boxHeight = rowCount * 4.3 + 2.4;
+    const labelOffset = isPortrait ? 24 : 28;
+    const lineStep = 3.7;
+    doc.setFontSize(isPortrait ? 7 : 7.5);
+
+    const metaPairs: {
+      fullWidth?: { label: string; lines: string[] };
+      left?: { label: string; lines: string[] };
+      right?: { label: string; lines: string[] };
+      rowLines: number;
+    }[] = [];
+
+    let pendingLeft: { label: string; lines: string[] } | null = null;
+    for (const m of metaLines) {
+      const normalizedVal = (m.value || '-').replace(/\r\n/g, '\n');
+      const isWide =
+        /keterangan/i.test(m.label || '') ||
+        normalizedVal.includes('\n') ||
+        normalizedVal.length > 52;
+
+      if (isWide) {
+        if (pendingLeft) {
+          metaPairs.push({ left: pendingLeft, rowLines: Math.max(pendingLeft.lines.length, 1) });
+          pendingLeft = null;
+        }
+        const fullLines = doc.splitTextToSize(`: ${normalizedVal}`, usableWidth - labelOffset - 4);
+        metaPairs.push({
+          fullWidth: { label: m.label || '', lines: fullLines },
+          rowLines: Math.max(fullLines.length, 1),
+        });
+      } else {
+        const halfLines = doc.splitTextToSize(`: ${normalizedVal}`, colW - labelOffset - 3);
+        if (!pendingLeft) {
+          pendingLeft = { label: m.label || '', lines: halfLines };
+        } else {
+          metaPairs.push({
+            left: pendingLeft,
+            right: { label: m.label || '', lines: halfLines },
+            rowLines: Math.max(pendingLeft.lines.length, halfLines.length, 1),
+          });
+          pendingLeft = null;
+        }
+      }
+    }
+    if (pendingLeft) {
+      metaPairs.push({ left: pendingLeft, rowLines: Math.max(pendingLeft.lines.length, 1) });
+    }
+
+    const totalMetaLines = metaPairs.reduce((acc, p) => acc + p.rowLines, 0);
+    const boxHeight = totalMetaLines * lineStep + 3;
 
     doc.setFillColor(249, 250, 251);
     doc.setDrawColor(140, 140, 140);
     doc.setLineWidth(0.2);
     doc.rect(marginX, cursorY, usableWidth, boxHeight, 'FD');
 
-    doc.setFontSize(7.5);
-    metaLines.forEach((m, idx) => {
-      const r = Math.floor(idx / 2);
-      const c = idx % 2;
-      const cellX = marginX + 2.5 + c * colW;
-      const cellY = cursorY + 4 + r * 4.3;
-
-      doc.setFont('helvetica', 'bold');
-      doc.text(m.label || '', cellX, cellY);
-      doc.setFont('helvetica', 'normal');
-      const valText = doc.splitTextToSize(`: ${m.value || '-'}`, colW - 32)[0] || ': -';
-      doc.text(valText, cellX + 28, cellY);
-    });
+    let metaY = cursorY + 3.8;
+    for (const pair of metaPairs) {
+      if (pair.fullWidth) {
+        doc.setFont('helvetica', 'bold');
+        doc.text(pair.fullWidth.label, marginX + 2.2, metaY);
+        doc.setFont('helvetica', 'normal');
+        doc.text(pair.fullWidth.lines, marginX + 2.2 + labelOffset, metaY);
+      } else {
+        if (pair.left) {
+          doc.setFont('helvetica', 'bold');
+          doc.text(pair.left.label, marginX + 2.2, metaY);
+          doc.setFont('helvetica', 'normal');
+          doc.text(pair.left.lines, marginX + 2.2 + labelOffset, metaY);
+        }
+        if (pair.right) {
+          doc.setFont('helvetica', 'bold');
+          doc.text(pair.right.label, marginX + colW + 2.2, metaY);
+          doc.setFont('helvetica', 'normal');
+          doc.text(pair.right.lines, marginX + colW + 2.2 + labelOffset, metaY);
+        }
+      }
+      metaY += pair.rowLines * lineStep;
+    }
 
     cursorY += boxHeight + 2.5;
   }
 
   // --- 4. Compute Normalized Column Widths ---
-  const noColMm = 9;
+  const noColMm = isPortrait ? 7.2 : 9;
   const dataAreaMm = usableWidth - noColMm;
   const parsedPx = columns.map((c) => parseWidthPx(c.width));
   const flexCount = parsedPx.filter((p) => p === null).length;
   const fixedSum = parsedPx.reduce<number>((sum, p) => sum + (p ?? 0), 0);
-  const usablePx = orientation === 'landscape' ? 990 : 665;
-  const flexFallback = Math.max(95, Math.floor((usablePx - 28 - fixedSum) / Math.max(1, flexCount)));
+  const usablePx = isPortrait ? 680 : 990;
+  const noColPx = isPortrait ? 24 : 28;
+  const flexFallback = Math.max(
+    isPortrait ? 115 : 95,
+    Math.floor((usablePx - noColPx - fixedSum) / Math.max(1, flexCount))
+  );
   const rawWidths = parsedPx.map((p) => p ?? flexFallback);
   const totalRaw = rawWidths.reduce((a, b) => a + b, 0) || 1;
   const colMmWidths = rawWidths.map((w) => (w / totalRaw) * dataAreaMm);
@@ -246,7 +308,8 @@ export function exportToPdf<T = any>(options: {
   });
 
   // Top margin on continuation pages leaves room for "(Lanjutan)" header
-  const continuationHeaderY = 18;
+  const continuationHeaderY = 17;
+  const tableFontSize = isPortrait ? (columns.length >= 7 ? 7 : 7.3) : 7.5;
 
   autoTable(doc, {
     startY: cursorY,
@@ -261,11 +324,13 @@ export function exportToPdf<T = any>(options: {
     theme: 'grid',
     styles: {
       font: 'helvetica',
-      fontSize: 7.5,
+      fontSize: tableFontSize,
       textColor: [0, 0, 0],
       lineColor: [0, 0, 0],
       lineWidth: 0.18,
-      cellPadding: { top: 1.4, right: 1.6, bottom: 1.4, left: 1.6 },
+      cellPadding: isPortrait
+        ? { top: 1.2, right: 1.1, bottom: 1.2, left: 1.1 }
+        : { top: 1.4, right: 1.6, bottom: 1.4, left: 1.6 },
       overflow: 'linebreak',
       valign: 'top',
     },

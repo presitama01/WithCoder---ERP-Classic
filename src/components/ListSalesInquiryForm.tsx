@@ -826,7 +826,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono text-right">
                     {formatMoney(item.qty)}
                   </td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 whitespace-pre-line align-top">{item.keterangan}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.follow}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglFollow}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noSq}</td>
@@ -906,7 +906,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                     <td className="px-2 py-1 border-r border-[#E5E5E5] text-right font-mono">
                       {formatRupiah(d.targetHarga)}
                     </td>
-                    <td className="px-2 py-1">{d.keterangan || '-'}</td>
+                    <td className="px-2 py-1 whitespace-pre-line align-top">{d.keterangan || '-'}</td>
                   </tr>
                 ))
               )}
@@ -1065,13 +1065,14 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                     />
                   </div>
                 </div>
-                <div className="md:col-span-2 grid grid-cols-6 gap-2 items-center">
-                  <label className="font-semibold">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="md:col-span-2 grid grid-cols-6 gap-2 items-start">
+                  <label className="font-semibold pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="col-span-5 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Contoh:&#10;1. Permintaan penawaran...&#10;2. Jadwal kirim..."
+                    className="col-span-5 px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
               </div>
@@ -1179,14 +1180,14 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                                 className="w-full px-1 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-right font-mono text-[11px]"
                               />
                             </td>
-                            <td className="p-0.5 border-r border-[#E5E5E5]">
-                              <input
-                                type="text"
+                            <td className="p-0.5 border-r border-[#E5E5E5] align-top">
+                              <textarea
+                                rows={2}
                                 value={d.keterangan}
                                 onChange={(e) =>
                                   handleDetailFieldChange(d.id, 'keterangan', e.target.value)
                                 }
-                                className="w-full px-1 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-[11px]"
+                                className="w-full px-1 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-[11px] resize-y leading-snug"
                               />
                             </td>
                             <td className="p-0.5 text-center">
@@ -1315,6 +1316,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                 { label: 'Sales', value: selectedInquiry.namaSales || '-' },
                 { label: 'Follow', value: selectedInquiry.follow },
                 { label: 'No. SQ', value: selectedInquiry.noSq || '-' },
+                { label: 'Keterangan', value: selectedInquiry.keterangan || '-' },
               ]
             : undefined
         }
@@ -1358,6 +1360,7 @@ export const ListSalesInquiryForm: React.FC<ListSalesInquiryFormProps> = ({
                 { label: 'Qty', value: formatMoney(selectedInquiry.qty) },
                 { label: 'Follow', value: selectedInquiry.follow },
                 { label: 'No. SQ', value: selectedInquiry.noSq || '-' },
+                { label: 'Keterangan', value: selectedInquiry.keterangan || '-' },
               ]
             : undefined
         }

@@ -981,32 +981,32 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
   ];
 
   const detailPrintColumns: PrintColumn<SalesQuotationDetailItem>[] = [
-    { header: 'Kode', accessor: 'kode', width: '88px' },
+    { header: 'Kode', accessor: 'kode', width: '76px' },
     { header: 'Nama Barang', accessor: 'namaBarang' },
-    { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
+    { header: 'Unit', accessor: 'unit', align: 'center', width: '42px' },
     {
       header: 'QTY',
       accessor: (r) => formatMoney(r.qty),
       align: 'right',
-      width: '68px',
+      width: '54px',
     },
     {
       header: 'Harga',
       accessor: (r) => formatMoney(r.harga),
       align: 'right',
-      width: '96px',
+      width: '86px',
     },
     {
       header: 'Jumlah',
       accessor: (r) => formatMoney(r.jumlah),
       align: 'right',
-      width: '104px',
+      width: '92px',
     },
     {
       header: 'Total',
       accessor: (r) => formatMoney(r.total),
       align: 'right',
-      width: '104px',
+      width: '94px',
     },
   ];
 
@@ -1123,7 +1123,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.sales}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap font-mono">{item.noInquiry}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.lokasiStock}</td>
-                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.keterangan}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-pre-line align-top">{item.keterangan}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono">{formatMoney(item.dpp)}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono">{formatMoney(item.nilaiPpn)}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap font-mono font-semibold">{item.amount}</td>
@@ -1400,13 +1400,14 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
                       <option value="Expired">Expired</option>
                     </select>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="font-semibold text-black shrink-0">Keterangan:</label>
-                    <input
-                      type="text"
+                  <div className="flex items-start justify-between gap-2">
+                    <label className="font-semibold text-black shrink-0 pt-1">Keterangan:</label>
+                    <textarea
+                      rows={3}
                       value={newKeterangan}
                       onChange={(e) => setNewKeterangan(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A]"
+                      placeholder="Contoh:&#10;1. Price are Nett,&#10;2. Payment ..."
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -1722,7 +1723,7 @@ export const ListSalesQuotationForm: React.FC<ListSalesQuotationFormProps> = ({
               : []
           }
           showSignatures={printMode === 'detail'}
-          orientation="landscape"
+          orientation={printMode === 'detail' ? 'portrait' : 'landscape'}
           columns={
             printMode === 'detail'
               ? selectedSqDetails.length > 0

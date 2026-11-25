@@ -931,7 +931,7 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
                         <td className="py-1 px-2 border-r border-gray-200 text-right font-mono">
                           {formatRupiah(item.amountPaid)}
                         </td>
-                        <td className="py-1 px-2 border-r border-gray-200">{item.keterangan}</td>
+                        <td className="py-1 px-2 border-r border-gray-200 whitespace-pre-line align-top">{item.keterangan}</td>
                         <td className="py-1 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
@@ -1220,12 +1220,12 @@ export const PendaftaranPenerimaanGiroForm: React.FC<PendaftaranPenerimaanGiroFo
 
                 <div>
                   <label className="block text-gray-800 font-semibold mb-1">Keterangan</label>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    placeholder="Keterangan penerimaan giro..."
-                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black"
+                    placeholder="Keterangan penerimaan giro (mendukung baris penomoran)..."
+                    className="w-full px-2 py-1 bg-white border border-[#7F9DB9] rounded text-black resize-y leading-snug"
                   />
                 </div>
 

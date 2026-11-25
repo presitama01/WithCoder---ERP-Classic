@@ -62,6 +62,7 @@ function computeRecommendedOrientation<T>(
   requestedOrientation?: 'portrait' | 'landscape'
 ): 'portrait' | 'landscape' {
   if (requestedOrientation === 'landscape') return 'landscape';
+  if (requestedOrientation === 'portrait') return 'portrait';
   if (columns.length >= 6) return 'landscape';
 
   const explicitPxSum = columns.reduce((acc, col) => acc + (parseWidthPx(col.width) ?? 110), 30);
@@ -83,60 +84,87 @@ function computeRecommendedOrientation<T>(
   }
   if (totalChars > 82) return 'landscape';
 
-  return requestedOrientation || 'portrait';
+  return 'portrait';
+}
+
+interface NormalizedWidthsResult {
+  noColPct: string;
+  colWidths: string[];
+  colPxWidths: number[];
 }
 
 function computeNormalizedColWidths<T>(
   columns: PrintColumn<T>[],
   orientation: 'portrait' | 'landscape'
-): string[] {
-  const usablePx = orientation === 'landscape' ? 990 : 665;
-  const noColPx = 28;
+): NormalizedWidthsResult {
+  const usablePx = orientation === 'landscape' ? 990 : 680;
+  const noColPx = orientation === 'landscape' ? 28 : 24;
   const remainingPx = usablePx - noColPx;
 
   const parsed = columns.map((c) => parseWidthPx(c.width));
   const flexCount = parsed.filter((p) => p === null).length;
   const fixedSum = parsed.reduce<number>((sum, p) => sum + (p ?? 0), 0);
-  const flexFallback = Math.max(95, Math.floor((remainingPx - fixedSum) / Math.max(1, flexCount)));
+  const flexMin = orientation === 'landscape' ? 95 : 115;
+  const flexFallback = Math.max(
+    flexMin,
+    Math.floor((remainingPx - fixedSum) / Math.max(1, flexCount))
+  );
 
   const rawWidths = parsed.map((p) => p ?? flexFallback);
   const totalRaw = rawWidths.reduce((a, b) => a + b, 0);
 
   if (totalRaw <= 0) {
-    const even = `${(100 / Math.max(1, columns.length)).toFixed(2)}%`;
-    return columns.map(() => even);
+    const noPctNum = (noColPx / usablePx) * 100;
+    const evenPct = (100 - noPctNum) / Math.max(1, columns.length);
+    const evenPx = remainingPx / Math.max(1, columns.length);
+    return {
+      noColPct: `${noPctNum.toFixed(2)}%`,
+      colWidths: columns.map(() => `${evenPct.toFixed(2)}%`),
+      colPxWidths: columns.map(() => evenPx),
+    };
   }
 
   // Normalize to percentages within the table body (after reserving No column)
   // so every field fits inside A4 margins without overflowing horizontally
   const noPct = (noColPx / usablePx) * 100;
   const dataAreaPct = 100 - noPct;
-  return rawWidths.map((w) => `${((w / totalRaw) * dataAreaPct).toFixed(2)}%`);
+  return {
+    noColPct: `${noPct.toFixed(2)}%`,
+    colWidths: rawWidths.map((w) => `${((w / totalRaw) * dataAreaPct).toFixed(2)}%`),
+    colPxWidths: rawWidths.map((w) => (w / totalRaw) * remainingPx),
+  };
 }
 
 function estimateRowLines<T>(
   row: T,
   columns: PrintColumn<T>[],
+  colPxWidths: number[],
   isLandscape: boolean
 ): number {
   let maxLines = 1;
-  const totalCharBudget = isLandscape ? 148 : 96;
-  const avgCharsPerCol = Math.max(12, Math.floor(totalCharBudget / Math.max(1, columns.length)));
+  const charPx = isLandscape ? 5.1 : 4.4;
 
   for (let i = 0; i < columns.length; i++) {
     const col = columns[i];
+    if (col.align === 'right') continue;
     const val =
       typeof col.accessor === 'function' ? col.accessor(row, 0) : (row as any)[col.accessor];
-    const str = typeof val === 'string' || typeof val === 'number' ? String(val) : '';
-    const explicitPx = parseWidthPx(col.width);
-    const colChars = explicitPx
-      ? Math.max(10, Math.floor(explicitPx / 5.5))
-      : Math.max(avgCharsPerCol, 18);
-    if (str.length > colChars) {
-      maxLines = Math.max(maxLines, Math.ceil(str.length / colChars));
+    const str =
+      typeof val === 'string' || typeof val === 'number'
+        ? String(val)
+        : extractTextFromReactNode(val);
+    const cellPx = Math.max(24, (colPxWidths[i] ?? 80) - 8);
+    const colChars = Math.max(8, Math.floor(cellPx / charPx));
+    const segments = str.split(/\r?\n/);
+    let totalSegLines = 0;
+    for (const seg of segments) {
+      totalSegLines += Math.max(1, Math.ceil(seg.length / colChars));
+    }
+    if (totalSegLines > maxLines) {
+      maxLines = totalSegLines;
     }
   }
-  return Math.min(maxLines, 5);
+  return Math.min(maxLines, 12);
 }
 
 export function A4PrintPreviewModal<T = any>({
@@ -259,19 +287,47 @@ export function A4PrintPreviewModal<T = any>({
     return (getCurrentUser().username || 'ADMIN').toUpperCase();
   }, [printedBy, isOpen]);
 
-  const normalizedColWidths = useMemo(
+  const {
+    noColPct,
+    colWidths: normalizedColWidths,
+    colPxWidths,
+  } = useMemo(
     () => computeNormalizedColWidths(effectiveColumns, orientation),
     [effectiveColumns, orientation]
   );
 
-  // Paginate rows cleanly onto A4 pages respecting compact 8pt font and 10-12mm margins
+  // Paginate rows cleanly onto A4 pages respecting compact Portrait/Landscape font and 10-12mm margins
   const pages = useMemo(() => {
     const isLand = orientation === 'landscape';
-    const metaRowsPenalty = Math.ceil((effectiveMetaLines.length || 0) / 2);
-    const firstPageUnits = Math.max(10, (isLand ? 22 : 34) - metaRowsPenalty);
-    const nextPageUnits = isLand ? 30 : 44;
+    let metaRowsPenalty = 0;
+    let halfColAccum = 0;
+    for (const m of effectiveMetaLines) {
+      const val = m.value || '';
+      const isWide =
+        /keterangan/i.test(m.label || '') || val.includes('\n') || val.length > 52;
+      const charsPerLine = isWide ? (isLand ? 130 : 84) : isLand ? 65 : 40;
+      const linesForField = val
+        .split(/\r?\n/)
+        .reduce((s, seg) => s + Math.max(1, Math.ceil(seg.length / charsPerLine)), 0);
+      if (isWide) {
+        if (halfColAccum > 0) {
+          metaRowsPenalty += halfColAccum;
+          halfColAccum = 0;
+        }
+        metaRowsPenalty += linesForField;
+      } else if (halfColAccum === 0) {
+        halfColAccum = linesForField;
+      } else {
+        metaRowsPenalty += Math.max(halfColAccum, linesForField);
+        halfColAccum = 0;
+      }
+    }
+    if (halfColAccum > 0) metaRowsPenalty += halfColAccum;
+    const firstPageUnits = Math.max(10, (isLand ? 22 : 41) - metaRowsPenalty);
+    const nextPageUnits = isLand ? 30 : 49;
     const footerSignatureReserve =
-      (effectiveShowSignatures ? 5 : 0) + (effectiveSummaryItems.length > 0 ? 2 : 0);
+      (effectiveShowSignatures ? (isLand ? 5 : 6) : 0) +
+      (effectiveSummaryItems.length > 0 ? Math.ceil(effectiveSummaryItems.length * 0.9) + 2 : 0);
 
     if (effectiveRows.length === 0) {
       return [[] as { row: T; globalIndex: number }[]];
@@ -282,7 +338,7 @@ export function A4PrintPreviewModal<T = any>({
     let usedUnits = 0;
 
     effectiveRows.forEach((row, idx) => {
-      const units = estimateRowLines(row, effectiveColumns, isLand);
+      const units = estimateRowLines(row, effectiveColumns, colPxWidths, isLand);
       const limit = result.length === 0 ? firstPageUnits : nextPageUnits;
 
       if (currentPage.length > 0 && usedUnits + units > limit) {
@@ -295,11 +351,11 @@ export function A4PrintPreviewModal<T = any>({
     });
 
     if (currentPage.length > 0) {
-      // If final page is almost completely full and needs summary/signatures, move last row(s) to next page
+      // If final page is almost full and needs summary/signatures, carry trailing row(s) onto next page
       const lastLimit = result.length === 0 ? firstPageUnits : nextPageUnits;
       if (
         footerSignatureReserve > 0 &&
-        currentPage.length > 2 &&
+        currentPage.length > 1 &&
         usedUnits > lastLimit - footerSignatureReserve
       ) {
         const overflowCount = Math.min(3, Math.max(1, Math.floor(currentPage.length / 4)));
@@ -315,8 +371,9 @@ export function A4PrintPreviewModal<T = any>({
   }, [
     effectiveRows,
     effectiveColumns,
+    colPxWidths,
     orientation,
-    effectiveMetaLines.length,
+    effectiveMetaLines,
     effectiveShowSignatures,
     effectiveSummaryItems.length,
   ]);
@@ -391,7 +448,14 @@ export function A4PrintPreviewModal<T = any>({
   const pageSizeClasses =
     orientation === 'landscape'
       ? 'w-[297mm] min-h-[210mm] px-[12mm] py-[10mm]'
-      : 'w-[210mm] min-h-[297mm] px-[12mm] py-[12mm]';
+      : 'w-[210mm] min-h-[297mm] px-[10mm] py-[10mm]';
+  const isPortrait = orientation === 'portrait';
+  const tableTextClass = isPortrait
+    ? effectiveColumns.length >= 7
+      ? 'text-[7.2pt] leading-[1.2]'
+      : 'text-[7.5pt] leading-[1.22]'
+    : 'text-[8pt] leading-[1.25]';
+  const cellPadClass = isPortrait ? 'px-1 py-[2.5px]' : 'px-1.5 py-[3px]';
 
   const addressLines = (company.address || company.npwp_address || '')
     .split(/\r?\n/)
@@ -523,40 +587,54 @@ export function A4PrintPreviewModal<T = any>({
           return (
             <div
               key={`a4-page-${pageIdx}`}
-              className={`a4-page ${pageSizeClasses} bg-white text-black shadow-2xl flex flex-col justify-between box-border text-[8pt] leading-[1.3] print:shadow-none print:m-0 ${
+              className={`a4-page ${pageSizeClasses} bg-white text-black shadow-2xl flex flex-col justify-between box-border ${
+                isPortrait ? 'text-[7.5pt] leading-[1.25]' : 'text-[8pt] leading-[1.3]'
+              } print:shadow-none print:m-0 ${
                 !isLastPage ? 'print:break-after-page' : ''
               }`}
             >
               <div>
                 {/* KOP SURAT PERUSAHAAN (Compact Header matching reference layout) */}
-                <header className="mb-2.5">
+                <header className="mb-2">
                   {isFirstPage ? (
                     <div className="border-b-[2px] border-black pb-1.5">
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start justify-between gap-3">
                         <div className="flex items-start gap-2.5 min-w-0">
                           {company.logo_url && (
                             <img
                               src={company.logo_url}
                               alt="Logo"
-                              className="w-11 h-11 object-contain border border-gray-300 bg-white p-0.5 shrink-0"
+                              className={`${
+                                isPortrait ? 'w-10 h-10' : 'w-11 h-11'
+                              } object-contain border border-gray-300 bg-white p-0.5 shrink-0`}
                               onError={(e) => {
                                 (e.currentTarget as HTMLImageElement).style.display = 'none';
                               }}
                             />
                           )}
                           <div className="min-w-0">
-                            <h1 className="text-[11.5pt] font-bold uppercase tracking-tight text-black leading-[1.15]">
+                            <h1
+                              className={`${
+                                isPortrait ? 'text-[10.5pt]' : 'text-[11.5pt]'
+                              } font-bold uppercase tracking-tight text-black leading-[1.15]`}
+                            >
                               {company.company_name || 'PT. UNIMETRIKA UTAMA'}
                             </h1>
                             {addressLines.map((line, i) => (
                               <div
                                 key={i}
-                                className="text-[7.5pt] text-black uppercase leading-[1.3]"
+                                className={`${
+                                  isPortrait ? 'text-[7pt]' : 'text-[7.5pt]'
+                                } text-black uppercase leading-[1.28]`}
                               >
                                 {line}
                               </div>
                             ))}
-                            <div className="text-[7.5pt] text-black leading-[1.3] mt-[1px]">
+                            <div
+                              className={`${
+                                isPortrait ? 'text-[7pt]' : 'text-[7.5pt]'
+                              } text-black leading-[1.28] mt-[1px]`}
+                            >
                               {[
                                 company.country,
                                 company.phone ? `Telp: ${company.phone}` : '',
@@ -569,7 +647,11 @@ export function A4PrintPreviewModal<T = any>({
                           </div>
                         </div>
 
-                        <div className="text-right text-[7.5pt] leading-[1.35] text-black shrink-0 pl-3">
+                        <div
+                          className={`text-right ${
+                            isPortrait ? 'text-[7pt]' : 'text-[7.5pt]'
+                          } leading-[1.3] text-black shrink-0 pl-2`}
+                        >
                           {company.no_npwp && (
                             <div className="font-bold">NPWP: {company.no_npwp}</div>
                           )}
@@ -594,35 +676,71 @@ export function A4PrintPreviewModal<T = any>({
                 {isFirstPage && (
                   <div className="mb-2">
                     <div className="text-center mb-1.5">
-                      <h2 className="text-[10pt] font-bold uppercase underline tracking-wide">
+                      <h2
+                        className={`${
+                          isPortrait ? 'text-[9.5pt]' : 'text-[10pt]'
+                        } font-bold uppercase underline tracking-wide`}
+                      >
                         {effectiveTitle}
                       </h2>
                       {effectiveSubtitle && (
-                        <div className="text-[8pt] text-gray-800 mt-0.5">{effectiveSubtitle}</div>
+                        <div
+                          className={`${
+                            isPortrait ? 'text-[7.5pt]' : 'text-[8pt]'
+                          } text-gray-800 mt-0.5`}
+                        >
+                          {effectiveSubtitle}
+                        </div>
                       )}
                     </div>
 
                     {effectiveMetaLines.length > 0 && (
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border border-black/40 bg-[#F9FAFB] px-2.5 py-1 text-[7.5pt]">
-                        {effectiveMetaLines.map((m, idx) => (
-                          <div key={idx} className="flex min-w-0">
-                            <span className="font-semibold w-[115px] shrink-0">{m.label}</span>
-                            <span className="mr-1">:</span>
-                            <span className="truncate">{m.value || '-'}</span>
-                          </div>
-                        ))}
+                      <div
+                        className={`grid grid-cols-2 ${
+                          isPortrait ? 'gap-x-3 px-2 py-1 text-[7pt]' : 'gap-x-4 px-2.5 py-1 text-[7.5pt]'
+                        } gap-y-0.5 border border-black/40 bg-[#F9FAFB]`}
+                      >
+                        {effectiveMetaLines.map((m, idx) => {
+                          const valStr = m.value || '-';
+                          const isMultilineOrKet =
+                            /keterangan/i.test(m.label || '') ||
+                            valStr.includes('\n') ||
+                            valStr.length > 52;
+                          return (
+                            <div
+                              key={idx}
+                              className={`flex items-start min-w-0 ${
+                                isMultilineOrKet ? 'col-span-2' : ''
+                              }`}
+                            >
+                              <span
+                                className={`font-semibold ${
+                                  isPortrait ? 'w-[94px]' : 'w-[115px]'
+                                } shrink-0`}
+                              >
+                                {m.label}
+                              </span>
+                              <span className="mr-1 shrink-0">:</span>
+                              <span className="whitespace-pre-wrap break-words min-w-0">
+                                {valStr}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Report Data Table — Compact 8pt, all columns guaranteed to fit inside A4 width */}
-                <table className="w-full max-w-full table-fixed border-collapse border border-black text-[8pt] leading-[1.25]">
+                {/* Report Data Table — Compact Portrait/Landscape sizing, all columns guaranteed to fit inside A4 width */}
+                <table
+                  className={`w-full max-w-full table-fixed border-collapse border border-black ${tableTextClass}`}
+                >
                   <thead>
                     <tr className="bg-[#E5E7EB] text-black">
                       <th
-                        style={{ width: orientation === 'landscape' ? '2.8%' : '4.2%' }}
-                        className="border border-black px-1 py-[3px] text-center font-bold"
+                        style={{ width: noColPct }}
+                        className="border border-black px-0.5 py-[3px] text-center font-bold"
                       >
                         No
                       </th>
@@ -630,7 +748,7 @@ export function A4PrintPreviewModal<T = any>({
                         <th
                           key={colIdx}
                           style={{ width: normalizedColWidths[colIdx] }}
-                          className={`border border-black px-1.5 py-[3px] font-bold break-words [overflow-wrap:anywhere] ${
+                          className={`border border-black ${cellPadClass} font-bold break-words [overflow-wrap:anywhere] ${
                             col.align === 'right'
                               ? 'text-right'
                               : col.align === 'center'
@@ -655,8 +773,11 @@ export function A4PrintPreviewModal<T = any>({
                       </tr>
                     ) : (
                       pageRows.map(({ row, globalIndex }) => (
-                        <tr key={globalIndex} className="odd:bg-white even:bg-[#F9FAFB]">
-                          <td className="border border-black px-1 py-[3px] text-center align-top">
+                        <tr
+                          key={globalIndex}
+                          className="odd:bg-white even:bg-[#F9FAFB] print:break-inside-avoid"
+                        >
+                          <td className="border border-black px-0.5 py-[2.5px] text-center align-top tabular-nums">
                             {globalIndex + 1}
                           </td>
                           {effectiveColumns.map((col, colIdx) => {
@@ -667,12 +788,12 @@ export function A4PrintPreviewModal<T = any>({
                             return (
                               <td
                                 key={colIdx}
-                                className={`border border-black px-1.5 py-[3px] align-top break-words [overflow-wrap:anywhere] ${
+                                className={`border border-black ${cellPadClass} align-top ${
                                   col.align === 'right'
-                                    ? 'text-right tabular-nums'
+                                    ? 'text-right tabular-nums whitespace-nowrap'
                                     : col.align === 'center'
-                                    ? 'text-center'
-                                    : 'text-left'
+                                    ? 'text-center whitespace-pre-wrap break-words [overflow-wrap:anywhere]'
+                                    : 'text-left whitespace-pre-wrap break-words [overflow-wrap:anywhere]'
                                 }`}
                               >
                                 {cellVal ?? ''}
@@ -686,48 +807,64 @@ export function A4PrintPreviewModal<T = any>({
                 </table>
 
                 {/* Summary Totals & Signatures only on Final Page */}
-                {isLastPage && effectiveSummaryItems.length > 0 && (
-                  <div className="mt-2.5 flex justify-end">
-                    <div className="border border-black bg-[#F3F4F6] px-2.5 py-1 min-w-[220px] text-[8pt]">
-                      {effectiveSummaryItems.map((item, idx) => (
-                        <div key={idx} className="flex justify-between space-x-5 font-bold">
-                          <span>{item.label}</span>
-                          <span className="tabular-nums">{item.value}</span>
+                {isLastPage && (effectiveSummaryItems.length > 0 || effectiveShowSignatures) && (
+                  <div className="print:break-inside-avoid">
+                    {effectiveSummaryItems.length > 0 && (
+                      <div className="mt-2.5 flex justify-end">
+                        <div
+                          className={`border border-black bg-[#F3F4F6] px-2.5 py-1 ${
+                            isPortrait ? 'min-w-[205px] text-[7.5pt]' : 'min-w-[220px] text-[8pt]'
+                          }`}
+                        >
+                          {effectiveSummaryItems.map((item, idx) => (
+                            <div key={idx} className="flex justify-between space-x-5 font-bold">
+                              <span>{item.label}</span>
+                              <span className="tabular-nums">{item.value}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                      </div>
+                    )}
 
-                {isLastPage && effectiveShowSignatures && (
-                  <div className="mt-4 grid grid-cols-3 gap-6 text-center text-[8pt]">
-                    <div>
-                      <div>Dibuat Oleh,</div>
-                      <div className="h-[38px]" />
-                      <div className="border-t border-black pt-0.5 font-semibold">
-                        ( {activeUser} )
+                    {effectiveShowSignatures && (
+                      <div
+                        className={`mt-4 grid grid-cols-3 ${
+                          isPortrait ? 'gap-4 text-[7.5pt]' : 'gap-6 text-[8pt]'
+                        } text-center`}
+                      >
+                        <div>
+                          <div>Dibuat Oleh,</div>
+                          <div className="h-[36px]" />
+                          <div className="border-t border-black pt-0.5 font-semibold">
+                            ( {activeUser} )
+                          </div>
+                        </div>
+                        <div>
+                          <div>Diperiksa Oleh,</div>
+                          <div className="h-[36px]" />
+                          <div className="border-t border-black pt-0.5 font-semibold">
+                            ( Supervisor )
+                          </div>
+                        </div>
+                        <div>
+                          <div>Disetujui Oleh,</div>
+                          <div className="h-[36px]" />
+                          <div className="border-t border-black pt-0.5 font-semibold">
+                            ( Pimpinan )
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <div>Diperiksa Oleh,</div>
-                      <div className="h-[38px]" />
-                      <div className="border-t border-black pt-0.5 font-semibold">
-                        ( Supervisor )
-                      </div>
-                    </div>
-                    <div>
-                      <div>Disetujui Oleh,</div>
-                      <div className="h-[38px]" />
-                      <div className="border-t border-black pt-0.5 font-semibold">
-                        ( Pimpinan )
-                      </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
 
               {/* Page Footer */}
-              <footer className="mt-3 pt-1 border-t border-black/50 flex items-center justify-between text-[7.5pt] text-gray-700">
+              <footer
+                className={`mt-3 pt-1 border-t border-black/50 flex items-center justify-between ${
+                  isPortrait ? 'text-[7pt]' : 'text-[7.5pt]'
+                } text-gray-700`}
+              >
                 <span>
                   {company.company_name} — WithCoder ERP
                 </span>

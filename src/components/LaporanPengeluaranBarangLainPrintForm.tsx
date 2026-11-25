@@ -856,7 +856,7 @@ export const LaporanPengeluaranBarangLainPrintForm: React.FC<
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">
                           {formatMoney(r.qty)}
                         </td>
-                        <td className="px-2 py-1">{r.keterangan}</td>
+                        <td className="px-2 py-1 whitespace-pre-line align-top">{r.keterangan}</td>
                       </tr>
                     );
                   })
@@ -978,14 +978,15 @@ export const LaporanPengeluaranBarangLainPrintForm: React.FC<
                   className="w-full px-2 py-1 bg-white border border-[#7A7A7A] text-right"
                 />
               </div>
-              <div className="flex items-end space-x-1.5">
+              <div className="flex items-start space-x-1.5">
                 <div className="flex-1">
                   <label className="block font-semibold">Keterangan</label>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={2}
                     value={formKeterangan}
                     onChange={(e) => setFormKeterangan(e.target.value)}
-                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Catatan pengeluaran..."
+                    className="w-full px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
                 <button

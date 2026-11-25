@@ -429,11 +429,13 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
     const endIso = toIsoDate(tglEnd);
     const filterCode = filterType === 'item_code' ? itemCode.trim().toUpperCase() : '';
 
-    const [stockAwals, penerimaanLain, pengeluaranLain, barangs] = await Promise.all([
+    const [stockAwals, penerimaanLain, pengeluaranLain, barangs, stockOpnames, stockOpnameDetails] = await Promise.all([
       erpList<any>('stock_awal', { orderBy: 'item_code', asc: true }).catch(() => []),
       erpList<any>('penerimaan_barang_lains', { orderBy: 'tanggal', asc: true }).catch(() => []),
       erpList<any>('pengeluaran_barang_lains', { orderBy: 'tanggal', asc: true }).catch(() => []),
       erpList<any>('master_barangs', { orderBy: 'kode', asc: true }).catch(() => []),
+      erpList<any>('stock_opnames', { orderBy: 'tanggal', asc: true }).catch(() => []),
+      erpList<any>('stock_opname_details', { orderBy: 'no_urut', asc: true, limit: 5000 }).catch(() => []),
     ]);
 
     const movements: {
@@ -525,6 +527,38 @@ export const KartuStockPrintForm: React.FC<KartuStockPrintFormProps> = ({
         masuk: 0,
         keluar: Number(k.qty || 0),
         keterangan: k.keterangan || k.customer || '',
+      });
+    }
+
+    const opnameHdrMap = new Map<string, any>();
+    for (const hdr of stockOpnames) {
+      if (hdr?.id) opnameHdrMap.set(String(hdr.id), hdr);
+    }
+    for (const od of stockOpnameDetails) {
+      const hdr = opnameHdrMap.get(String(od.opname_id || ''));
+      if (!hdr) continue;
+      const postStatus = String(hdr.sts_post || '').toUpperCase();
+      if (postStatus !== 'POSTING' && postStatus !== 'POSTED') continue;
+      const code = String(od.kode || '').trim().toUpperCase();
+      if (!code) continue;
+      if (filterCode && code !== filterCode) continue;
+      if (lokasiStock !== 'ALL' && hdr.lokasi_stock && hdr.lokasi_stock !== lokasiStock) continue;
+      const tglIso = toIsoDate(hdr.tanggal) || '';
+      if (startIso && tglIso && tglIso < startIso) continue;
+      if (endIso && tglIso && tglIso > endIso) continue;
+      const selisih = Number(od.selisih ?? (Number(od.stock_fisik || 0) - Number(od.stock_sistem || 0)));
+      if (selisih === 0) continue;
+      movements.push({
+        sortDate: tglIso || '9999-99-99',
+        tanggal: toDisplayDMyShort(hdr.tanggal) || '-',
+        no_bukti: hdr.no_bukti || od.no_bukti || '',
+        jenis: 'Stock Opname',
+        kode_barang: code,
+        nama_barang: od.nama_barang || '',
+        lokasi: hdr.lokasi_stock || '01 - OFFICE',
+        masuk: selisih > 0 ? selisih : 0,
+        keluar: selisih < 0 ? Math.abs(selisih) : 0,
+        keterangan: od.keterangan || hdr.keterangan || 'Penyesuaian Stock Opname',
       });
     }
 

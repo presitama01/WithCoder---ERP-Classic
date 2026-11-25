@@ -1074,38 +1074,38 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
   ];
 
   const detailPrintColumns: PrintColumn<PurchaseOrderDetailItem>[] = [
-    { header: 'Kode', accessor: 'kode', width: '88px' },
+    { header: 'Kode', accessor: 'kode', width: '70px' },
     { header: 'Nama Barang', accessor: 'namaBarang' },
-    { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
+    { header: 'Unit', accessor: 'unit', align: 'center', width: '38px' },
     {
       header: 'Terima',
       accessor: (r) => formatMoney(r.terima),
       align: 'right',
-      width: '68px',
+      width: '48px',
     },
     {
       header: 'QTY',
       accessor: (r) => formatMoney(r.qty),
       align: 'right',
-      width: '68px',
+      width: '48px',
     },
     {
       header: 'Harga',
       accessor: (r) => formatMoney(r.harga),
       align: 'right',
-      width: '96px',
+      width: '80px',
     },
     {
       header: 'Jumlah',
       accessor: (r) => formatMoney(r.jumlah),
       align: 'right',
-      width: '104px',
+      width: '86px',
     },
     {
       header: 'Total',
       accessor: (r) => formatMoney(r.total),
       align: 'right',
-      width: '104px',
+      width: '88px',
     },
   ];
 
@@ -1226,7 +1226,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center font-mono font-bold">
                         {item.mataUang}
                       </td>
-                      <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.keterangan}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0] whitespace-pre-line align-top">{item.keterangan}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-center">{item.ppn}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono">{item.nilaiPpn}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-right font-mono font-semibold">{item.nilaiPo}</td>
@@ -1595,13 +1595,14 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-gray-700 shrink-0">Keterangan:</label>
-                    <input
-                      type="text"
+                  <div className="flex items-start justify-between gap-2">
+                    <label className="text-xs font-semibold text-gray-700 shrink-0 pt-1">Keterangan:</label>
+                    <textarea
+                      rows={3}
                       value={newKeterangan}
                       onChange={(e) => setNewKeterangan(e.target.value)}
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                      placeholder="Contoh:&#10;1. Syarat pembayaran...&#10;2. Jadwal pengiriman..."
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs resize-y leading-snug"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -1936,7 +1937,7 @@ export const ListPurchaseOrderForm: React.FC<ListPurchaseOrderFormProps> = ({
                 ]
               : []
           }
-          orientation="landscape"
+          orientation={printMode === 'detail' ? 'portrait' : 'landscape'}
           columns={
             printMode === 'detail'
               ? selectedPoDetails.length > 0

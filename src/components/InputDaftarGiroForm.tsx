@@ -1105,13 +1105,13 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
                               <option value="Belum Cair">Belum Cair</option>
                             </select>
                           </td>
-                          <td className="border-r border-[#ACA899] p-0">
-                            <input
-                              type="text"
+                          <td className="border-r border-[#ACA899] p-0 align-top">
+                            <textarea
+                              rows={2}
                               value={row.keterangan}
                               onFocus={() => setSelectedId(row.id)}
                               onChange={(e) => handleCellChange(row.id, 'keterangan', e.target.value)}
-                              className="w-full h-[21px] px-1.5 text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF]"
+                              className="w-full px-1.5 py-0.5 text-[11px] bg-transparent outline-none focus:bg-[#E8F1FF] resize-y leading-snug"
                             />
                           </td>
                           <td
@@ -1352,11 +1352,12 @@ export const InputDaftarGiroForm: React.FC<InputDaftarGiroFormProps> = ({ isOpen
 
               <div>
                 <label className="block font-bold text-black mb-1">Keterangan</label>
-                <input
-                  type="text"
+                <textarea
+                  rows={3}
                   value={formRow.keterangan}
                   onChange={(e) => setFormRow({ ...formRow, keterangan: e.target.value })}
-                  className="w-full h-[24px] px-2 bg-white border border-[#7F9DB9]"
+                  placeholder="Catatan giro / penomoran..."
+                  className="w-full px-2 py-1 bg-white border border-[#7F9DB9] resize-y leading-snug"
                 />
               </div>
 

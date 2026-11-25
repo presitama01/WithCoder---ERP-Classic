@@ -1426,7 +1426,7 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-mono">{item.deposit}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglKirim}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.persen}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 whitespace-pre-line align-top">{item.keterangan}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.soClose}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.dibuatOleh}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.tglCreated}</td>
@@ -1783,13 +1783,14 @@ export const ListSalesOrderForm: React.FC<ListSalesOrderFormProps> = ({
                     </select>
                   </div>
                 </div>
-                <div className="md:col-span-2 flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="md:col-span-2 flex items-start justify-between gap-2">
+                  <label className="font-semibold shrink-0 pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="flex-1 max-w-[730px] px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Contoh:&#10;1. Syarat pengiriman...&#10;2. Catatan tambahan..."
+                    className="flex-1 max-w-[730px] px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
               </div>

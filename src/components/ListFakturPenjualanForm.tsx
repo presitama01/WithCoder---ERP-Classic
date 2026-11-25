@@ -1574,13 +1574,13 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
   ];
 
   const detailPrintColumns: PrintColumn<FakturDetailItem>[] = [
-    { header: 'Kode', accessor: 'kode', width: '92px' },
+    { header: 'Kode', accessor: 'kode', width: '76px' },
     { header: 'Nama Barang', accessor: 'namaBarang' },
-    { header: 'Unit', accessor: 'unit', align: 'center', width: '58px' },
-    { header: 'QTY', accessor: (r) => formatMoney(r.qty), align: 'right', width: '68px' },
-    { header: 'Harga', accessor: (r) => formatMoney(r.harga), align: 'right', width: '96px' },
-    { header: 'Jumlah', accessor: (r) => formatMoney(r.jumlah), align: 'right', width: '104px' },
-    { header: 'Total', accessor: (r) => formatMoney(r.total), align: 'right', width: '104px' },
+    { header: 'Unit', accessor: 'unit', align: 'center', width: '42px' },
+    { header: 'QTY', accessor: (r) => formatMoney(r.qty), align: 'right', width: '54px' },
+    { header: 'Harga', accessor: (r) => formatMoney(r.harga), align: 'right', width: '86px' },
+    { header: 'Jumlah', accessor: (r) => formatMoney(r.jumlah), align: 'right', width: '92px' },
+    { header: 'Total', accessor: (r) => formatMoney(r.total), align: 'right', width: '94px' },
   ];
 
   return (
@@ -1691,7 +1691,7 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   <td className="border-r border-[#00B000] px-3 py-1 text-center font-sans">{item.sales}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 font-sans">{item.lokasiStock}</td>
                   <td className="border-r border-[#00B000] px-3 py-1">{item.jthTmp}</td>
-                  <td className="border-r border-[#00B000] px-3 py-1 font-sans">{item.keterangan || '-'}</td>
+                  <td className="border-r border-[#00B000] px-3 py-1 font-sans whitespace-pre-line align-top">{item.keterangan || '-'}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-center">{item.ppn}</td>
                   <td className="border-r border-[#00B000] px-3 py-1 text-right">
                     {item.totalDp > 0 ? formatMoney(item.totalDp) : '-'}
@@ -2123,13 +2123,14 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                   />
                 </div>
 
-                <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="flex items-start justify-between gap-2">
+                  <label className="font-semibold shrink-0 pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Catatan / penomoran faktur..."
+                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
 
@@ -2527,10 +2528,11 @@ export const ListFakturPenjualanForm: React.FC<ListFakturPenjualanFormProps> = (
                     : '-',
                 },
                 { label: 'Terbilang', value: terbilangRupiah(selectedFaktur.nilaiPenjualanNum) },
+                { label: 'Keterangan', value: selectedFaktur.keterangan || '-' },
               ]
             : []
         }
-        orientation="landscape"
+        orientation={printMode === 'detail' ? 'portrait' : 'landscape'}
         columns={
           printMode === 'detail'
             ? selectedFakturDetails.length > 0

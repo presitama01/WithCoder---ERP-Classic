@@ -140,7 +140,7 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         telepon2: selected.telepon2.trim(),
         fax: (selected.fax || '').trim(),
         pic: (selected.pic || '').trim().toUpperCase(),
-        keterangan: (selected.keterangan || '').trim().toUpperCase(),
+        keterangan: (selected.keterangan || '').trim(),
       };
       let saved: any;
       let usedFallback = false;
@@ -288,7 +288,7 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
         telepon2: newTelp2.trim(),
         fax: newFax.trim(),
         pic: newPic.trim().toUpperCase(),
-        keterangan: newKeterangan.trim().toUpperCase(),
+        keterangan: newKeterangan.trim(),
       };
       const fullPayload = {
         ...basePayload,
@@ -521,7 +521,7 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.telepon2}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.fax || ''}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] uppercase">{item.pic || ''}</td>
-                        <td className="px-2 py-0.5 border-r border-[#ACA899]">{item.keterangan || ''}</td>
+                        <td className="px-2 py-0.5 border-r border-[#ACA899] whitespace-pre-line align-top">{item.keterangan || ''}</td>
                         <td className="px-2 py-0.5 border-r border-[#ACA899] text-center text-[10px] font-bold">
                           {item.isActive ? 'AKTIF' : 'NON-AKTIF'}
                         </td>
@@ -655,13 +655,14 @@ export const MasterLokasiGudangListForm: React.FC<MasterLokasiGudangListFormProp
                 />
               </div>
 
-              <div className="flex items-center space-x-3">
-                <label className="w-[110px] font-bold">Keterangan :</label>
-                <input
-                  type="text"
+              <div className="flex items-start space-x-3">
+                <label className="w-[110px] font-bold pt-1">Keterangan :</label>
+                <textarea
+                  rows={2}
                   value={newKeterangan}
                   onChange={(e) => setNewKeterangan(e.target.value)}
-                  className="flex-1 h-[22px] bg-white border border-[#7F9DB9] px-2 uppercase outline-none focus:border-[#316AC5]"
+                  placeholder="Catatan lokasi gudang..."
+                  className="flex-1 bg-white border border-[#7F9DB9] px-2 py-1 outline-none focus:border-[#316AC5] resize-y leading-snug"
                 />
               </div>
 

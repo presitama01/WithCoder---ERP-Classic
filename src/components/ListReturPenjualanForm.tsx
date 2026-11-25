@@ -1086,7 +1086,7 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-medium">{item.namaCustomer}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 font-mono">{item.noFaktur || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-right font-semibold">{item.nilaiRetur}</td>
-                  <td className="border-r border-[#E0E0E0] px-3 py-1">{item.keterangan || '-'}</td>
+                  <td className="border-r border-[#E0E0E0] px-3 py-1 whitespace-pre-line align-top">{item.keterangan || '-'}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.disc}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1 text-center">{item.ppn}</td>
                   <td className="border-r border-[#E0E0E0] px-3 py-1">{item.lokasiStock}</td>
@@ -1347,13 +1347,14 @@ export const ListReturPenjualanForm: React.FC<ListReturPenjualanFormProps> = ({
                   />
                 </div>
 
-                <div className="flex items-center justify-between gap-2">
-                  <label className="font-semibold shrink-0">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="flex items-start justify-between gap-2">
+                  <label className="font-semibold shrink-0 pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={newKeterangan}
                     onChange={(e) => setNewKeterangan(e.target.value)}
-                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A]"
+                    placeholder="Contoh:&#10;1. Retur barang rusak&#10;2. Potong piutang..."
+                    className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] resize-y leading-snug"
                   />
                 </div>
 

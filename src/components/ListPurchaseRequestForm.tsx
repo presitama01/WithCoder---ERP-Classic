@@ -668,7 +668,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.deliveryTo}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.delivery}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] font-mono">{item.noPo}</td>
-                      <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.keterangan || '-'}</td>
+                      <td className="px-2 py-1 border-r border-[#E0E0E0] whitespace-pre-line align-top">{item.keterangan || '-'}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.dibuatOleh}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0] text-[11px]">{item.tglCreated}</td>
                       <td className="px-2 py-1 border-r border-[#E0E0E0]">{item.diupdateOleh}</td>
@@ -761,7 +761,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                       <td className="px-2 py-1 border-r border-[#E5E5E5] text-right font-mono font-semibold">
                         {formatMoney(d.qty)}
                       </td>
-                      <td className="px-2 py-1">{d.keterangan || '-'}</td>
+                      <td className="px-2 py-1 whitespace-pre-line align-top">{d.keterangan || '-'}</td>
                     </tr>
                   ))
                 )}
@@ -880,14 +880,14 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                       className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs font-mono uppercase"
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-semibold text-gray-700 shrink-0">Keterangan:</label>
-                    <input
-                      type="text"
+                  <div className="flex items-start justify-between gap-2">
+                    <label className="text-xs font-semibold text-gray-700 shrink-0 pt-1">Keterangan:</label>
+                    <textarea
+                      rows={3}
                       value={newKeterangan}
                       onChange={(e) => setNewKeterangan(e.target.value)}
-                      placeholder="Catatan permintaan pembelian..."
-                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs"
+                      placeholder="Contoh:&#10;1. Permintaan pembelian..."
+                      className="w-64 px-2 py-1 bg-white border border-[#7A7A7A] rounded text-xs resize-y leading-snug"
                     />
                   </div>
                 </div>
@@ -1000,9 +1000,9 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                                     className="w-full px-1 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-right font-mono text-[11px]"
                                   />
                                 </td>
-                                <td className="p-0.5 border-r border-[#E5E5E5]">
-                                  <input
-                                    type="text"
+                                <td className="p-0.5 border-r border-[#E5E5E5] align-top">
+                                  <textarea
+                                    rows={2}
                                     value={d.keterangan}
                                     onChange={(e) =>
                                       setDetailRows((prev) =>
@@ -1012,7 +1012,7 @@ export const ListPurchaseRequestForm: React.FC<ListPurchaseRequestFormProps> = (
                                       )
                                     }
                                     placeholder="Catatan item"
-                                    className="w-full px-1.5 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-[11px]"
+                                    className="w-full px-1.5 py-0.5 bg-white border border-[#C0C0C0] rounded-xs text-[11px] resize-y leading-snug"
                                   />
                                 </td>
                                 <td className="p-0.5 text-center">

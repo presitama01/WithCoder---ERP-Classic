@@ -544,7 +544,7 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.namaSupplier}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.noPo}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.noFakturPembelian}</td>
-                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-nowrap">{item.keterangan}</td>
+                      <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 whitespace-pre-line align-top">{item.keterangan}</td>
                       <td className="px-2 py-0.5 border-r border-[#7A7A7A]/40 text-right whitespace-nowrap tabular-nums">
                         {formatMoney(item.nilaiPembelian, true)}
                       </td>
@@ -675,13 +675,14 @@ export const ListHppPembelianForm: React.FC<ListHppPembelianFormProps> = ({
                     className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-black">Keterangan:</label>
-                  <input
-                    type="text"
+                <div className="flex items-start justify-between">
+                  <label className="text-xs font-semibold text-black pt-1">Keterangan:</label>
+                  <textarea
+                    rows={3}
                     value={formKeterangan}
                     onChange={(e) => setFormKeterangan(e.target.value)}
-                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                    placeholder="Catatan HPP / penomoran pembelian..."
+                    className="w-72 px-2 py-1 bg-white border border-[#7A7A7A] text-xs resize-y leading-snug"
                   />
                 </div>
                 <div className="flex items-center justify-between">

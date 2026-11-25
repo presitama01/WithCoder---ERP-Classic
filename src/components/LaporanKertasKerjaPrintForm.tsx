@@ -724,7 +724,7 @@ export const LaporanKertasKerjaPrintForm: React.FC<
                         <td className="border-r border-[#E0E0E0] px-2 py-1 font-mono font-bold">{r.no_bukti}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-center">{r.tanggal_display}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1">{r.kategori}</td>
-                        <td className="border-r border-[#E0E0E0] px-2 py-1">{r.keterangan}</td>
+                        <td className="border-r border-[#E0E0E0] px-2 py-1 whitespace-pre-line align-top">{r.keterangan}</td>
                         <td className="border-r border-[#E0E0E0] px-2 py-1 text-right font-mono font-bold">
                           {formatRupiah(r.saldo_debet)}
                         </td>
@@ -805,14 +805,15 @@ export const LaporanKertasKerjaPrintForm: React.FC<
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-black w-28">Keterangan:</label>
-                <input
-                  type="text"
+              <div className="flex items-start justify-between">
+                <label className="text-xs font-semibold text-black w-28 pt-1">Keterangan:</label>
+                <textarea
+                  rows={3}
                   value={formKeterangan}
                   onChange={(e) => setFormKeterangan(e.target.value)}
                   required
-                  className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] text-xs"
+                  placeholder="Contoh:&#10;1. Penyesuaian kertas kerja..."
+                  className="flex-1 px-2 py-1 bg-white border border-[#7A7A7A] text-xs resize-y leading-snug"
                 />
               </div>
 
@@ -913,16 +914,16 @@ export const LaporanKertasKerjaPrintForm: React.FC<
                             className="w-full px-1 py-0.5 bg-white outline-none text-right font-mono"
                           />
                         </td>
-                        <td className="border border-[#E0DED5] p-0.5">
-                          <input
-                            type="text"
+                        <td className="border border-[#E0DED5] p-0.5 align-top">
+                          <textarea
+                            rows={2}
                             value={line.keterangan}
                             onChange={(e) =>
                               setDetailLines((prev) =>
                                 prev.map((l, i) => (i === idx ? { ...l, keterangan: e.target.value } : l))
                               )
                             }
-                            className="w-full px-1 py-0.5 bg-white outline-none"
+                            className="w-full px-1 py-0.5 bg-white outline-none resize-y leading-snug"
                           />
                         </td>
                         <td className="border border-[#E0DED5] text-center">
