@@ -1915,11 +1915,7 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
         isOpen={isPrintOpen}
         onClose={() => setIsPrintOpen(false)}
         title={printMode === 'detail' ? 'SURAT JALAN (DELIVERY ORDER)' : 'LAPORAN LIST SURAT JALAN (DO)'}
-        subtitle={
-          printMode === 'detail'
-            ? `No. Surat Jalan: ${selectedSj?.noBukti || '-'} | Customer: ${selectedSj?.namaCustomer || '-'}`
-            : `Filter Tanggal: ${tanggalFilter}`
-        }
+        subtitle={printMode === 'detail' ? undefined : `Filter Tanggal: ${tanggalFilter}`}
         metaLines={
           printMode === 'detail' && selectedSj
             ? [
@@ -1927,19 +1923,20 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
                 { label: 'Tanggal', value: selectedSj.tanggal },
                 { label: 'Kepada Yth.', value: selectedSj.namaCustomer },
                 { label: 'Alamat Kirim', value: selectedSj.alamatKirim || customerAddressMap[selectedSj.namaCustomer] || '-' },
-                { label: 'No. SO / PO Customer', value: `${selectedSj.noSo || '-'} / ${selectedSj.poNo || '-'}` },
+                { label: 'No. Purchase Order', value: selectedSj.poNo || '-' },
                 {
                   label: 'Ekspedisi / Kendaraan',
                   value: [selectedSj.namaExpedisi, selectedSj.noPolisi, selectedSj.namaSupir]
                     .filter(Boolean)
                     .join(' | ') || '-',
                 },
-                { label: 'Lokasi Gudang', value: selectedSj.lokasiStock || '-' },
                 { label: 'Keterangan', value: selectedSj.keterangan || '-' },
               ]
             : []
         }
+        hideHeaderProfileMeta={printMode === 'detail'}
         showSignatures={printMode === 'detail'}
+        showReceiverSignature={printMode === 'detail'}
         orientation={printMode === 'detail' ? 'portrait' : 'landscape'}
         toolbarExtra={
           <div className="flex items-center gap-2">

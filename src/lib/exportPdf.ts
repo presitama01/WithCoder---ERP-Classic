@@ -45,6 +45,8 @@ export interface PdfExportOptions<T = any> {
   rows: T[];
   summaryItems?: PdfSummaryItem[];
   showSignatures?: boolean;
+  showReceiverSignature?: boolean;
+  hideHeaderProfileMeta?: boolean;
   orientation?: 'portrait' | 'landscape';
   printedBy?: string;
 }
@@ -60,6 +62,8 @@ function buildPdfDocument<T = any>(options: PdfExportOptions<T>): { doc: jsPDF; 
     rows,
     summaryItems = [],
     showSignatures = true,
+    showReceiverSignature = false,
+    hideHeaderProfileMeta = false,
     orientation = 'portrait',
     printedBy = 'ADMIN',
   } = options;
@@ -122,21 +126,28 @@ function buildPdfDocument<T = any>(options: PdfExportOptions<T>): { doc: jsPDF; 
     leftY += wrappedContact.length * 3.1;
   }
 
-  // Right block: NPWP, Kode Profil, Tgl Cetak
+  // Right block: NPWP, Kode Profil, Tgl Cetak (or only Tgl Cetak when minimal)
   let rightY = cursorY;
   doc.setFontSize(isPortrait ? 7 : 7.5);
-  if (companyProfile?.no_npwp) {
-    doc.setFont('helvetica', 'bold');
-    doc.text(`NPWP: ${companyProfile.no_npwp}`, pageWidth - marginX, rightY, { align: 'right' });
+  if (hideHeaderProfileMeta) {
+    doc.setFont('helvetica', 'normal');
+    const bottomRightY = Math.max(leftY - 3.1, cursorY);
+    doc.text(`Tgl Cetak: ${printDate}`, pageWidth - marginX, bottomRightY, { align: 'right' });
+    rightY = bottomRightY + 3.1;
+  } else {
+    if (companyProfile?.no_npwp) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(`NPWP: ${companyProfile.no_npwp}`, pageWidth - marginX, rightY, { align: 'right' });
+      rightY += 3.5;
+    }
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Kode Profil: ${companyProfile?.profile_code || '01'}`, pageWidth - marginX, rightY, {
+      align: 'right',
+    });
+    rightY += 3.5;
+    doc.text(`Tgl Cetak: ${printDate}`, pageWidth - marginX, rightY, { align: 'right' });
     rightY += 3.5;
   }
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Kode Profil: ${companyProfile?.profile_code || '01'}`, pageWidth - marginX, rightY, {
-    align: 'right',
-  });
-  rightY += 3.5;
-  doc.text(`Tgl Cetak: ${printDate}`, pageWidth - marginX, rightY, { align: 'right' });
-  rightY += 3.5;
 
   cursorY = Math.max(leftY, rightY) + 1.5;
   doc.setDrawColor(0, 0, 0);
@@ -171,7 +182,7 @@ function buildPdfDocument<T = any>(options: PdfExportOptions<T>): { doc: jsPDF; 
   // --- 3. Metadata Grid (if present, wraps long & multiline values cleanly) ---
   if (metaLines.length > 0) {
     const colW = usableWidth / 2;
-    const labelOffset = isPortrait ? 24 : 28;
+    const labelOffset = isPortrait ? 28 : 30;
     const lineStep = 3.7;
     doc.setFontSize(isPortrait ? 7 : 7.5);
 
@@ -375,7 +386,7 @@ function buildPdfDocument<T = any>(options: PdfExportOptions<T>): { doc: jsPDF; 
   let finalY: number = (doc as any).lastAutoTable?.finalY ?? cursorY + 10;
   const neededBottomHeight =
     (summaryItems.length > 0 ? summaryItems.length * 4.5 + 8 : 0) +
-    (showSignatures ? 28 : 0);
+    (showSignatures ? 28 + (showReceiverSignature ? 24 : 0) : 0);
 
   if (neededBottomHeight > 0 && finalY + neededBottomHeight > pageHeight - marginBottom) {
     doc.addPage();
@@ -433,6 +444,18 @@ function buildPdfDocument<T = any>(options: PdfExportOptions<T>): { doc: jsPDF; 
       doc.setFont('helvetica', 'bold');
       doc.text(sig.bottom, centerX, finalY + 16.8, { align: 'center' });
     });
+
+    if (showReceiverSignature) {
+      const recvY = finalY + 25;
+      const centerX = marginX + sigWidth / 2;
+      doc.setFont('helvetica', 'normal');
+      doc.text('Penerima', centerX, recvY, { align: 'center' });
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.25);
+      doc.line(centerX - 24, recvY + 13, centerX + 24, recvY + 13);
+      doc.setFont('helvetica', 'bold');
+      doc.text('(                        )', centerX, recvY + 16.8, { align: 'center' });
+    }
   }
 
   // --- 6. Page Footer on Every Page ---

@@ -52,6 +52,8 @@ interface A4PrintPreviewModalProps<T = any> {
   selectedSummaryItems?: PrintSummaryItem[];
   selectedShowSignatures?: boolean;
   defaultPrintScope?: 'selected' | 'all';
+  hideHeaderProfileMeta?: boolean;
+  showReceiverSignature?: boolean;
 }
 
 function parseWidthPx(w?: string): number | null {
@@ -194,6 +196,8 @@ export function A4PrintPreviewModal<T = any>({
   selectedSummaryItems,
   selectedShowSignatures,
   defaultPrintScope,
+  hideHeaderProfileMeta = false,
+  showReceiverSignature = false,
 }: A4PrintPreviewModalProps<T>) {
   const hasSelectedScope = Boolean(
     selectedRow || (selectedRows && selectedRows.length > 0)
@@ -347,7 +351,7 @@ export function A4PrintPreviewModal<T = any>({
     const firstPageUnits = Math.max(10, (isLand ? 22 : 41) - metaRowsPenalty);
     const nextPageUnits = isLand ? 30 : 49;
     const footerSignatureReserve =
-      (effectiveShowSignatures ? (isLand ? 5 : 6) : 0) +
+      (effectiveShowSignatures ? (isLand ? 5 : 6) + (showReceiverSignature ? 5 : 0) : 0) +
       (effectiveSummaryItems.length > 0 ? Math.ceil(effectiveSummaryItems.length * 0.9) + 2 : 0);
 
     if (effectiveRows.length === 0) {
@@ -396,6 +400,7 @@ export function A4PrintPreviewModal<T = any>({
     orientation,
     effectiveMetaLines,
     effectiveShowSignatures,
+    showReceiverSignature,
     effectiveSummaryItems.length,
   ]);
 
@@ -435,6 +440,8 @@ export function A4PrintPreviewModal<T = any>({
           rows: effectiveRows,
           summaryItems: effectiveSummaryItems,
           showSignatures: effectiveShowSignatures,
+          showReceiverSignature: effectiveShowSignatures && showReceiverSignature,
+          hideHeaderProfileMeta,
           orientation,
           printedBy: activeUser,
         });
@@ -469,6 +476,8 @@ export function A4PrintPreviewModal<T = any>({
         rows: effectiveRows,
         summaryItems: effectiveSummaryItems,
         showSignatures: effectiveShowSignatures,
+        showReceiverSignature: effectiveShowSignatures && showReceiverSignature,
+        hideHeaderProfileMeta,
         orientation,
         printedBy: activeUser,
       });
@@ -749,12 +758,16 @@ export function A4PrintPreviewModal<T = any>({
                         <div
                           className={`text-right ${
                             isPortrait ? 'text-[7pt]' : 'text-[7.5pt]'
-                          } leading-[1.3] text-black shrink-0 pl-2`}
+                          } leading-[1.3] text-black shrink-0 pl-2 ${
+                            hideHeaderProfileMeta ? 'self-end' : ''
+                          }`}
                         >
-                          {company.no_npwp && (
+                          {!hideHeaderProfileMeta && company.no_npwp && (
                             <div className="font-bold">NPWP: {company.no_npwp}</div>
                           )}
-                          <div>Kode Profil: {company.profile_code || '01'}</div>
+                          {!hideHeaderProfileMeta && (
+                            <div>Kode Profil: {company.profile_code || '01'}</div>
+                          )}
                           <div>Tgl Cetak: {printDate}</div>
                         </div>
                       </div>
@@ -814,7 +827,7 @@ export function A4PrintPreviewModal<T = any>({
                             >
                               <span
                                 className={`font-semibold ${
-                                  isPortrait ? 'w-[94px]' : 'w-[115px]'
+                                  isPortrait ? 'w-[104px]' : 'w-[115px]'
                                 } shrink-0`}
                               >
                                 {m.label}
@@ -926,33 +939,51 @@ export function A4PrintPreviewModal<T = any>({
                     )}
 
                     {effectiveShowSignatures && (
-                      <div
-                        className={`mt-4 grid grid-cols-3 ${
-                          isPortrait ? 'gap-4 text-[7.5pt]' : 'gap-6 text-[8pt]'
-                        } text-center`}
-                      >
-                        <div>
-                          <div>Dibuat Oleh,</div>
-                          <div className="h-[36px]" />
-                          <div className="border-t border-black pt-0.5 font-semibold">
-                            ( {activeUser} )
+                      <>
+                        <div
+                          className={`mt-4 grid grid-cols-3 ${
+                            isPortrait ? 'gap-4 text-[7.5pt]' : 'gap-6 text-[8pt]'
+                          } text-center`}
+                        >
+                          <div>
+                            <div>Dibuat Oleh,</div>
+                            <div className="h-[36px]" />
+                            <div className="border-t border-black pt-0.5 font-semibold">
+                              ( {activeUser} )
+                            </div>
+                          </div>
+                          <div>
+                            <div>Diperiksa Oleh,</div>
+                            <div className="h-[36px]" />
+                            <div className="border-t border-black pt-0.5 font-semibold">
+                              ( Supervisor )
+                            </div>
+                          </div>
+                          <div>
+                            <div>Disetujui Oleh,</div>
+                            <div className="h-[36px]" />
+                            <div className="border-t border-black pt-0.5 font-semibold">
+                              ( Pimpinan )
+                            </div>
                           </div>
                         </div>
-                        <div>
-                          <div>Diperiksa Oleh,</div>
-                          <div className="h-[36px]" />
-                          <div className="border-t border-black pt-0.5 font-semibold">
-                            ( Supervisor )
+
+                        {showReceiverSignature && (
+                          <div
+                            className={`mt-5 grid grid-cols-3 ${
+                              isPortrait ? 'gap-4 text-[7.5pt]' : 'gap-6 text-[8pt]'
+                            } text-center`}
+                          >
+                            <div>
+                              <div>Penerima</div>
+                              <div className="h-[36px]" />
+                              <div className="border-t border-black pt-0.5 font-semibold">
+                                ({'\u00A0'.repeat(24)})
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div>
-                          <div>Disetujui Oleh,</div>
-                          <div className="h-[36px]" />
-                          <div className="border-t border-black pt-0.5 font-semibold">
-                            ( Pimpinan )
-                          </div>
-                        </div>
-                      </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
