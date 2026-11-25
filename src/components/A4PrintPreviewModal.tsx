@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileDown, FileSpreadsheet, Printer, RotateCw, X } from 'lucide-react';
 import {
@@ -10,7 +10,11 @@ import {
 } from '../lib/erpApi';
 import { getCurrentUser } from '../lib/authService';
 import { exportToExcel } from '../lib/exportExcel';
-import { exportToPdf, extractTextFromReactNode } from '../lib/exportPdf';
+import {
+  createPrintablePdfBlobUrl,
+  exportToPdf,
+  extractTextFromReactNode,
+} from '../lib/exportPdf';
 
 export interface PrintColumn<T = any> {
   header: string;
@@ -245,10 +249,27 @@ export function A4PrintPreviewModal<T = any>({
   const [isLoadingCompany, setIsLoadingCompany] = useState(false);
   const [isSavingPdf, setIsSavingPdf] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [printablePdfUrl, setPrintablePdfUrl] = useState<string | null>(null);
+  const [showPrintFallbackBar, setShowPrintFallbackBar] = useState(false);
 
   useEffect(() => {
     setOrientation(recommendedOrientation);
   }, [recommendedOrientation, isOpen]);
+
+  const handlePrintRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!isOpen) {
+      setShowPrintFallbackBar(false);
+      setPrintablePdfUrl(null);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (printablePdfUrl) URL.revokeObjectURL(printablePdfUrl);
+    };
+  }, [printablePdfUrl]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -257,7 +278,7 @@ export function A4PrintPreviewModal<T = any>({
         onClose();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        window.print();
+        handlePrintRef.current();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -389,8 +410,51 @@ export function A4PrintPreviewModal<T = any>({
   };
 
   const handlePrint = () => {
-    window.print();
+    let printTriggered = false;
+    const onBeforePrint = () => {
+      printTriggered = true;
+    };
+    window.addEventListener('beforeprint', onBeforePrint);
+    try {
+      window.print();
+    } catch {
+      printTriggered = false;
+    } finally {
+      window.removeEventListener('beforeprint', onBeforePrint);
+    }
+
+    if (!printTriggered) {
+      try {
+        const blobUrl = createPrintablePdfBlobUrl<T>({
+          fileName: fileName || effectiveTitle,
+          title: effectiveTitle,
+          subtitle: effectiveSubtitle,
+          metaLines: effectiveMetaLines,
+          companyProfile: company,
+          columns: effectiveColumns,
+          rows: effectiveRows,
+          summaryItems: effectiveSummaryItems,
+          showSignatures: effectiveShowSignatures,
+          orientation,
+          printedBy: activeUser,
+        });
+        setPrintablePdfUrl(blobUrl);
+        setShowPrintFallbackBar(true);
+
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showNotice('Halaman cetak dibuka di tab baru (atau klik "Buka Halaman Print").');
+      } catch (err: any) {
+        showNotice(`Gagal membuka halaman cetak: ${err?.message || 'Error'}`);
+      }
+    }
   };
+  handlePrintRef.current = handlePrint;
 
   const handleSaveAsPdf = () => {
     try {
@@ -464,7 +528,7 @@ export function A4PrintPreviewModal<T = any>({
 
   const portalTarget =
     (typeof document !== 'undefined' &&
-      (document.getElementById('desktop-root') || document.body)) ||
+      (document.body || document.getElementById('desktop-root'))) ||
     null;
 
   const modalContent = (
@@ -574,6 +638,41 @@ export function A4PrintPreviewModal<T = any>({
           </button>
         </div>
       </div>
+
+      {showPrintFallbackBar && printablePdfUrl && (
+        <div className="print:hidden shrink-0 bg-[#FEF3C7] text-[#78350F] px-3 py-1.5 border-b border-[#F59E0B] flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <span>
+            Browser membatasi dialog cetak langsung di dalam frame pratinjau. Gunakan halaman cetak tab baru atau simpan PDF:
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href={printablePdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1 bg-[#0055EA] hover:bg-[#196DFF] text-white font-bold rounded-[2px] inline-flex items-center gap-1.5"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Buka Halaman Print (Tab Baru)</span>
+            </a>
+            <button
+              type="button"
+              onClick={handleSaveAsPdf}
+              className="px-2.5 py-1 bg-[#C2410C] hover:bg-[#EA580C] text-white font-bold rounded-[2px] cursor-pointer inline-flex items-center gap-1"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Download PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPrintFallbackBar(false)}
+              className="px-1.5 py-0.5 text-[#78350F] hover:text-black font-bold cursor-pointer"
+              aria-label="Tutup pemberitahuan"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Scrollable Preview Sheet Viewport */}
       <div

@@ -35,7 +35,7 @@ function parseWidthPx(w?: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-export function exportToPdf<T = any>(options: {
+export interface PdfExportOptions<T = any> {
   fileName: string;
   title: string;
   subtitle?: string;
@@ -47,7 +47,9 @@ export function exportToPdf<T = any>(options: {
   showSignatures?: boolean;
   orientation?: 'portrait' | 'landscape';
   printedBy?: string;
-}): void {
+}
+
+function buildPdfDocument<T = any>(options: PdfExportOptions<T>): { doc: jsPDF; safeFileName: string } {
   const {
     fileName,
     title,
@@ -457,5 +459,17 @@ export function exportToPdf<T = any>(options: {
   const safeName = (fileName || title || 'Laporan_ERP')
     .trim()
     .replace(/[^a-zA-Z0-9_-]+/g, '_');
-  doc.save(`${safeName}_${todayIso()}.pdf`);
+  return { doc, safeFileName: `${safeName}_${todayIso()}.pdf` };
+}
+
+export function exportToPdf<T = any>(options: PdfExportOptions<T>): void {
+  const { doc, safeFileName } = buildPdfDocument(options);
+  doc.save(safeFileName);
+}
+
+export function createPrintablePdfBlobUrl<T = any>(options: PdfExportOptions<T>): string {
+  const { doc } = buildPdfDocument(options);
+  doc.autoPrint();
+  const blob = doc.output('blob');
+  return URL.createObjectURL(blob);
 }
