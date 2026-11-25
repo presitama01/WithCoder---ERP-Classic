@@ -1074,53 +1074,41 @@ export const ListSuratJalanForm: React.FC<ListSuratJalanFormProps> = ({
     ? [
         { header: 'Kode', accessor: 'kode', width: '92px' },
         { header: 'Nama Barang', accessor: 'namaBarang' },
-        { header: 'Unit', accessor: 'unit', align: 'center', width: '52px' },
+        { header: 'Unit', accessor: 'unit', align: 'center', width: '56px' },
         {
           header: 'Qty Kirim',
           accessor: (r) => formatMoney(r.qty),
           align: 'right',
-          width: '90px',
-        },
-        {
-          header: 'Diterima',
-          accessor: (r) => formatMoney(r.terima),
-          align: 'right',
-          width: '90px',
+          width: '96px',
         },
       ]
     : [
-        { header: 'Kode', accessor: 'kode', width: '70px' },
+        { header: 'Kode', accessor: 'kode', width: '74px' },
         { header: 'Nama Barang', accessor: 'namaBarang' },
-        { header: 'Unit', accessor: 'unit', align: 'center', width: '38px' },
-        {
-          header: 'Terima',
-          accessor: (r) => formatMoney(r.terima),
-          align: 'right',
-          width: '48px',
-        },
+        { header: 'Unit', accessor: 'unit', align: 'center', width: '42px' },
         {
           header: 'QTY',
           accessor: (r) => formatMoney(r.qty),
           align: 'right',
-          width: '48px',
+          width: '54px',
         },
         {
           header: 'Harga',
           accessor: (r) => formatMoney(r.harga),
           align: 'right',
-          width: '80px',
+          width: '84px',
         },
         {
           header: 'Jumlah',
           accessor: (r) => formatMoney(r.jumlah),
           align: 'right',
-          width: '86px',
+          width: '90px',
         },
         {
           header: 'Total',
           accessor: (r) => formatMoney(r.total),
           align: 'right',
-          width: '88px',
+          width: '92px',
         },
       ];
 
